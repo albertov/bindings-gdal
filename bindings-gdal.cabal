@@ -8,14 +8,11 @@ author:              Alberto Valverde Gonzalez
 maintainer:          alberto@meteogrid.com
 -- copyright:           
 category:            Bindings
-build-type:          Simple
+build-type:          Custom
 cabal-version:       >=1.8
 
 library
   build-tools:       c2hs
-  include-dirs:      /home/alberto/Sigym3/include
-  extra-libraries:   gdal
-  extra-lib-dirs:    /home/alberto/Sigym3/lib
   hs-source-dirs:    src
   exposed-modules:   Bindings.GDAL
   other-modules:     Bindings.GDAL.Internal
