@@ -27,20 +27,13 @@ gdalConf (pkg0, pbi) flags = do
      lpd'       = lpd { library = Just lib' }
  return $ lbi { localPkgDescr = lpd' }
 
-getOutput :: FilePath -> [String] -> IO (String)
 getOutput s a = readProcess s a ""
-                    
 
-getExtraLibs :: IO ([String])
 getExtraLibs = liftM (getFlagValues 'l') $ getOutput "gdal-config" ["--libs"]
 
-getExtraLibDirs :: IO ([String])
 getExtraLibDirs = liftM (getFlagValues 'L') $ getOutput "gdal-config" ["--libs"]
 
-
-getIncludeDirs :: IO ([String])
 getIncludeDirs = liftM (getFlagValues 'I') $ getOutput "gdal-config" ["--cflags"]
 
-getFlagValues :: Char -> String -> [String]
 getFlagValues f s = map (\(_:_:v) -> v) filtered
-  where filtered = filter ((==) f . head . tail) (words . init $ s)
+  where filtered = filter (\(_:f':_) -> f==f') (words . init $ s)

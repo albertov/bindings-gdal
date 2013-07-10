@@ -1,3 +1,3 @@
 module Bindings.GDAL (module X) where
 
-import Bindings.GDAL.Internal as X (GDALDataType(..))
+import Bindings.GDAL.Internal as X
