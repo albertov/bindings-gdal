@@ -1,0 +1,8 @@
+*.hi
+*.ll
+*.o
+.fuse_hidden*
+*.swp
+dist
+.hpc
+cabal-dev

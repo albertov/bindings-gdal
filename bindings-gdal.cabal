@@ -1,0 +1,23 @@
+name:                bindings-gdal
+version:             1.10.0.0
+synopsis:            Bindings to the GDAL library
+-- description:         
+license:             BSD3
+license-file:        LICENSE
+author:              Alberto Valverde Gonzalez
+maintainer:          alberto@meteogrid.com
+-- copyright:           
+category:            Bindings
+build-type:          Simple
+cabal-version:       >=1.8
+
+library
+  build-tools:       c2hs
+  include-dirs:      /home/alberto/Sigym3/include
+  extra-libraries:   gdal
+  extra-lib-dirs:    /home/alberto/Sigym3/lib
+  hs-source-dirs:    src
+  exposed-modules:   Bindings.GDAL
+  other-modules:     Bindings.GDAL.Internal
+  build-depends:     base ==4.5.*
+  ghc-options:       -Wall -O2
