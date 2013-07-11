@@ -1,12 +1,37 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 
-module Bindings.GDAL.Internal where
+module Bindings.GDAL.Internal (
+    DataType (..)
+  , Access (..)
+  , RwFlag (..)
+  , ColorInterpretation (..)
+  , PaletteInterpretation (..)
+
+  , DriverOptions
+
+  , MajorObject
+  , Dataset
+  , RasterBand
+  , Driver
+  , ColorTable
+  , RasterAttributeTable
+
+  , driverByName
+  , create
+  , flushCache
+
+  , getDataTypeSize
+  , getDataTypeByName
+  , dataTypeUnion
+  , dataTypeIsComplex
+) where
 
 import Control.Monad
 
 import Foreign.C.String
 import Foreign.C.Types
 import Foreign.Ptr
+import Foreign.ForeignPtr
 import Foreign.Marshal.Utils
 
 import System.IO.Unsafe
@@ -62,7 +87,7 @@ instance Show PaletteInterpretation where
 
 
 {#pointer GDALMajorObjectH as MajorObject newtype#}
-{#pointer GDALDatasetH as Dataset newtype#}
+{#pointer GDALDatasetH as Dataset foreign newtype#}
 {#pointer GDALRasterBandH as RasterBand newtype#}
 {#pointer GDALDriverH as Driver newtype#}
 {#pointer GDALColorTableH as ColorTable newtype#}
@@ -70,22 +95,38 @@ instance Show PaletteInterpretation where
 
 {# fun GDALAllRegister as registerAllDrivers {} -> `()'  #}
 
-{# fun GDALCreate as create
-    { id `Driver', `String', `Int', `Int', `Int', fromEnumC `DataType',
-      toOptionList `[(String,String)]' }
-    -> `Dataset' id #}
-
-{# fun GDALFlushCache as flush
-    { id `Dataset'} -> `()' #}
-
-{# fun GDALClose as close
-    { id `Dataset'} -> `()' #}
-
-{# fun pure GDALGetDriverByName as _driverByName
+{# fun GDALGetDriverByName as c_driverByName
     { `String' } -> `Driver' id #}
 
+driverByName :: String -> Maybe Driver
+driverByName s = unsafePerformIO $ do
+    registerAllDrivers
+    driver@(Driver ptr) <- c_driverByName s
+    return $ if ptr==nullPtr then Nothing else Just driver
 
-driverByName s = (unsafePerformIO $ registerAllDrivers) `seq` _driverByName s
+
+type DriverOptions = [(String,String)]
+
+{# fun GDALCreate as create
+    { id `Driver', `String', `Int', `Int', `Int', fromEnumC `DataType',
+      toOptionList `DriverOptions' }
+    -> `Maybe Dataset' newDatasetHandle* #}
+
+newDatasetHandle :: Ptr Dataset -> IO (Maybe Dataset)
+newDatasetHandle p =
+    if p==nullPtr
+    then return Nothing
+    else do
+        fp <- newForeignPtr closeDataset p
+        return $ Just $ Dataset fp
+
+foreign import ccall "gdal.h &GDALClose"
+  closeDataset :: FunPtr (Ptr (Dataset) -> IO ())
+
+
+{# fun GDALFlushCache as flushCache
+    {  withDataset*  `Dataset'} -> `()' #}
+
 
 fromEnumC :: Enum a => a -> CInt
 fromEnumC = fromIntegral . fromEnum

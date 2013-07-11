@@ -14,7 +14,24 @@ cabal-version:       >=1.8
 library
   build-tools:       c2hs
   hs-source-dirs:    src
-  exposed-modules:   Bindings.GDAL
-  other-modules:     Bindings.GDAL.Internal
+  exposed-modules:   Bindings.GDAL,
+                     Bindings.GDAL.Internal
   build-depends:     base ==4.5.*
   ghc-options:       -Wall -O2
+
+test-suite Main
+  type:            exitcode-stdio-1.0
+  build-depends:   
+                   base,
+                   filepath,
+                   HUnit                            >= 1.2 && < 2,
+                   QuickCheck                       >= 2.4,
+                   test-framework                   >= 0.4.1,
+                   test-framework-quickcheck2,
+                   test-framework-hunit,
+                   test-framework-th,
+                   temporary,
+                   bindings-gdal
+  ghc-options:     -Wall -rtsopts
+  hs-source-dirs:  tests
+  main-is:         Main.hs
