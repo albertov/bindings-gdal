@@ -31,6 +31,30 @@ case_can_create = withSystemTempDirectory "test." $ \tmpDir -> do
     flushCache (fromJust ds)
     assertExistsAndSizeGreaterThan p 20000
 
+
+case_can_get_existing_raster_band :: IO ()
+case_can_get_existing_raster_band = do
+    Just ds <- create (fromJust $ driverByName "MEM") "" 10 10 1 GDT_Int16 []
+    band <- getRasterBand ds 1
+    assertBool "Could not get band 1" (isJust band)
+
+case_cannot_get_nonexisting_raster_band :: IO ()
+case_cannot_get_nonexisting_raster_band = do
+    Just ds <- create (fromJust $ driverByName "MEM") "" 10 10 1 GDT_Int16 []
+    band <- getRasterBand ds 2
+    assertBool "Could get band 2" (not $ isJust band)
+
+case_can_rasterband_datatype :: IO ()
+case_can_rasterband_datatype = do
+    let dt = GDT_Int16
+    Just ds <- create (fromJust $ driverByName "MEM") "" 10 10 1 dt []
+    Just band <- getRasterBand ds 1
+    assertEqual "datatype mismatch" (getRasterDatatype band) dt
+
+--
+-- Utils
+--
+
 getFileSize :: FilePath -> IO (Maybe Integer)
 getFileSize p
     = handle (\(_ :: SomeException) -> return Nothing) $

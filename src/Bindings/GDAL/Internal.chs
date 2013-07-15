@@ -1,7 +1,7 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 
 module Bindings.GDAL.Internal (
-    DataType (..)
+    Datatype (..)
   , Access (..)
   , RwFlag (..)
   , ColorInterpretation (..)
@@ -20,10 +20,13 @@ module Bindings.GDAL.Internal (
   , create
   , flushCache
 
-  , getDataTypeSize
-  , getDataTypeByName
+  , getDatatypeSize
+  , getDatatypeByName
   , dataTypeUnion
   , dataTypeIsComplex
+
+  , getRasterBand
+  , getRasterDatatype
 ) where
 
 import Control.Monad
@@ -39,24 +42,24 @@ import System.IO.Unsafe
 #include "gdal.h"
 #include "cpl_string.h"
 
-{# enum GDALDataType as DataType {upcaseFirstLetter} deriving (Eq) #}
-instance Show DataType where
-   show = getDataTypeName
+{# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
+instance Show Datatype where
+   show = getDatatypeName
 
-{# fun pure GDALGetDataTypeSize as getDataTypeSize
-    { fromEnumC `DataType' } -> `Int' #}
+{# fun pure unsafe GDALGetDataTypeSize as getDatatypeSize
+    { fromEnumC `Datatype' } -> `Int' #}
 
-{# fun pure GDALDataTypeIsComplex as dataTypeIsComplex
-    { fromEnumC `DataType' } -> `Bool' #}
+{# fun pure unsafe GDALDataTypeIsComplex as dataTypeIsComplex
+    { fromEnumC `Datatype' } -> `Bool' #}
 
-{# fun pure GDALGetDataTypeName as getDataTypeName
-    { fromEnumC `DataType' } -> `String' #}
+{# fun pure unsafe GDALGetDataTypeName as getDatatypeName
+    { fromEnumC `Datatype' } -> `String' #}
 
-{# fun pure GDALGetDataTypeByName as getDataTypeByName
-    { `String' } -> `DataType' toEnumC #}
+{# fun pure unsafe GDALGetDataTypeByName as getDatatypeByName
+    { `String' } -> `Datatype' toEnumC #}
 
-{# fun pure GDALDataTypeUnion as dataTypeUnion
-    { fromEnumC `DataType', fromEnumC `DataType' } -> `DataType' toEnumC #}
+{# fun pure unsafe GDALDataTypeUnion as dataTypeUnion
+    { fromEnumC `Datatype', fromEnumC `Datatype' } -> `Datatype' toEnumC #}
 
 
 {# enum GDALAccess as Access {upcaseFirstLetter} deriving (Eq, Show) #}
@@ -69,10 +72,10 @@ instance Show DataType where
 instance Show ColorInterpretation where
     show = getColorInterpretationName
 
-{# fun pure GDALGetColorInterpretationName as getColorInterpretationName
+{# fun pure unsafe GDALGetColorInterpretationName as getColorInterpretationName
     { fromEnumC `ColorInterpretation' } -> `String' #}
 
-{# fun pure GDALGetColorInterpretationByName as getColorInterpretationByName
+{# fun pure unsafe GDALGetColorInterpretationByName as getColorInterpretationByName
     { `String' } -> `ColorInterpretation' toEnumC #}
 
 
@@ -82,13 +85,16 @@ instance Show ColorInterpretation where
 instance Show PaletteInterpretation where
     show = getPaletteInterpretationName
 
-{# fun pure GDALGetPaletteInterpretationName as getPaletteInterpretationName
+{# fun pure unsafe GDALGetPaletteInterpretationName as getPaletteInterpretationName
     { fromEnumC `PaletteInterpretation' } -> `String' #}
 
 
 {#pointer GDALMajorObjectH as MajorObject newtype#}
 {#pointer GDALDatasetH as Dataset foreign newtype#}
-{#pointer GDALRasterBandH as RasterBand newtype#}
+{#pointer GDALRasterBandH as RasterBand_ newtype#}
+
+newtype RasterBand = RasterBand (RasterBand_, Dataset)
+
 {#pointer GDALDriverH as Driver newtype#}
 {#pointer GDALColorTableH as ColorTable newtype#}
 {#pointer GDALRasterAttributeTableH as RasterAttributeTable newtype#}
@@ -108,17 +114,14 @@ driverByName s = unsafePerformIO $ do
 type DriverOptions = [(String,String)]
 
 {# fun GDALCreate as create
-    { id `Driver', `String', `Int', `Int', `Int', fromEnumC `DataType',
+    { id `Driver', `String', `Int', `Int', `Int', fromEnumC `Datatype',
       toOptionList `DriverOptions' }
     -> `Maybe Dataset' newDatasetHandle* #}
 
 newDatasetHandle :: Ptr Dataset -> IO (Maybe Dataset)
 newDatasetHandle p =
-    if p==nullPtr
-    then return Nothing
-    else do
-        fp <- newForeignPtr closeDataset p
-        return $ Just $ Dataset fp
+    if p==nullPtr then return Nothing
+    else newForeignPtr closeDataset p >>= (return . Just . Dataset)
 
 foreign import ccall "gdal.h &GDALClose"
   closeDataset :: FunPtr (Ptr (Dataset) -> IO ())
@@ -127,6 +130,18 @@ foreign import ccall "gdal.h &GDALClose"
 {# fun GDALFlushCache as flushCache
     {  withDataset*  `Dataset'} -> `()' #}
 
+
+getRasterBand :: Dataset -> Int -> IO (Maybe RasterBand)
+getRasterBand ds band = withDataset ds $ \dPtr -> do
+    rBand@(RasterBand_ p) <- {# call unsafe GDALGetRasterBand as ^ #}
+                              dPtr (fromIntegral band)
+    return (if p == nullPtr then Nothing else Just $ RasterBand (rBand,ds))
+
+{# fun pure unsafe GDALGetRasterDataType as getRasterDatatype
+   { extractBand `RasterBand'} -> `Datatype' toEnumC #}
+
+extractBand :: RasterBand -> RasterBand_
+extractBand (RasterBand (rb,_)) = rb
 
 fromEnumC :: Enum a => a -> CInt
 fromEnumC = fromIntegral . fromEnum
