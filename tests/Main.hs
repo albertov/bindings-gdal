@@ -1,9 +1,14 @@
 {-# LANGUAGE TemplateHaskell, ScopedTypeVariables #-}
 
 import Control.Applicative
+import Control.Monad (forM_)
 import Control.Exception (handle, SomeException)
+import Data.Int
+import Data.Word
 import Data.Maybe (fromJust, isJust)
+import qualified Data.Vector.Storable as St
 
+import System.Mem (performGC)
 import System.IO
 import System.IO.Temp
 import System.FilePath
@@ -20,8 +25,9 @@ import Bindings.GDAL.Internal
 main :: IO ()
 main = $(defaultMainGenerator)
 
-case_can_create :: IO ()
-case_can_create = withSystemTempDirectory "test." $ \tmpDir -> do
+case_can_create_compressed_gtiff :: IO ()
+case_can_create_compressed_gtiff
+  = withSystemTempDirectory "test." $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         d = driverByName "GTIFF"
     assertBool "Could not load Gtiff driver" (isJust d)
@@ -34,22 +40,73 @@ case_can_create = withSystemTempDirectory "test." $ \tmpDir -> do
 
 case_can_get_existing_raster_band :: IO ()
 case_can_get_existing_raster_band = do
-    Just ds <- create (fromJust $ driverByName "MEM") "" 10 10 1 GDT_Int16 []
-    band <- getRasterBand ds 1
-    assertBool "Could not get band 1" (isJust band)
+    Just ds <- createMem 10 10 1 GDT_Int16 []
+    withRasterBand ds 1 $ assertBool "Could not get band 1" . isJust
 
 case_cannot_get_nonexisting_raster_band :: IO ()
 case_cannot_get_nonexisting_raster_band = do
-    Just ds <- create (fromJust $ driverByName "MEM") "" 10 10 1 GDT_Int16 []
-    band <- getRasterBand ds 2
-    assertBool "Could get band 2" (not $ isJust band)
+    Just ds <- createMem 10 10 1 GDT_Int16 []
+    withRasterBand ds 2 $ assertBool "Could get band 2" . not . isJust
 
-case_can_rasterband_datatype :: IO ()
-case_can_rasterband_datatype = do
+case_can_get_rasterband_datatype :: IO ()
+case_can_get_rasterband_datatype = do
     let dt = GDT_Int16
-    Just ds <- create (fromJust $ driverByName "MEM") "" 10 10 1 dt []
-    Just band <- getRasterBand ds 1
-    assertEqual "datatype mismatch" (getRasterDatatype band) dt
+    Just ds <- createMem 10 10 1 dt []
+    withRasterBand ds 1 $ \(Just band) ->
+        assertEqual "datatype mismatch" dt (getRasterDatatype band)
+
+case_fill_and_read_band_byte :: IO ()
+case_fill_and_read_band_byte = do
+    forM_ [GDT_Byte, GDT_UInt16, GDT_UInt32] $ \dt -> do
+    forM_ ([0..20] :: [Word8]) $ \value -> do
+        Just ds <- createMem 100 100 1 dt []
+        withRasterBand ds 1 $ \(Just band) -> do
+            performGC -- try to segfault by causing premature calls to GDALClose
+            err <- fillBand band (fromIntegral value) 0
+            assertEqual "error filling band" err CE_None
+            v <- readBand band 0 0 100 100 100 100 0 0
+            let v' = fromJust v
+            assertBool "error reading band" (isJust v)
+            assertEqual "length mismatch" 10000 (St.length v')
+            let allEqual = St.foldl' f True v'
+                f True a = a == value
+                f False _ = False
+            assertBool "read is different than filled" allEqual
+
+case_fill_and_read_band_int16 :: IO ()
+case_fill_and_read_band_int16 = do
+    forM_ [GDT_Int16, GDT_Int32] $ \dt -> do
+    forM_ ([-10..10] :: [Int16]) $ \value -> do
+        Just ds <- createMem 100 100 1 dt []
+        withRasterBand ds 1 $ \(Just band) -> do
+            performGC -- try to segfault by causing premature calls to GDALClose
+            err <- fillBand band (fromIntegral value) 0
+            assertEqual "error filling band" err CE_None
+            v <- readBand band 0 0 100 100 100 100 0 0
+            let v' = fromJust v
+            assertBool "error reading band" (isJust v)
+            assertEqual "length mismatch" 10000 (St.length v')
+            let allEqual = St.foldl' f True v'
+                f True a = a == value
+                f False _ = False
+            assertBool "read is different than filled" allEqual
+
+case_fill_and_read_band_double :: IO ()
+case_fill_and_read_band_double = do
+    forM_ [GDT_Float32, GDT_Float64] $ \dt -> do
+    forM_ ([(-10),(-9.5)..10] :: [Double]) $ \value -> do
+        Just ds <- createMem 100 100 1 dt []
+        withRasterBand ds 1 $ \(Just band) -> do
+            err <- fillBand band (realToFrac value) 0
+            assertEqual "error filling band" err CE_None
+            v <- readBand band 0 0 100 100 100 100 0 0
+            let v' = fromJust v
+            assertBool "error reading band" (isJust v)
+            assertEqual "length mismatch" 10000 (St.length v')
+            let allEqual = St.foldl' f True v'
+                f True a = a == value
+                f False _ = False
+            assertBool "read is different than filled" allEqual
 
 --
 -- Utils

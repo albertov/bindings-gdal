@@ -1,4 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Bindings.GDAL.Internal (
     Datatype (..)
@@ -6,6 +8,7 @@ module Bindings.GDAL.Internal (
   , RwFlag (..)
   , ColorInterpretation (..)
   , PaletteInterpretation (..)
+  , Error (..)
 
   , DriverOptions
 
@@ -18,6 +21,7 @@ module Bindings.GDAL.Internal (
 
   , driverByName
   , create
+  , createMem
   , flushCache
 
   , getDatatypeSize
@@ -25,15 +29,23 @@ module Bindings.GDAL.Internal (
   , dataTypeUnion
   , dataTypeIsComplex
 
-  , getRasterBand
+  , withRasterBand
   , getRasterDatatype
+
+  , readBand
+  , fillBand
+
 ) where
 
 import Control.Monad
 
+import Data.Int (Int16, Int32)
+import Data.Word (Word8, Word16, Word32)
+import Data.Vector.Storable (Vector, unsafeFromForeignPtr0)
 import Foreign.C.String
 import Foreign.C.Types
 import Foreign.Ptr
+import Foreign.Storable
 import Foreign.ForeignPtr
 import Foreign.Marshal.Utils
 
@@ -41,6 +53,9 @@ import System.IO.Unsafe
 
 #include "gdal.h"
 #include "cpl_string.h"
+#include "cpl_error.h"
+
+{# enum CPLErr as Error {upcaseFirstLetter} deriving (Eq,Show) #}
 
 {# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
 instance Show Datatype where
@@ -91,10 +106,7 @@ instance Show PaletteInterpretation where
 
 {#pointer GDALMajorObjectH as MajorObject newtype#}
 {#pointer GDALDatasetH as Dataset foreign newtype#}
-{#pointer GDALRasterBandH as RasterBand_ newtype#}
-
-newtype RasterBand = RasterBand (RasterBand_, Dataset)
-
+{#pointer GDALRasterBandH as RasterBand newtype#}
 {#pointer GDALDriverH as Driver newtype#}
 {#pointer GDALColorTableH as ColorTable newtype#}
 {#pointer GDALRasterAttributeTableH as RasterAttributeTable newtype#}
@@ -126,22 +138,67 @@ newDatasetHandle p =
 foreign import ccall "gdal.h &GDALClose"
   closeDataset :: FunPtr (Ptr (Dataset) -> IO ())
 
+createMem:: Int -> Int -> Int -> Datatype -> DriverOptions -> IO (Maybe Dataset)
+createMem = case driverByName "MEM" of
+                 Nothing -> (\_ _ _ _ _ -> return Nothing)
+                 Just d  -> create d ""
 
 {# fun GDALFlushCache as flushCache
     {  withDataset*  `Dataset'} -> `()' #}
 
 
-getRasterBand :: Dataset -> Int -> IO (Maybe RasterBand)
-getRasterBand ds band = withDataset ds $ \dPtr -> do
-    rBand@(RasterBand_ p) <- {# call unsafe GDALGetRasterBand as ^ #}
+withRasterBand :: Dataset -> Int -> (Maybe RasterBand -> IO a) -> IO a
+withRasterBand ds band f = withDataset ds $ \dPtr -> do
+    rBand@(RasterBand p) <- {# call unsafe GDALGetRasterBand as ^ #}
                               dPtr (fromIntegral band)
-    return (if p == nullPtr then Nothing else Just $ RasterBand (rBand,ds))
+    f (if p == nullPtr then Nothing else Just rBand)
 
 {# fun pure unsafe GDALGetRasterDataType as getRasterDatatype
-   { extractBand `RasterBand'} -> `Datatype' toEnumC #}
+   { id `RasterBand'} -> `Datatype' toEnumC #}
 
-extractBand :: RasterBand -> RasterBand_
-extractBand (RasterBand (rb,_)) = rb
+{# fun GDALFillRaster as fillBand
+    { id `RasterBand', `Double', `Double'} -> `Error' toEnumC #}
+
+class HasDatatype a where
+    datatype :: a -> Datatype
+
+instance HasDatatype (Ptr Word8)  where datatype _ = GDT_Byte
+instance HasDatatype (Ptr Word16) where datatype _ = GDT_UInt16
+instance HasDatatype (Ptr Word32) where datatype _ = GDT_UInt32
+instance HasDatatype (Ptr Int16)  where datatype _ = GDT_Int16
+instance HasDatatype (Ptr Int32)  where datatype _ = GDT_Int32
+instance HasDatatype (Ptr Float)  where datatype _ = GDT_Float32
+instance HasDatatype (Ptr Double) where datatype _ = GDT_Float64
+
+readBand :: (Storable a, HasDatatype (Ptr a))
+  => RasterBand
+  -> Int -> Int
+  -> Int -> Int
+  -> Int -> Int
+  -> Int -> Int
+  -> IO (Maybe (Vector a))
+readBand band xoff yoff sx sy bx by pxs lns = do
+    let nElems = bx * by
+    fp <- mallocForeignPtrArray nElems
+    err <- withForeignPtr fp $ \ptr -> do
+        {#call GDALRasterIO as ^#}
+          band
+          (fromEnumC GF_Read) 
+          (fromIntegral xoff)
+          (fromIntegral yoff)
+          (fromIntegral sx)
+          (fromIntegral sy)
+          (castPtr ptr)
+          (fromIntegral bx)
+          (fromIntegral by)
+          (fromEnumC (datatype ptr))
+          (fromIntegral pxs)
+          (fromIntegral lns)
+    case toEnumC err of
+         CE_None -> return $ Just $ unsafeFromForeignPtr0 fp nElems
+         _       -> return Nothing
+        
+
 
 fromEnumC :: Enum a => a -> CInt
 fromEnumC = fromIntegral . fromEnum
