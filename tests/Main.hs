@@ -55,23 +55,40 @@ case_can_get_rasterband_datatype = do
     withRasterBand ds 1 $ \(Just band) ->
         assertEqual "datatype mismatch" dt (getRasterDatatype band)
 
-case_fill_and_read_band_byte :: IO ()
-case_fill_and_read_band_byte = do
-    forM_ [GDT_Byte, GDT_UInt16, GDT_UInt32] $ \dt -> do
-    forM_ ([0..20] :: [Word8]) $ \value -> do
-        Just ds <- createMem 100 100 1 dt []
-        withRasterBand ds 1 $ \(Just band) -> do
-            performGC -- try to segfault by causing premature calls to GDALClose
-            err <- fillBand band (fromIntegral value) 0
-            assertEqual "error filling band" err CE_None
-            v <- readBand band 0 0 100 100 100 100 0 0
-            let v' = fromJust v
-            assertBool "error reading band" (isJust v)
-            assertEqual "length mismatch" 10000 (St.length v')
-            let allEqual = St.foldl' f True v'
-                f True a = a == value
-                f False _ = False
-            assertBool "read is different than filled" allEqual
+case_write_and_read_band_int16 :: IO ()
+case_write_and_read_band_int16 = write_and_read_band GDT_Byte vec
+   where vec = St.generate 10000 fromIntegral :: St.Vector Word8
+
+case_write_and_read_band_float :: IO ()
+case_write_and_read_band_float = write_and_read_band GDT_Float32 vec
+   where vec = St.generate 10000 $ \i -> 1.1 * fromIntegral i
+         vec :: St.Vector Float
+
+case_write_and_read_band_double :: IO ()
+case_write_and_read_band_double = write_and_read_band GDT_Float64 vec
+   where vec = St.generate 10000 $ \i -> 1.1 * fromIntegral i
+         vec :: St.Vector Double
+
+
+write_and_read_band dtype vec = do
+    Just ds <- createMem 100 100 1 dtype []
+    withRasterBand ds 1 $ \(Just band) -> do
+        err <- writeBand band 0 0 100 100 100 100 0 0 vec
+        assertEqual "error writing band" err CE_None
+        vec2' <- readBand band 0 0 100 100 100 100 0 0
+        let vec2 = fromJust vec2'
+        assertBool "error reading band" (isJust vec2')
+        assertEqualVectors vec vec2
+
+assertEqualVectors :: (Eq a, St.Storable a)
+  => St.Vector a
+  -> St.Vector a
+  -> IO ()
+assertEqualVectors a b = assertBool "vectors are different" (sameL && areEqual)
+  where areEqual  = St.foldl' f True $  St.zipWith (==) a b
+        f True v  = v == True
+        f False _ = False
+        sameL     = St.length a == St.length b
 
 case_fill_and_read_band_int16 :: IO ()
 case_fill_and_read_band_int16 = do
@@ -108,6 +125,24 @@ case_fill_and_read_band_double = do
                 f False _ = False
             assertBool "read is different than filled" allEqual
 
+
+case_fill_and_read_band_byte :: IO ()
+case_fill_and_read_band_byte = do
+    forM_ [GDT_Byte, GDT_UInt16, GDT_UInt32] $ \dt -> do
+    forM_ ([0..20] :: [Word8]) $ \value -> do
+        Just ds <- createMem 100 100 1 dt []
+        withRasterBand ds 1 $ \(Just band) -> do
+            performGC -- try to segfault by causing premature calls to GDALClose
+            err <- fillBand band (fromIntegral value) 0
+            assertEqual "error filling band" err CE_None
+            v <- readBand band 0 0 100 100 100 100 0 0
+            let v' = fromJust v
+            assertBool "error reading band" (isJust v)
+            assertEqual "length mismatch" 10000 (St.length v')
+            let allEqual = St.foldl' f True v'
+                f True a = a == value
+                f False _ = False
+            assertBool "read is different than filled" allEqual
 --
 -- Utils
 --

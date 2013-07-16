@@ -33,15 +33,16 @@ module Bindings.GDAL.Internal (
   , getRasterDatatype
 
   , readBand
+  , writeBand
   , fillBand
 
 ) where
 
-import Control.Monad
+import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
 import Data.Word (Word8, Word16, Word32)
-import Data.Vector.Storable (Vector, unsafeFromForeignPtr0)
+import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
 import Foreign.C.String
 import Foreign.C.Types
 import Foreign.Ptr
@@ -198,6 +199,33 @@ readBand band xoff yoff sx sy bx by pxs lns = do
          CE_None -> return $ Just $ unsafeFromForeignPtr0 fp nElems
          _       -> return Nothing
         
+writeBand :: (Storable a, HasDatatype (Ptr a))
+  => RasterBand
+  -> Int -> Int
+  -> Int -> Int
+  -> Int -> Int
+  -> Int -> Int
+  -> Vector a
+  -> IO (Error)
+writeBand band xoff yoff sx sy bx by pxs lns vec = do
+    let nElems    = bx * by
+        (fp, len) = unsafeToForeignPtr0 vec
+    if nElems /= len
+      then return CE_Failure
+      else withForeignPtr fp $ \ptr -> liftM toEnumC $
+          {#call GDALRasterIO as ^#}
+            band
+            (fromEnumC GF_Write) 
+            (fromIntegral xoff)
+            (fromIntegral yoff)
+            (fromIntegral sx)
+            (fromIntegral sy)
+            (castPtr ptr)
+            (fromIntegral bx)
+            (fromIntegral by)
+            (fromEnumC (datatype ptr))
+            (fromIntegral pxs)
+            (fromIntegral lns)
 
 
 fromEnumC :: Enum a => a -> CInt
