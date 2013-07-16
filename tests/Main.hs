@@ -43,6 +43,37 @@ case_can_get_existing_raster_band = do
     Just ds <- createMem 10 10 1 GDT_Int16 []
     withRasterBand ds 1 $ assertBool "Could not get band 1" . isJust
 
+case_can_set_and_get_geotransform :: IO ()
+case_can_set_and_get_geotransform = do
+    Just ds <- createMem 10 10 1 GDT_Int16 []
+    let gt = Geotransform 5.0 4.0 3.0 2.0 1.0 0.0
+    err <- setDatasetGeotransform ds gt
+    assertEqual "setDatasetGeotransform returned error" CE_None err
+    let gt2 = datasetGeotransform ds
+    assertBool "error getting geotransform" (isJust gt2)
+    assertEqual "geotransform is not the same that was set" gt (fromJust gt2)
+
+case_can_set_and_get_projection :: IO ()
+case_can_set_and_get_projection = do
+    Just ds <- createMem 10 10 1 GDT_Int16 []
+    let proj = "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
+    err <- setDatasetProjection ds proj
+    assertEqual "setDatasetProjection returned error" CE_None err
+    let proj2 = datasetProjection ds
+    assertEqual "projection is not the same that was set" proj proj2
+
+case_can_get_blockSize :: IO ()
+case_can_get_blockSize = do
+    Just ds <- createMem 10 10 1 GDT_Int16 []
+    bsize <- withRasterBand ds 1 (return . blockSize. fromJust)
+    assertEqual "unexpected block size" (10, 1) bsize
+
+case_can_get_bandSize :: IO ()
+case_can_get_bandSize = do
+    Just ds <- createMem 10 10 1 GDT_Int16 []
+    bsize <- withRasterBand ds 1 (return . bandSize. fromJust)
+    assertEqual "unexpected band size" (10, 10) bsize
+
 case_cannot_get_nonexisting_raster_band :: IO ()
 case_cannot_get_nonexisting_raster_band = do
     Just ds <- createMem 10 10 1 GDT_Int16 []
@@ -53,7 +84,7 @@ case_can_get_rasterband_datatype = do
     let dt = GDT_Int16
     Just ds <- createMem 10 10 1 dt []
     withRasterBand ds 1 $ \(Just band) ->
-        assertEqual "datatype mismatch" dt (getRasterDatatype band)
+        assertEqual "datatype mismatch" dt (bandDatatype band)
 
 case_write_and_read_band_int16 :: IO ()
 case_write_and_read_band_int16 = write_and_read_band GDT_Byte vec

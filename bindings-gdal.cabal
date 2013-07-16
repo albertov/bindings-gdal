@@ -18,7 +18,7 @@ library
                      Bindings.GDAL.Internal
   build-depends:     base ==4.5.*,
                      vector
-  ghc-options:       -O2
+  ghc-options:       -O2 -funbox-strict-fields
 
 test-suite Main
   type:            exitcode-stdio-1.0

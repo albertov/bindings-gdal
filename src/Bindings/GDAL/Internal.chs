@@ -1,6 +1,7 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Bindings.GDAL.Internal (
     Datatype (..)
@@ -9,6 +10,7 @@ module Bindings.GDAL.Internal (
   , ColorInterpretation (..)
   , PaletteInterpretation (..)
   , Error (..)
+  , Geotransform (..)
 
   , DriverOptions
 
@@ -24,20 +26,27 @@ module Bindings.GDAL.Internal (
   , createMem
   , flushCache
 
-  , getDatatypeSize
-  , getDatatypeByName
-  , dataTypeUnion
-  , dataTypeIsComplex
+  , datatypeSize
+  , datatypeByName
+  , datatypeUnion
+  , datatypeIsComplex
+
+  , datasetProjection
+  , setDatasetProjection
+  , datasetGeotransform
+  , setDatasetGeotransform
 
   , withRasterBand
-  , getRasterDatatype
-
+  , bandDatatype
+  , blockSize
+  , bandSize
   , readBand
   , writeBand
   , fillBand
 
 ) where
 
+import Control.Applicative (liftA2, (<$>), (<*>))
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
@@ -48,6 +57,8 @@ import Foreign.C.Types
 import Foreign.Ptr
 import Foreign.Storable
 import Foreign.ForeignPtr
+import Foreign.Marshal.Alloc
+import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 
 import System.IO.Unsafe
@@ -62,19 +73,19 @@ import System.IO.Unsafe
 instance Show Datatype where
    show = getDatatypeName
 
-{# fun pure unsafe GDALGetDataTypeSize as getDatatypeSize
+{# fun pure unsafe GDALGetDataTypeSize as datatypeSize
     { fromEnumC `Datatype' } -> `Int' #}
 
-{# fun pure unsafe GDALDataTypeIsComplex as dataTypeIsComplex
+{# fun pure unsafe GDALDataTypeIsComplex as datatypeIsComplex
     { fromEnumC `Datatype' } -> `Bool' #}
 
 {# fun pure unsafe GDALGetDataTypeName as getDatatypeName
     { fromEnumC `Datatype' } -> `String' #}
 
-{# fun pure unsafe GDALGetDataTypeByName as getDatatypeByName
+{# fun pure unsafe GDALGetDataTypeByName as datatypeByName
     { `String' } -> `Datatype' toEnumC #}
 
-{# fun pure unsafe GDALDataTypeUnion as dataTypeUnion
+{# fun pure unsafe GDALDataTypeUnion as datatypeUnion
     { fromEnumC `Datatype', fromEnumC `Datatype' } -> `Datatype' toEnumC #}
 
 
@@ -147,6 +158,40 @@ createMem = case driverByName "MEM" of
 {# fun GDALFlushCache as flushCache
     {  withDataset*  `Dataset'} -> `()' #}
 
+{# fun pure unsafe GDALGetProjectionRef as datasetProjection
+    {  withDataset*  `Dataset'} -> `String' #}
+
+{# fun unsafe GDALSetProjection as setDatasetProjection
+    {  withDataset*  `Dataset', `String'} -> `Error' toEnumC #}
+
+data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
+    deriving (Eq, Show)
+
+datasetGeotransform :: Dataset -> Maybe Geotransform
+datasetGeotransform ds = unsafePerformIO $ withDataset ds $ \dPtr -> do
+    allocaArray 6 $ \a -> do
+      let err = {#call pure unsafe GDALGetGeoTransform as ^#} dPtr a
+      case toEnumC err of
+           CE_None -> liftM Just $ Geotransform
+                       <$> liftM realToFrac (peekElemOff a 0)
+                       <*> liftM realToFrac (peekElemOff a 1)
+                       <*> liftM realToFrac (peekElemOff a 2)
+                       <*> liftM realToFrac (peekElemOff a 3)
+                       <*> liftM realToFrac (peekElemOff a 4)
+                       <*> liftM realToFrac (peekElemOff a 5)
+           _       -> return Nothing
+
+setDatasetGeotransform :: Dataset -> Geotransform -> IO (Error)
+setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
+    allocaArray 6 $ \a -> do
+        let (Geotransform g0 g1 g2 g3 g4 g5) = gt
+        pokeElemOff a 0 (realToFrac g0)
+        pokeElemOff a 1 (realToFrac g1)
+        pokeElemOff a 2 (realToFrac g2)
+        pokeElemOff a 3 (realToFrac g3)
+        pokeElemOff a 4 (realToFrac g4)
+        pokeElemOff a 5 (realToFrac g5)
+        liftM toEnumC $ {#call unsafe GDALSetGeoTransform as ^#} dPtr a
 
 withRasterBand :: Dataset -> Int -> (Maybe RasterBand -> IO a) -> IO a
 withRasterBand ds band f = withDataset ds $ \dPtr -> do
@@ -154,8 +199,19 @@ withRasterBand ds band f = withDataset ds $ \dPtr -> do
                               dPtr (fromIntegral band)
     f (if p == nullPtr then Nothing else Just rBand)
 
-{# fun pure unsafe GDALGetRasterDataType as getRasterDatatype
+{# fun pure unsafe GDALGetRasterDataType as bandDatatype
    { id `RasterBand'} -> `Datatype' toEnumC #}
+
+blockSize :: RasterBand -> (Int,Int)
+blockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr ->
+   {#call unsafe GDALGetBlockSize as ^#} band xPtr yPtr >>
+   liftA2 (,) (liftM fromIntegral $ peek xPtr) (liftM fromIntegral $ peek yPtr)
+
+bandSize :: RasterBand -> (Int, Int)
+bandSize band
+  = ( fromIntegral . {# call pure unsafe GDALGetRasterBandXSize as ^#} $ band
+    , fromIntegral . {# call pure unsafe GDALGetRasterBandYSize as ^#} $ band
+    )
 
 {# fun GDALFillRaster as fillBand
     { id `RasterBand', `Double', `Double'} -> `Error' toEnumC #}
@@ -179,9 +235,18 @@ readBand :: (Storable a, HasDatatype (Ptr a))
   -> Int -> Int
   -> IO (Maybe (Vector a))
 readBand band xoff yoff sx sy bx by pxs lns = do
-    let nElems = bx * by
-    fp <- mallocForeignPtrArray nElems
+    fp <- mallocForeignPtrArray (bx * by)
     err <- withForeignPtr fp $ \ptr -> do
+        {#call GDALRasterAdviseRead as ^#}
+          band
+          (fromIntegral xoff)
+          (fromIntegral yoff)
+          (fromIntegral sx)
+          (fromIntegral sy)
+          (fromIntegral bx)
+          (fromIntegral by)
+          (fromEnumC (datatype ptr))
+          (castPtr nullPtr)
         {#call GDALRasterIO as ^#}
           band
           (fromEnumC GF_Read) 
@@ -196,7 +261,7 @@ readBand band xoff yoff sx sy bx by pxs lns = do
           (fromIntegral pxs)
           (fromIntegral lns)
     case toEnumC err of
-         CE_None -> return $ Just $ unsafeFromForeignPtr0 fp nElems
+         CE_None -> return $ Just $ unsafeFromForeignPtr0 fp (bx * by)
          _       -> return Nothing
         
 writeBand :: (Storable a, HasDatatype (Ptr a))
@@ -237,7 +302,5 @@ toEnumC = toEnum . fromIntegral
 
 toOptionList :: [(String,String)] -> Ptr CString
 toOptionList opts =  unsafePerformIO $ foldM folder nullPtr opts
-  where folder acc (k,v) = setNameValue acc k v
-
-{# fun CSLSetNameValue as setNameValue
-   { id `Ptr CString', `String', `String'} -> `Ptr CString' id  #}
+  where folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
+                           {#call unsafe CSLSetNameValue as ^#} acc k' v'
