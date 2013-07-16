@@ -51,6 +51,8 @@ module Bindings.GDAL.Internal (
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
+import Control.Concurrent (newMVar, takeMVar, putMVar, MVar)
+import Control.Exception (finally)
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
@@ -121,7 +123,15 @@ instance Show PaletteInterpretation where
 
 
 {#pointer GDALMajorObjectH as MajorObject newtype#}
-{#pointer GDALDatasetH as Dataset foreign newtype#}
+{#pointer GDALDatasetH as Dataset foreign newtype nocode#}
+
+newtype Dataset = Dataset (ForeignPtr Dataset, Mutex)
+
+withDataset, withDataset' :: Dataset -> (Ptr Dataset -> IO b) -> IO b
+withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
+
+withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
+
 {#pointer GDALRasterBandH as RasterBand newtype#}
 {#pointer GDALDriverH as Driver newtype#}
 {#pointer GDALColorTableH as ColorTable newtype#}
@@ -156,13 +166,14 @@ createCopy' :: Driver -> String -> Dataset -> Bool -> DriverOptions
             -> ProgressFun -> IO (Maybe Dataset)
 createCopy' driver path dataset strict options progressFun
   = withCString path $ \p ->
-    withDataset dataset $ \ds -> do
-    let s = if strict then 1 else 0
-        o = toOptionList options
-    pFunc <- wrapProgressFun progressFun
-    ptr <- {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr)
-    freeHaskellFunPtr pFunc 
-    newDatasetHandle ptr
+    withDataset dataset $ \ds ->
+    wrapProgressFun progressFun >>= \pFunc ->
+      finally 
+        (let s = if strict then 1 else 0
+             o = toOptionList options
+         in {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr)
+            >>= newDatasetHandle)
+        (freeHaskellFunPtr pFunc)
 
 createCopy :: Driver -> String -> Dataset -> Bool -> DriverOptions
            -> IO (Maybe Dataset)
@@ -178,7 +189,9 @@ foreign import ccall "wrapper"
 newDatasetHandle :: Ptr Dataset -> IO (Maybe Dataset)
 newDatasetHandle p =
     if p==nullPtr then return Nothing
-    else newForeignPtr closeDataset p >>= (return . Just . Dataset)
+    else do fp <- newForeignPtr closeDataset p
+            mutex <- newMutex
+            return $ Just $ Dataset (fp, mutex)
 
 foreign import ccall "gdal.h &GDALClose"
   closeDataset :: FunPtr (Ptr (Dataset) -> IO ())
@@ -201,7 +214,7 @@ data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
     deriving (Eq, Show)
 
 datasetGeotransform :: Dataset -> Maybe Geotransform
-datasetGeotransform ds = unsafePerformIO $ withDataset ds $ \dPtr -> do
+datasetGeotransform ds = unsafePerformIO $ withDataset' ds $ \dPtr -> do
     allocaArray 6 $ \a -> do
       let err = {#call pure unsafe GDALGetGeoTransform as ^#} dPtr a
       case toEnumC err of
@@ -337,3 +350,17 @@ toOptionList :: [(String,String)] -> Ptr CString
 toOptionList opts =  unsafePerformIO $ foldM folder nullPtr opts
   where folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
                            {#call unsafe CSLSetNameValue as ^#} acc k' v'
+
+type Mutex = MVar ()
+
+newMutex :: IO Mutex
+newMutex = newMVar ()
+
+
+acquireMutex :: Mutex -> IO ()
+acquireMutex = takeMVar
+
+releaseMutex :: Mutex -> IO ()
+releaseMutex m = putMVar m ()
+
+withMutex m action = finally (acquireMutex m >> action) (releaseMutex m)
