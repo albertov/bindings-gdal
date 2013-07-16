@@ -6,11 +6,11 @@
 module Bindings.GDAL.Internal (
     Datatype (..)
   , Access (..)
-  , RwFlag (..)
   , ColorInterpretation (..)
   , PaletteInterpretation (..)
   , Error (..)
   , Geotransform (..)
+  , ProgressFun
 
   , DriverOptions
 
@@ -25,6 +25,10 @@ module Bindings.GDAL.Internal (
   , create
   , createMem
   , flushCache
+  , open
+  , openShared
+  , createCopy'
+  , createCopy
 
   , datatypeSize
   , datatypeByName
@@ -61,7 +65,7 @@ import Foreign.Marshal.Alloc
 import Foreign.Marshal.Array
 import Foreign.Marshal.Utils
 
-import System.IO.Unsafe
+import System.IO.Unsafe (unsafePerformIO)
 
 #include "gdal.h"
 #include "cpl_string.h"
@@ -141,6 +145,35 @@ type DriverOptions = [(String,String)]
     { id `Driver', `String', `Int', `Int', `Int', fromEnumC `Datatype',
       toOptionList `DriverOptions' }
     -> `Maybe Dataset' newDatasetHandle* #}
+
+{# fun GDALOpen as open
+    { `String', fromEnumC `Access'} -> `Maybe Dataset' newDatasetHandle* #}
+
+{# fun GDALOpen as openShared
+    { `String', fromEnumC `Access'} -> `Maybe Dataset' newDatasetHandle* #}
+
+createCopy' :: Driver -> String -> Dataset -> Bool -> DriverOptions
+            -> ProgressFun -> IO (Maybe Dataset)
+createCopy' driver path dataset strict options progressFun
+  = withCString path $ \p ->
+    withDataset dataset $ \ds -> do
+    let s = if strict then 1 else 0
+        o = toOptionList options
+    pFunc <- wrapProgressFun progressFun
+    ptr <- {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr)
+    freeHaskellFunPtr pFunc 
+    newDatasetHandle ptr
+
+createCopy :: Driver -> String -> Dataset -> Bool -> DriverOptions
+           -> IO (Maybe Dataset)
+createCopy driver path dataset strict options
+  = createCopy' driver path dataset strict options (\_ _ _ -> return 1)
+
+type ProgressFun = CDouble -> Ptr CChar -> Ptr () -> IO CInt
+
+foreign import ccall "wrapper"
+  wrapProgressFun :: ProgressFun -> IO (FunPtr ProgressFun)
+
 
 newDatasetHandle :: Ptr Dataset -> IO (Maybe Dataset)
 newDatasetHandle p =

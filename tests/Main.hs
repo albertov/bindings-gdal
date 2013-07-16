@@ -37,6 +37,33 @@ case_can_create_compressed_gtiff
     flushCache (fromJust ds)
     assertExistsAndSizeGreaterThan p 20000
 
+case_can_create_and_open_dataset :: IO ()
+case_can_create_and_open_dataset
+  = withSystemTempDirectory "test." $ \tmpDir -> do
+    let p = joinPath [tmpDir, "test.tif"]
+        d = driverByName "GTIFF"
+    assertBool "Could not load Gtiff driver" (isJust d)
+    ds <- create (fromJust d) p 100 100 1 GDT_Int16 []
+    assertBool "Could not create dataset" (isJust ds)
+    flushCache (fromJust ds)
+    ds2 <- open p GA_ReadOnly
+    assertBool "Could not open dataset" (isJust ds2)
+
+case_can_create_and_createCopy_dataset :: IO ()
+case_can_create_and_createCopy_dataset
+  = withSystemTempDirectory "test." $ \tmpDir -> do
+    let p  = joinPath [tmpDir, "test.tif"]
+        p2 = joinPath [tmpDir, "test2.tif"]
+        d  = driverByName "GTIFF"
+    assertBool "Could not load Gtiff driver" (isJust d)
+    ds <- create (fromJust d) p 100 100 1 GDT_Int16 []
+    assertBool "Could not create dataset" (isJust ds)
+    flushCache (fromJust ds)
+    ds2 <- createCopy (fromJust d) p2 (fromJust ds) True []
+    assertBool "Could not copy dataset" (isJust ds2)
+    flushCache (fromJust ds2)
+    assertExistsAndSizeGreaterThan p 0
+
 
 case_can_get_existing_raster_band :: IO ()
 case_can_get_existing_raster_band = do
