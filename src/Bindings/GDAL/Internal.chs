@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GADTs #-}
 
 module Bindings.GDAL.Internal (
@@ -10,19 +11,19 @@ module Bindings.GDAL.Internal (
   , Access (..)
   , ColorInterpretation (..)
   , PaletteInterpretation (..)
-  , Error (..)
+  , GDALException
+  , isGDALException
   , Geotransform (..)
   , MaybeIOVector
-  , ProgressFun
-
   , DriverOptions
-
   , MajorObject
   , Dataset
   , Band
   , Driver
   , ColorTable
   , RasterAttributeTable
+
+  , setQuietErrorHandler
 
   , registerAllDrivers
   , driverByName
@@ -32,7 +33,6 @@ module Bindings.GDAL.Internal (
   , flushCache
   , open
   , openShared
-  , createCopy'
   , createCopy
 
   , datatypeSize
@@ -48,7 +48,7 @@ module Bindings.GDAL.Internal (
   , withBand
   , bandDatatype
   , bandBlockSize
-  , bandblockLen
+  , bandBlockLen
   , bandSize
   , bandNodataValue
   , setBandNodataValue
@@ -61,12 +61,14 @@ module Bindings.GDAL.Internal (
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
-import Control.Concurrent (newMVar, takeMVar, putMVar, MVar)
-import Control.Exception (finally, bracket)
+import Control.Concurrent (newMVar, takeMVar, putMVar, MVar, runInBoundThread,
+                           rtsSupportsBoundThreads)
+import Control.Exception (finally, bracket, throw, Exception(..), SomeException)
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
 import Data.Complex (Complex(..), realPart, imagPart)
+import Data.Maybe (isJust)
 import Data.Typeable (Typeable, cast, typeOf)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
@@ -86,7 +88,41 @@ import System.IO.Unsafe (unsafePerformIO)
 #include "cpl_string.h"
 #include "cpl_error.h"
 
+data GDALException = GDALException Error String
+     deriving (Show, Typeable)
+
+instance Exception GDALException
+
+isGDALException :: SomeException -> Bool
+isGDALException e = isJust (fromException e :: Maybe GDALException)
+
 {# enum CPLErr as Error {upcaseFirstLetter} deriving (Eq,Show) #}
+
+
+type ErrorHandler = CInt -> CInt -> CString -> IO ()
+
+foreign import ccall "cpl_error.h &CPLQuietErrorHandler"
+  c_quietErrorHandler :: FunPtr ErrorHandler
+
+foreign import ccall "cpl_error.h CPLSetErrorHandler"
+  c_setErrorHandler :: FunPtr ErrorHandler -> IO (FunPtr ErrorHandler)
+
+foreign import ccall "wrapper"
+  wrapErrorHandler :: ErrorHandler -> IO (FunPtr ErrorHandler)
+
+setQuietErrorHandler :: IO ()
+setQuietErrorHandler = setErrorHandler c_quietErrorHandler
+
+setErrorHandler :: FunPtr ErrorHandler -> IO ()
+setErrorHandler h = c_setErrorHandler h >>= (\_->return ())
+
+
+throwIfError :: String -> IO CInt -> IO ()
+throwIfError msg act = do
+    e <- liftM toEnumC act
+    case e of
+      CE_None -> return ()
+      e       -> throw $ GDALException e msg
 
 {# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
 instance Show Datatype where
@@ -141,7 +177,11 @@ instance Show PaletteInterpretation where
 newtype Dataset = Dataset (ForeignPtr Dataset, Mutex)
 
 withDataset, withDataset' :: Dataset -> (Ptr Dataset -> IO b) -> IO b
-withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
+withDataset ds@(Dataset (_, m)) fun
+  = runInBoundThread' $ withMutex m $ withDataset' ds fun
+
+runInBoundThread' a
+    = if rtsSupportsBoundThreads then runInBoundThread a else a
 
 withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 
@@ -155,24 +195,23 @@ withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 {# fun unsafe GDALGetDriverByName as c_driverByName
     { `String' } -> `Driver' id #}
 
-driverByName :: String -> IO (Maybe Driver)
+driverByName :: String -> IO Driver
 driverByName s = do
     driver@(Driver ptr) <- c_driverByName s
-    return $ if ptr==nullPtr then Nothing else Just driver
-
+    if ptr==nullPtr
+        then throw $ GDALException CE_Failure "failed to load driver"
+        else return driver
 
 type DriverOptions = [(String,String)]
 
 create :: String -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
-       -> IO (Maybe Dataset)
+       -> IO Dataset
 create drv path nx ny bands dtype options = do
-    driver <- driverByName drv
-    case driver of
-      Nothing -> return Nothing
-      Just d  -> create' d path nx ny bands dtype options
+    d <- driverByName  drv
+    create' d path nx ny bands dtype options
 
 create' :: Driver -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
-       -> IO (Maybe Dataset)
+       -> IO Dataset
 create' drv path nx ny bands dtype options = withCString path $ \path' -> do
     opts <- toOptionList options
     ptr <- {#call GDALCreate as ^#}
@@ -186,13 +225,13 @@ create' drv path nx ny bands dtype options = withCString path $ \path' -> do
     newDatasetHandle ptr
 
 {# fun GDALOpen as open
-    { `String', fromEnumC `Access'} -> `Maybe Dataset' newDatasetHandle* #}
+    { `String', fromEnumC `Access'} -> `Dataset' newDatasetHandle* #}
 
 {# fun GDALOpen as openShared
-    { `String', fromEnumC `Access'} -> `Maybe Dataset' newDatasetHandle* #}
+    { `String', fromEnumC `Access'} -> `Dataset' newDatasetHandle* #}
 
 createCopy' :: Driver -> String -> Dataset -> Bool -> DriverOptions
-            -> ProgressFun -> IO (Maybe Dataset)
+            -> ProgressFun -> IO Dataset
 createCopy' driver path dataset strict options progressFun
   = withCString path $ \p ->
     withDataset dataset $ \ds ->
@@ -202,15 +241,15 @@ createCopy' driver path dataset strict options progressFun
         {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr) >>=
             newDatasetHandle
 
-withProgressFun f = bracket (wrapProgressFun f) freeHaskellFunPtr
+withProgressFun = withCCallback wrapProgressFun
+
+withCCallback w f = bracket (w f) freeHaskellFunPtr
 
 createCopy :: String -> String -> Dataset -> Bool -> DriverOptions
-           -> IO (Maybe Dataset)
+           -> IO Dataset
 createCopy driver path dataset strict options = do
-    d <- driverByName driver
-    case d of
-      Nothing -> return Nothing
-      Just d' -> createCopy' d' path dataset strict options (\_ _ _ -> return 1)
+  d <- driverByName driver
+  createCopy' d path dataset strict options (\_ _ _ -> return 1)
 
 type ProgressFun = CDouble -> Ptr CChar -> Ptr () -> IO CInt
 
@@ -218,17 +257,18 @@ foreign import ccall "wrapper"
   wrapProgressFun :: ProgressFun -> IO (FunPtr ProgressFun)
 
 
-newDatasetHandle :: Ptr Dataset -> IO (Maybe Dataset)
+newDatasetHandle :: Ptr Dataset -> IO Dataset
 newDatasetHandle p =
-    if p==nullPtr then return Nothing
-    else do fp <- newForeignPtr closeDataset p
-            mutex <- newMutex
-            return $ Just $ Dataset (fp, mutex)
+    if p==nullPtr
+        then throw $ GDALException CE_Failure "Could not create dataset"
+        else do fp <- newForeignPtr closeDataset p
+                mutex <- newMutex
+                return $ Dataset (fp, mutex)
 
 foreign import ccall "gdal.h &GDALClose"
   closeDataset :: FunPtr (Ptr (Dataset) -> IO ())
 
-createMem:: Int -> Int -> Int -> Datatype -> DriverOptions -> IO (Maybe Dataset)
+createMem:: Int -> Int -> Int -> Datatype -> DriverOptions -> IO Dataset
 createMem = create "MEM" ""
 
 {# fun GDALFlushCache as flushCache
@@ -243,21 +283,19 @@ createMem = create "MEM" ""
 data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
     deriving (Eq, Show)
 
-datasetGeotransform :: Dataset -> IO (Maybe Geotransform)
+datasetGeotransform :: Dataset -> IO Geotransform
 datasetGeotransform ds = withDataset' ds $ \dPtr -> do
     allocaArray 6 $ \a -> do
-      err <- {#call unsafe GDALGetGeoTransform as ^#} dPtr a
-      case toEnumC err of
-           CE_None -> liftM Just $ Geotransform
-                       <$> liftM realToFrac (peekElemOff a 0)
-                       <*> liftM realToFrac (peekElemOff a 1)
-                       <*> liftM realToFrac (peekElemOff a 2)
-                       <*> liftM realToFrac (peekElemOff a 3)
-                       <*> liftM realToFrac (peekElemOff a 4)
-                       <*> liftM realToFrac (peekElemOff a 5)
-           _       -> return Nothing
+      throwIfError "could not get geotransform" $
+         {#call unsafe GDALGetGeoTransform as ^#} dPtr a
+      Geotransform <$> liftM realToFrac (peekElemOff a 0)
+                   <*> liftM realToFrac (peekElemOff a 1)
+                   <*> liftM realToFrac (peekElemOff a 2)
+                   <*> liftM realToFrac (peekElemOff a 3)
+                   <*> liftM realToFrac (peekElemOff a 4)
+                   <*> liftM realToFrac (peekElemOff a 5)
 
-setDatasetGeotransform :: Dataset -> Geotransform -> IO (Error)
+setDatasetGeotransform :: Dataset -> Geotransform -> IO ()
 setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
     allocaArray 6 $ \a -> do
         let (Geotransform g0 g1 g2 g3 g4 g5) = gt
@@ -267,24 +305,30 @@ setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
         pokeElemOff a 3 (realToFrac g3)
         pokeElemOff a 4 (realToFrac g4)
         pokeElemOff a 5 (realToFrac g5)
-        liftM toEnumC $ {#call unsafe GDALSetGeoTransform as ^#} dPtr a
+        throwIfError "could not set geotransform" $
+            {#call unsafe GDALSetGeoTransform as ^#} dPtr a
 
-withBand :: Dataset -> Int -> (Maybe Band -> IO a) -> IO a
+withBand :: Dataset -> Int -> (Band -> IO a) -> IO a
 withBand ds band f = withDataset ds $ \dPtr -> do
     rBand@(Band p) <- {# call unsafe GDALGetRasterBand as ^ #}
-                              dPtr (fromIntegral band)
-    f (if p == nullPtr then Nothing else Just rBand)
+                         dPtr (fromIntegral band)
+    if p == nullPtr
+        then throw $
+            GDALException CE_Failure ("could not get band #" ++ show band)
+        else f rBand
 
 {# fun pure unsafe GDALGetRasterDataType as bandDatatype
    { id `Band'} -> `Datatype' toEnumC #}
 
 bandBlockSize :: Band -> (Int,Int)
 bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr ->
+   -- unsafePerformIO is safe here since the block size cant change once
+   -- a dataset is created
    {#call unsafe GDALGetBlockSize as ^#} band xPtr yPtr >>
    liftA2 (,) (liftM fromIntegral $ peek xPtr) (liftM fromIntegral $ peek yPtr)
 
-bandblockLen :: Band -> Int
-bandblockLen = uncurry (*) . bandBlockSize
+bandBlockLen :: Band -> Int
+bandBlockLen = uncurry (*) . bandBlockSize
 
 bandSize :: Band -> (Int, Int)
 bandSize band
@@ -345,11 +389,12 @@ readBand :: (Storable a, HasDatatype (Ptr a))
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> IO (Maybe (Vector a))
+  -> IO (Vector a)
 readBand band xoff yoff sx sy bx by pxs lns = do
     fp <- mallocForeignPtrArray (bx * by)
-    err <- withForeignPtr fp $ \ptr -> do
-        _ <- {#call GDALRasterAdviseRead as ^#}
+    withForeignPtr fp $ \ptr -> do
+      throwIfError "could not advise read" $
+        {#call GDALRasterAdviseRead as ^#}
           band
           (fromIntegral xoff)
           (fromIntegral yoff)
@@ -359,6 +404,7 @@ readBand band xoff yoff sx sy bx by pxs lns = do
           (fromIntegral by)
           (fromEnumC (datatype ptr))
           (castPtr nullPtr)
+      throwIfError "could not read band" $
         {#call GDALRasterIO as ^#}
           band
           (fromEnumC GF_Read) 
@@ -372,9 +418,7 @@ readBand band xoff yoff sx sy bx by pxs lns = do
           (fromEnumC (datatype ptr))
           (fromIntegral pxs)
           (fromIntegral lns)
-    case toEnumC err of
-         CE_None -> return $ Just $ unsafeFromForeignPtr0 fp (bx * by)
-         _       -> return Nothing
+    return $ unsafeFromForeignPtr0 fp (bx * by)
         
 writeBand :: (Storable a, HasDatatype (Ptr a))
   => Band
@@ -383,13 +427,14 @@ writeBand :: (Storable a, HasDatatype (Ptr a))
   -> Int -> Int
   -> Int -> Int
   -> Vector a
-  -> IO (Error)
+  -> IO ()
 writeBand band xoff yoff sx sy bx by pxs lns vec = do
     let nElems    = bx * by
         (fp, len) = unsafeToForeignPtr0 vec
     if nElems /= len
-      then return CE_Failure
-      else withForeignPtr fp $ \ptr -> liftM toEnumC $
+      then throw $ GDALException CE_Failure "vector of wrong size"
+      else withForeignPtr fp $ \ptr -> do
+        throwIfError "could not write band" $
           {#call GDALRasterIO as ^#}
             band
             (fromEnumC GF_Write) 
@@ -404,8 +449,11 @@ writeBand band xoff yoff sx sy bx by pxs lns vec = do
             (fromIntegral pxs)
             (fromIntegral lns)
 
+
 data Block where
     Block :: (Typeable a, Storable a) => Vector a -> Block
+
+type MaybeIOVector a = IO (Maybe (Vector a))
 
 readBandBlock :: (Storable a, Typeable a)
   => Band -> Int -> Int -> MaybeIOVector a
@@ -417,54 +465,44 @@ readBandBlock b x y = do
 readBandBlock' :: Band -> Int -> Int -> IO (Maybe Block)
 readBandBlock' b x y = 
   case bandDatatype b of
-    GDT_Byte ->
-      maybeReturn Block (readIt b x y :: MaybeIOVector Word8)
-    GDT_Int16 ->
-      maybeReturn Block (readIt b x y :: MaybeIOVector Int16)
-    GDT_Int32 ->
-      maybeReturn Block (readIt b x y :: MaybeIOVector Int32)
-    GDT_Float32 ->
-      maybeReturn Block (readIt b x y :: MaybeIOVector Float)
-    GDT_Float64 ->
-      maybeReturn Block (readIt b x y :: MaybeIOVector Double)
-    GDT_CInt16 ->
-      maybeReturn Block (readIt b x y :: MaybeIOVector (Complex Float))
-    GDT_CInt32 ->
-      maybeReturn Block (readIt b x y :: MaybeIOVector (Complex Double))
-    GDT_CFloat32 ->
-      maybeReturn Block (readIt b x y :: MaybeIOVector (Complex Float))
-    GDT_CFloat64 ->
-      maybeReturn Block (readIt b x y :: MaybeIOVector (Complex Double))
-    _ -> return Nothing
+    GDT_Byte     -> Just . Block <$> (readIt b x y :: IOVector Word8)
+    GDT_Int16    -> Just . Block <$> (readIt b x y :: IOVector Int16)
+    GDT_Int32    -> Just . Block <$> (readIt b x y :: IOVector Int32)
+    GDT_Float32  -> Just . Block <$> (readIt b x y :: IOVector Float)
+    GDT_Float64  -> Just . Block <$> (readIt b x y :: IOVector Double)
+    GDT_CInt16   -> Just . Block <$> (readIt b x y :: IOVector (Complex Float))
+    GDT_CInt32   -> Just . Block <$> (readIt b x y :: IOVector (Complex Double))
+    GDT_CFloat32 -> Just . Block <$> (readIt b x y :: IOVector (Complex Float))
+    GDT_CFloat64 -> Just . Block <$> (readIt b x y :: IOVector (Complex Double))
+    _            -> return Nothing
   where
-    maybeReturn f act = act >>= maybe (return Nothing) (return . Just . f)
+    readIt :: Storable a => Band -> Int -> Int -> IOVector a
     readIt b x y = do
-      let l  = bandblockLen b
-          rb = {#call GDALReadBlock as ^#} b (fromIntegral x) (fromIntegral y)
-      f <- mallocForeignPtrArray l
-      e <- withForeignPtr f (rb . castPtr)
-      if toEnumC e == CE_None
-         then return $ Just $ unsafeFromForeignPtr0 f l
-         else return Nothing
+      f <- mallocForeignPtrArray (bandBlockLen b)
+      withForeignPtr f $ \ptr ->
+        throwIfError "could not read block" $
+          {#call GDALReadBlock as ^#}
+            b (fromIntegral x) (fromIntegral y) (castPtr ptr)
+      return $ unsafeFromForeignPtr0 f (bandBlockLen b)
 
-type MaybeIOVector a = IO (Maybe (Vector a))
+type IOVector a = IO (Vector a)
 
 writeBandBlock :: (Storable a, Typeable a)
   => Band
   -> Int -> Int
   -> Vector a
-  -> IO (Error)
+  -> IO ()
 writeBandBlock b x y vec = do
-    let nElems    = bandblockLen b
+    let nElems    = bandBlockLen b
         (fp, len) = unsafeToForeignPtr0 vec
-    if nElems /= len || typeOf vec /= typeOfBand b
-      then return CE_Failure
-      else withForeignPtr fp $ \ptr -> liftM toEnumC $
-          {#call GDALWriteBlock as ^#}
-            b
-            (fromIntegral x)
-            (fromIntegral y)
-            (castPtr ptr)
+    if nElems /= len 
+      then throw $ GDALException CE_Failure "wrongly sized vector"
+      else if typeOf vec /= typeOfBand b
+           then throw $ GDALException CE_Failure "wrongly typed vector"
+           else withForeignPtr fp $ \ptr ->
+                throwIfError "could not write block" $
+                   {#call GDALWriteBlock as ^#}
+                      b (fromIntegral x) (fromIntegral y) (castPtr ptr)
 
 typeOfBand = typeOfdatatype . bandDatatype
 
