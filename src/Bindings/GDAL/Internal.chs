@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Bindings.GDAL.Internal (
     Datatype (..)
@@ -56,6 +57,7 @@ import Control.Exception (finally)
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
+import Data.Complex (Complex(..), realPart, imagPart)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
 import Foreign.C.String
@@ -272,6 +274,30 @@ instance HasDatatype (Ptr Int16)  where datatype _ = GDT_Int16
 instance HasDatatype (Ptr Int32)  where datatype _ = GDT_Int32
 instance HasDatatype (Ptr Float)  where datatype _ = GDT_Float32
 instance HasDatatype (Ptr Double) where datatype _ = GDT_Float64
+-- GDT_CInt16 or GDT_CInt32 can be written as Complex (Float|Double) but
+-- will be truncated by GDAL. Both can be read as Complex (Float|Double).
+-- This is a limitation imposed by Complex a which constrains a to be a
+-- RealFloat.
+instance HasDatatype (Ptr (Complex Float)) where datatype _ = GDT_CFloat32
+instance HasDatatype (Ptr (Complex Double)) where datatype _ = GDT_CFloat64
+
+
+instance (RealFloat a, Storable a) => Storable (Complex a) where
+  sizeOf _ = sizeOf (undefined :: a) * 2
+  alignment _ = alignment (undefined :: a)
+ 
+  {-# SPECIALIZE INLINE peek :: Ptr (Complex Float) -> IO (Complex Float) #-}
+  {-# SPECIALIZE INLINE peek :: Ptr (Complex Double) -> IO (Complex Double) #-}
+  peek p = (:+) <$> peekElemOff (castPtr p) 0 <*> peekElemOff (castPtr p) 1
+
+  {-# SPECIALIZE INLINE
+      poke :: Ptr (Complex Float) -> Complex Float -> IO () #-}
+  {-# SPECIALIZE INLINE
+      poke :: Ptr (Complex Double) -> Complex Double -> IO () #-}
+  poke p v = pokeElemOff (castPtr p) 0 (realPart v) >>
+             pokeElemOff (castPtr p) 1 (imagPart v)
+
+
 
 readBand :: (Storable a, HasDatatype (Ptr a))
   => RasterBand
@@ -283,7 +309,7 @@ readBand :: (Storable a, HasDatatype (Ptr a))
 readBand band xoff yoff sx sy bx by pxs lns = do
     fp <- mallocForeignPtrArray (bx * by)
     err <- withForeignPtr fp $ \ptr -> do
-        {#call GDALRasterAdviseRead as ^#}
+        _ <- {#call GDALRasterAdviseRead as ^#}
           band
           (fromIntegral xoff)
           (fromIntegral yoff)

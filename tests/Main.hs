@@ -1,8 +1,9 @@
 {-# LANGUAGE TemplateHaskell, ScopedTypeVariables #-}
 
-import Control.Applicative
-import Control.Monad (forM_)
-import Control.Exception (handle, SomeException)
+import Control.Monad (forM_, guard)
+import Control.Exception (tryJust)
+import System.IO.Error (isDoesNotExistError)
+import Data.Complex
 import Data.Int
 import Data.Word
 import Data.Maybe (fromJust, isJust)
@@ -127,6 +128,19 @@ case_write_and_read_band_double = write_and_read_band GDT_Float64 vec
    where vec = St.generate 10000 $ \i -> 1.1 * fromIntegral i
          vec :: St.Vector Double
 
+case_write_and_read_band_complex_float32 :: IO ()
+case_write_and_read_band_complex_float32 = write_and_read_band GDT_CFloat32 vec
+   where vec = St.generate 10000 fun
+         vec :: St.Vector (Complex Float)
+         fun i = (fromIntegral i * 1.1) :+ (fromIntegral i * 2.2)
+
+case_sort_of_write_and_read_band_complex_int16 :: IO ()
+case_sort_of_write_and_read_band_complex_int16
+  = write_and_read_band GDT_CInt16 vec
+    where vec = St.generate 10000 fun
+          vec :: St.Vector (Complex Float)
+          fun i = (fromIntegral i) :+ (fromIntegral i)
+
 
 write_and_read_band dtype vec = do
     Just ds <- createMem 100 100 1 dtype []
@@ -206,9 +220,10 @@ case_fill_and_read_band_byte = do
 --
 
 getFileSize :: FilePath -> IO (Maybe Integer)
-getFileSize p
-    = handle (\(_ :: SomeException) -> return Nothing) $
-        withBinaryFile p ReadMode $ \h -> Just <$> hFileSize h
+getFileSize p = do
+    r <- tryJust (guard . isDoesNotExistError)
+                 (withBinaryFile p ReadMode hFileSize)
+    return (case r of Left _ -> Nothing; Right s -> Just s)
 
 assertExistsAndSizeGreaterThan :: FilePath -> Integer -> IO ()
 assertExistsAndSizeGreaterThan p s = do
