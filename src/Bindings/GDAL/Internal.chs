@@ -61,8 +61,7 @@ module Bindings.GDAL.Internal (
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
-import Control.Concurrent (newMVar, takeMVar, putMVar, MVar, runInBoundThread,
-                           rtsSupportsBoundThreads)
+import Control.Concurrent (newMVar, takeMVar, putMVar, MVar)
 import Control.Exception (finally, bracket, throw, Exception(..), SomeException)
 import Control.Monad (liftM, foldM)
 
@@ -177,11 +176,7 @@ instance Show PaletteInterpretation where
 newtype Dataset = Dataset (ForeignPtr Dataset, Mutex)
 
 withDataset, withDataset' :: Dataset -> (Ptr Dataset -> IO b) -> IO b
-withDataset ds@(Dataset (_, m)) fun
-  = runInBoundThread' $ withMutex m $ withDataset' ds fun
-
-runInBoundThread' a
-    = if rtsSupportsBoundThreads then runInBoundThread a else a
+withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
 
 withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 
