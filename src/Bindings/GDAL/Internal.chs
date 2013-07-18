@@ -19,7 +19,7 @@ module Bindings.GDAL.Internal (
 
   , MajorObject
   , Dataset
-  , RasterBand
+  , Band
   , Driver
   , ColorTable
   , RasterAttributeTable
@@ -45,15 +45,17 @@ module Bindings.GDAL.Internal (
   , datasetGeotransform
   , setDatasetGeotransform
 
-  , withRasterBand
+  , withBand
   , bandDatatype
-  , blockSize
-  , blockLen
+  , bandBlockSize
+  , bandblockLen
   , bandSize
+  , bandNodataValue
+  , setBandNodataValue
   , readBand
-  , readBlock
+  , readBandBlock
   , writeBand
-  , writeBlock
+  , writeBandBlock
   , fillBand
 
 ) where
@@ -143,7 +145,7 @@ withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
 
 withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 
-{#pointer GDALRasterBandH as RasterBand newtype#}
+{#pointer GDALRasterBandH as Band newtype#}
 {#pointer GDALDriverH as Driver newtype#}
 {#pointer GDALColorTableH as ColorTable newtype#}
 {#pointer GDALRasterAttributeTableH as RasterAttributeTable newtype#}
@@ -267,31 +269,40 @@ setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
         pokeElemOff a 5 (realToFrac g5)
         liftM toEnumC $ {#call unsafe GDALSetGeoTransform as ^#} dPtr a
 
-withRasterBand :: Dataset -> Int -> (Maybe RasterBand -> IO a) -> IO a
-withRasterBand ds band f = withDataset ds $ \dPtr -> do
-    rBand@(RasterBand p) <- {# call unsafe GDALGetRasterBand as ^ #}
+withBand :: Dataset -> Int -> (Maybe Band -> IO a) -> IO a
+withBand ds band f = withDataset ds $ \dPtr -> do
+    rBand@(Band p) <- {# call unsafe GDALGetRasterBand as ^ #}
                               dPtr (fromIntegral band)
     f (if p == nullPtr then Nothing else Just rBand)
 
 {# fun pure unsafe GDALGetRasterDataType as bandDatatype
-   { id `RasterBand'} -> `Datatype' toEnumC #}
+   { id `Band'} -> `Datatype' toEnumC #}
 
-blockSize :: RasterBand -> (Int,Int)
-blockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr ->
+bandBlockSize :: Band -> (Int,Int)
+bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr ->
    {#call unsafe GDALGetBlockSize as ^#} band xPtr yPtr >>
    liftA2 (,) (liftM fromIntegral $ peek xPtr) (liftM fromIntegral $ peek yPtr)
 
-blockLen :: RasterBand -> Int
-blockLen = uncurry (*) . blockSize
+bandblockLen :: Band -> Int
+bandblockLen = uncurry (*) . bandBlockSize
 
-bandSize :: RasterBand -> (Int, Int)
+bandSize :: Band -> (Int, Int)
 bandSize band
   = ( fromIntegral . {# call pure unsafe GDALGetRasterBandXSize as ^#} $ band
     , fromIntegral . {# call pure unsafe GDALGetRasterBandYSize as ^#} $ band
     )
 
+bandNodataValue :: Band -> IO (Maybe Double)
+bandNodataValue b = alloca $ \p -> do
+   value <- liftM realToFrac $ {#call unsafe GDALGetRasterNoDataValue as ^#} b p
+   hasNodata <- liftM toBool $ peek p
+   return (if hasNodata then Just value else Nothing)
+   
+{# fun GDALSetRasterNoDataValue as setBandNodataValue
+   { id `Band', `Double'} -> `Error' toEnumC #}
+
 {# fun GDALFillRaster as fillBand
-    { id `RasterBand', `Double', `Double'} -> `Error' toEnumC #}
+    { id `Band', `Double', `Double'} -> `Error' toEnumC #}
 
 class HasDatatype a where
     datatype :: a -> Datatype
@@ -329,7 +340,7 @@ instance (RealFloat a, Storable a) => Storable (Complex a) where
 
 
 readBand :: (Storable a, HasDatatype (Ptr a))
-  => RasterBand
+  => Band
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -366,7 +377,7 @@ readBand band xoff yoff sx sy bx by pxs lns = do
          _       -> return Nothing
         
 writeBand :: (Storable a, HasDatatype (Ptr a))
-  => RasterBand
+  => Band
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -396,15 +407,15 @@ writeBand band xoff yoff sx sy bx by pxs lns vec = do
 data Block where
     Block :: (Typeable a, Storable a) => Vector a -> Block
 
-readBlock :: (Storable a, Typeable a)
-  => RasterBand -> Int -> Int -> MaybeIOVector a
-readBlock b x y = do
-  block <- readBlock' b x y
-  liftM (maybe Nothing (\(Block a) -> cast a)) $ readBlock' b x y
+readBandBlock :: (Storable a, Typeable a)
+  => Band -> Int -> Int -> MaybeIOVector a
+readBandBlock b x y = do
+  block <- readBandBlock' b x y
+  liftM (maybe Nothing (\(Block a) -> cast a)) $ readBandBlock' b x y
 
 
-readBlock' :: RasterBand -> Int -> Int -> IO (Maybe Block)
-readBlock' b x y = 
+readBandBlock' :: Band -> Int -> Int -> IO (Maybe Block)
+readBandBlock' b x y = 
   case bandDatatype b of
     GDT_Byte ->
       maybeReturn Block (readIt b x y :: MaybeIOVector Word8)
@@ -428,7 +439,7 @@ readBlock' b x y =
   where
     maybeReturn f act = act >>= maybe (return Nothing) (return . Just . f)
     readIt b x y = do
-      let l  = blockLen b
+      let l  = bandblockLen b
           rb = {#call GDALReadBlock as ^#} b (fromIntegral x) (fromIntegral y)
       f <- mallocForeignPtrArray l
       e <- withForeignPtr f (rb . castPtr)
@@ -438,13 +449,13 @@ readBlock' b x y =
 
 type MaybeIOVector a = IO (Maybe (Vector a))
 
-writeBlock :: (Storable a, Typeable a)
-  => RasterBand
+writeBandBlock :: (Storable a, Typeable a)
+  => Band
   -> Int -> Int
   -> Vector a
   -> IO (Error)
-writeBlock b x y vec = do
-    let nElems    = blockLen b
+writeBandBlock b x y vec = do
+    let nElems    = bandblockLen b
         (fp, len) = unsafeToForeignPtr0 vec
     if nElems /= len || typeOf vec /= typeOfBand b
       then return CE_Failure

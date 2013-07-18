@@ -61,7 +61,7 @@ case_can_create_and_createCopy_dataset
 case_can_get_existing_raster_band :: IO ()
 case_can_get_existing_raster_band = do
     Just ds <- createMem 10 10 1 GDT_Int16 []
-    withRasterBand ds 1 $ assertBool "Could not get band 1" . isJust
+    withBand ds 1 $ assertBool "Could not get band 1" . isJust
 
 case_can_set_and_get_geotransform :: IO ()
 case_can_set_and_get_geotransform = do
@@ -82,28 +82,39 @@ case_can_set_and_get_projection = do
     proj2 <- datasetProjection ds
     assertEqual "projection is not the same that was set" proj proj2
 
-case_can_get_blockSize :: IO ()
-case_can_get_blockSize = do
+case_can_set_and_get_nodata_value :: IO ()
+case_can_set_and_get_nodata_value = do
     Just ds <- createMem 10 10 1 GDT_Int16 []
-    bsize <- withRasterBand ds 1 (return . blockSize . fromJust)
+    withBand ds 1 $ \(Just b) -> do
+        nodata <- bandNodataValue b
+        assertBool "has unexpected nodata" (isNothing nodata)
+        setBandNodataValue b (-1)
+        nodata2 <- bandNodataValue b
+        assertBool "nodata was not set" (isJust nodata2)
+        assertEqual "nodata is not the same as set" (-1) (fromJust nodata2)
+
+case_can_get_bandBlockSize :: IO ()
+case_can_get_bandBlockSize = do
+    Just ds <- createMem 10 10 1 GDT_Int16 []
+    bsize <- withBand ds 1 (return . bandBlockSize . fromJust)
     assertEqual "unexpected block size" (10, 1) bsize
 
 case_can_get_bandSize :: IO ()
 case_can_get_bandSize = do
     Just ds <- createMem 10 10 1 GDT_Int16 []
-    bsize <- withRasterBand ds 1 (return . bandSize . fromJust)
+    bsize <- withBand ds 1 (return . bandSize . fromJust)
     assertEqual "unexpected band size" (10, 10) bsize
 
 case_cannot_get_nonexisting_raster_band :: IO ()
 case_cannot_get_nonexisting_raster_band = do
     Just ds <- createMem 10 10 1 GDT_Int16 []
-    withRasterBand ds 2 $ assertBool "Could get band 2" . not . isJust
+    withBand ds 2 $ assertBool "Could get band 2" . not . isJust
 
 case_can_get_rasterband_datatype :: IO ()
 case_can_get_rasterband_datatype = do
     let dt = GDT_Int16
     Just ds <- createMem 10 10 1 dt []
-    withRasterBand ds 1 $ \(Just band) ->
+    withBand ds 1 $ \(Just band) ->
         assertEqual "datatype mismatch" dt (bandDatatype band)
 
 case_write_and_read_band_int16 :: IO ()
@@ -136,7 +147,7 @@ case_sort_of_write_and_read_band_complex_int16
 
 write_and_read_band dtype vec = do
     Just ds <- createMem 100 100 1 dtype []
-    withRasterBand ds 1 $ \(Just band) -> do
+    withBand ds 1 $ \(Just band) -> do
         err <- writeBand band 0 0 100 100 100 100 0 0 vec
         assertEqual "error writing band" err CE_None
         vec2' <- readBand band 0 0 100 100 100 100 0 0
@@ -146,10 +157,10 @@ write_and_read_band dtype vec = do
 
 write_and_read_block dtype len vec = do
     Just ds <- createMem len 1 1 dtype []
-    withRasterBand ds 1 $ \(Just band) -> do
-        err <- writeBlock band 0 0 vec
+    withBand ds 1 $ \(Just band) -> do
+        err <- writeBandBlock band 0 0 vec
         assertEqual "error writing band" err CE_None
-        vec2' <- readBlock band 0 0
+        vec2' <- readBandBlock band 0 0
         let vec2 = fromJust vec2'
         assertBool "error reading band" (isJust vec2')
         assertEqualVectors vec vec2
@@ -170,7 +181,7 @@ case_fill_and_read_band_int16 = do
     forM_ [GDT_Int16, GDT_Int32] $ \dt -> do
     forM_ ([-10..10] :: [Int16]) $ \value -> do
         Just ds <- createMem 100 100 1 dt []
-        withRasterBand ds 1 $ \(Just band) -> do
+        withBand ds 1 $ \(Just band) -> do
             performGC -- try to segfault by causing premature calls to GDALClose
             err <- fillBand band (fromIntegral value) 0
             assertEqual "error filling band" err CE_None
@@ -188,7 +199,7 @@ case_fill_and_read_band_double = do
     forM_ [GDT_Float32, GDT_Float64] $ \dt -> do
     forM_ ([(-10),(-9.5)..10] :: [Double]) $ \value -> do
         Just ds <- createMem 100 100 1 dt []
-        withRasterBand ds 1 $ \(Just band) -> do
+        withBand ds 1 $ \(Just band) -> do
             err <- fillBand band (realToFrac value) 0
             assertEqual "error filling band" err CE_None
             v <- readBand band 0 0 100 100 100 100 0 0
@@ -206,7 +217,7 @@ case_fill_and_read_band_byte = do
     forM_ [GDT_Byte, GDT_UInt16, GDT_UInt32] $ \dt -> do
     forM_ ([0..20] :: [Word8]) $ \value -> do
         Just ds <- createMem 100 100 1 dt []
-        withRasterBand ds 1 $ \(Just band) -> do
+        withBand ds 1 $ \(Just band) -> do
             performGC -- try to segfault by causing premature calls to GDALClose
             err <- fillBand band (fromIntegral value) 0
             assertEqual "error filling band" err CE_None
@@ -219,26 +230,26 @@ case_fill_and_read_band_byte = do
                 f False _ = False
             assertBool "read is different than filled" allEqual
 
-case_readBlock_returns_Just_on_good_type :: IO ()
-case_readBlock_returns_Just_on_good_type = do
+case_readBandBlock_returns_Just_on_good_type :: IO ()
+case_readBandBlock_returns_Just_on_good_type = do
     Just ds <- createMem 100 100 1 GDT_Int16 []
-    withRasterBand ds 1 $ \(Just band) -> do
-       good <- readBlock band 0 0 :: MaybeIOVector Int16
+    withBand ds 1 $ \(Just band) -> do
+       good <- readBandBlock band 0 0 :: MaybeIOVector Int16
        assertBool "Could not read good type" (isJust good)
 
-case_readBlock_returns_Nothing_on_bad_type :: IO ()
-case_readBlock_returns_Nothing_on_bad_type = do
+case_readBandBlock_returns_Nothing_on_bad_type :: IO ()
+case_readBandBlock_returns_Nothing_on_bad_type = do
     Just ds <- createMem 100 100 1 GDT_Int16 []
-    withRasterBand ds 1 $ \(Just band) -> do
-       bad <- readBlock band 0 0 :: MaybeIOVector Word8
+    withBand ds 1 $ \(Just band) -> do
+       bad <- readBandBlock band 0 0 :: MaybeIOVector Word8
        assertBool "Could read bad type" (isNothing bad)
 
-case_writeBlock_fails_when_writing_bad_type :: IO ()
-case_writeBlock_fails_when_writing_bad_type = do
+case_writeBandBlock_fails_when_writing_bad_type :: IO ()
+case_writeBandBlock_fails_when_writing_bad_type = do
     Just ds <- createMem 100 100 1 GDT_Int16 []
-    withRasterBand ds 1 $ \(Just band) -> do
-       let v = St.replicate (blockLen band) 0 :: St.Vector Word8
-       err <- writeBlock band 0 0 v
+    withBand ds 1 $ \(Just band) -> do
+       let v = St.replicate (bandblockLen band) 0 :: St.Vector Word8
+       err <- writeBandBlock band 0 0 v
        assertBool "Could write bad block" $ CE_None /= err
 
 --
