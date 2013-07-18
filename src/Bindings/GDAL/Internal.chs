@@ -173,9 +173,9 @@ instance Show PaletteInterpretation where
 {#pointer GDALMajorObjectH as MajorObject newtype#}
 {#pointer GDALDatasetH as Dataset foreign newtype nocode#}
 
-newtype Dataset = Dataset (ForeignPtr Dataset, Mutex)
+newtype (Dataset a) = Dataset (ForeignPtr (Dataset a), Mutex)
 
-withDataset, withDataset' :: Dataset -> (Ptr Dataset -> IO b) -> IO b
+withDataset, withDataset' :: (Dataset a) -> (Ptr (Dataset a) -> IO b) -> IO b
 withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
 
 withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
@@ -200,48 +200,73 @@ driverByName s = do
 type DriverOptions = [(String,String)]
 
 create :: String -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
-       -> IO Dataset
+       -> IO (Dataset a)
 create drv path nx ny bands dtype options = do
     d <- driverByName  drv
     create' d path nx ny bands dtype options
 
 create' :: Driver -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
-       -> IO Dataset
+       -> IO (Dataset a)
 create' drv path nx ny bands dtype options = withCString path $ \path' -> do
     opts <- toOptionList options
-    ptr <- {#call GDALCreate as ^#}
-             drv
-             path'
-             (fromIntegral nx)
-             (fromIntegral ny)
-             (fromIntegral bands)
-             (fromEnumC dtype)
-             opts
-    newDatasetHandle ptr
+    let nx'    = fromIntegral nx
+        ny'    = fromIntegral ny
+        bands' = fromIntegral bands
+        dtype' = fromEnumC dtype
+    create_ drv path' nx' ny' bands' dtype' opts >>= newDatasetHandle
 
-{# fun GDALOpen as open
-    { `String', fromEnumC `Access'} -> `Dataset' newDatasetHandle* #}
+foreign import ccall safe "gdal.h GDALCreate" create_
+  :: Driver
+  -> CString
+  -> CInt
+  -> CInt
+  -> CInt
+  -> CInt
+  -> Ptr CString
+  -> IO (Ptr (Dataset a))
 
-{# fun GDALOpen as openShared
-    { `String', fromEnumC `Access'} -> `Dataset' newDatasetHandle* #}
+open :: String -> Access -> IO (Dataset a)
+open p a = withCString p openIt
+  where openIt p' = open_ p' (fromEnumC a) >>= newDatasetHandle
 
-createCopy' :: Driver -> String -> Dataset -> Bool -> DriverOptions
-            -> ProgressFun -> IO Dataset
+foreign import ccall safe "gdal.h GDALOpen" open_
+   :: CString -> CInt -> IO (Ptr (Dataset a))
+
+openShared :: String -> Access -> IO (Dataset a)
+openShared p a = withCString p openIt
+  where openIt p' = openShared_ p' (fromEnumC a) >>= newDatasetHandle
+
+foreign import ccall safe "gdal.h GDALOpenShared" openShared_
+   :: CString -> CInt -> IO (Ptr (Dataset a))
+
+
+createCopy' :: Driver -> String -> (Dataset a) -> Bool -> DriverOptions
+            -> ProgressFun -> IO (Dataset a)
 createCopy' driver path dataset strict options progressFun
   = withCString path $ \p ->
     withDataset dataset $ \ds ->
     withProgressFun progressFun $ \pFunc -> do
         let s = fromBool strict
         o <- toOptionList options
-        {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr) >>=
-            newDatasetHandle
+        createCopy_ driver p ds s o pFunc (castPtr nullPtr) >>= newDatasetHandle
+
+foreign import ccall safe "gdal.h GDALCreateCopy" createCopy_
+  :: Driver
+  -> Ptr CChar
+  -> Ptr (Dataset a)
+  -> CInt
+  -> Ptr CString
+  -> FunPtr ProgressFun
+  -> Ptr ()
+  -> IO (Ptr (Dataset a))
+
 
 withProgressFun = withCCallback wrapProgressFun
 
 withCCallback w f = bracket (w f) freeHaskellFunPtr
 
-createCopy :: String -> String -> Dataset -> Bool -> DriverOptions
-           -> IO Dataset
+createCopy :: String -> String -> (Dataset a) -> Bool -> DriverOptions
+           -> IO (Dataset a)
 createCopy driver path dataset strict options = do
   d <- driverByName driver
   createCopy' d path dataset strict options (\_ _ _ -> return 1)
@@ -252,7 +277,7 @@ foreign import ccall "wrapper"
   wrapProgressFun :: ProgressFun -> IO (FunPtr ProgressFun)
 
 
-newDatasetHandle :: Ptr Dataset -> IO Dataset
+newDatasetHandle :: Ptr (Dataset a) -> IO (Dataset a)
 newDatasetHandle p =
     if p==nullPtr
         then throw $ GDALException CE_Failure "Could not create dataset"
@@ -261,28 +286,41 @@ newDatasetHandle p =
                 return $ Dataset (fp, mutex)
 
 foreign import ccall "gdal.h &GDALClose"
-  closeDataset :: FunPtr (Ptr (Dataset) -> IO ())
+  closeDataset :: FunPtr (Ptr (Dataset a) -> IO ())
 
-createMem:: Int -> Int -> Int -> Datatype -> DriverOptions -> IO Dataset
+createMem:: Int -> Int -> Int -> Datatype -> DriverOptions -> IO (Dataset a)
 createMem = create "MEM" ""
 
-{# fun GDALFlushCache as flushCache
-    {  withDataset*  `Dataset'} -> `()' #}
+flushCache d = withDataset d flushCache'
 
-{# fun unsafe GDALGetProjectionRef as datasetProjection
-    {  withDataset*  `Dataset'} -> `String' #}
+foreign import ccall safe "gdal.h GDALFlushCache" flushCache'
+        :: (Ptr (Dataset a)) -> (IO ())
 
-{# fun unsafe GDALSetProjection as setDatasetProjection
-    {  withDataset*  `Dataset', `String'} -> `Error' toEnumC #}
+
+datasetProjection :: Dataset a -> IO String
+datasetProjection d = withDataset d $ \d' -> do
+    p <- getProjection_ d'
+    peekCString p
+
+foreign import ccall unsafe "gdal.h GDALGetProjectionRef" getProjection_
+        :: (Ptr (Dataset a)) -> (IO (Ptr CChar))
+
+
+setDatasetProjection :: Dataset a -> String -> IO ()
+setDatasetProjection d p = throwIfError "could not set projection" f
+  where f = withDataset d $ \d' -> withCString p $ \p' -> setProjection' d' p'
+
+foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
+        :: (Ptr (Dataset a)) -> ((Ptr CChar) -> (IO CInt))
+
 
 data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
     deriving (Eq, Show)
 
-datasetGeotransform :: Dataset -> IO Geotransform
+datasetGeotransform :: (Dataset a) -> IO Geotransform
 datasetGeotransform ds = withDataset' ds $ \dPtr -> do
     allocaArray 6 $ \a -> do
-      throwIfError "could not get geotransform" $
-         {#call unsafe GDALGetGeoTransform as ^#} dPtr a
+      throwIfError "could not get geotransform" $ getGeoTransform dPtr a
       Geotransform <$> liftM realToFrac (peekElemOff a 0)
                    <*> liftM realToFrac (peekElemOff a 1)
                    <*> liftM realToFrac (peekElemOff a 2)
@@ -290,7 +328,10 @@ datasetGeotransform ds = withDataset' ds $ \dPtr -> do
                    <*> liftM realToFrac (peekElemOff a 4)
                    <*> liftM realToFrac (peekElemOff a 5)
 
-setDatasetGeotransform :: Dataset -> Geotransform -> IO ()
+foreign import ccall unsafe "gdal.h GDALGetGeoTransform" getGeoTransform
+        :: (Ptr (Dataset a)) -> ((Ptr CDouble) -> (IO CInt))
+
+setDatasetGeotransform :: (Dataset a) -> Geotransform -> IO ()
 setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
     allocaArray 6 $ \a -> do
         let (Geotransform g0 g1 g2 g3 g4 g5) = gt
@@ -300,17 +341,23 @@ setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
         pokeElemOff a 3 (realToFrac g3)
         pokeElemOff a 4 (realToFrac g4)
         pokeElemOff a 5 (realToFrac g5)
-        throwIfError "could not set geotransform" $
-            {#call unsafe GDALSetGeoTransform as ^#} dPtr a
+        throwIfError "could not set geotransform" $ setGeoTransform dPtr a
 
-withBand :: Dataset -> Int -> (Band -> IO a) -> IO a
+foreign import ccall unsafe "gdal.h GDALSetGeoTransform" setGeoTransform
+        :: (Ptr (Dataset a)) -> ((Ptr CDouble) -> (IO CInt))
+
+
+withBand :: (Dataset a) -> Int -> (Band -> IO a) -> IO a
 withBand ds band f = withDataset ds $ \dPtr -> do
-    rBand@(Band p) <- {# call unsafe GDALGetRasterBand as ^ #}
-                         dPtr (fromIntegral band)
+    rBand@(Band p) <- getRasterBand dPtr (fromIntegral band)
     if p == nullPtr
         then throw $
             GDALException CE_Failure ("could not get band #" ++ show band)
         else f rBand
+
+foreign import ccall unsafe "gdal.h GDALGetRasterBand" getRasterBand
+        :: (Ptr (Dataset a)) -> (CInt -> (IO (Band)))
+
 
 {# fun pure unsafe GDALGetRasterDataType as bandDatatype
    { id `Band'} -> `Datatype' toEnumC #}
