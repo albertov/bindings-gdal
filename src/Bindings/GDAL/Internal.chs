@@ -55,7 +55,7 @@ module Bindings.GDAL.Internal (
 
 import Control.Applicative (liftA2, (<$>), (<*>))
 import Control.Concurrent (newMVar, takeMVar, putMVar, MVar)
-import Control.Exception (finally)
+import Control.Exception (finally, bracket)
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
@@ -187,13 +187,13 @@ createCopy' :: Driver -> String -> Dataset -> Bool -> DriverOptions
 createCopy' driver path dataset strict options progressFun
   = withCString path $ \p ->
     withDataset dataset $ \ds ->
-    wrapProgressFun progressFun >>= \pFunc ->
-      finally 
-        (do let s = if strict then 1 else 0
-            o <- toOptionList options
-            {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr)
-            >>= newDatasetHandle)
-        (freeHaskellFunPtr pFunc)
+    withProgressFun progressFun $ \pFunc -> do
+        let s = if strict then 1 else 0
+        o <- toOptionList options
+        {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr) >>=
+            newDatasetHandle
+
+withProgressFun f = bracket (wrapProgressFun f) freeHaskellFunPtr
 
 createCopy :: String -> String -> Dataset -> Bool -> DriverOptions
            -> IO (Maybe Dataset)
