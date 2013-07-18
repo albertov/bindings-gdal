@@ -195,10 +195,13 @@ createCopy' driver path dataset strict options progressFun
             >>= newDatasetHandle)
         (freeHaskellFunPtr pFunc)
 
-createCopy :: Driver -> String -> Dataset -> Bool -> DriverOptions
+createCopy :: String -> String -> Dataset -> Bool -> DriverOptions
            -> IO (Maybe Dataset)
-createCopy driver path dataset strict options
-  = createCopy' driver path dataset strict options (\_ _ _ -> return 1)
+createCopy driver path dataset strict options = do
+    d <- driverByName driver
+    case d of
+      Nothing -> return Nothing
+      Just d' -> createCopy' d' path dataset strict options (\_ _ _ -> return 1)
 
 type ProgressFun = CDouble -> Ptr CChar -> Ptr () -> IO CInt
 

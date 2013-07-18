@@ -50,13 +50,9 @@ case_can_create_and_createCopy_dataset :: IO ()
 case_can_create_and_createCopy_dataset
   = withSystemTempDirectory "test." $ \tmpDir -> do
     let p  = joinPath [tmpDir, "test.tif"]
-        p2 = joinPath [tmpDir, "test2.tif"]
-    d <- driverByName "GTIFF"
-    assertBool "Could not load Gtiff driver" (isJust d)
-    ds <- create "GTIFF" p 100 100 1 GDT_Int16 []
+    ds <- createMem 100 100 1 GDT_Int16 []
     assertBool "Could not create dataset" (isJust ds)
-    flushCache (fromJust ds)
-    ds2 <- createCopy (fromJust d) p2 (fromJust ds) True []
+    ds2 <- createCopy "GTIFF" p (fromJust ds) True []
     assertBool "Could not copy dataset" (isJust ds2)
     flushCache (fromJust ds2)
     assertExistsAndSizeGreaterThan p 0
