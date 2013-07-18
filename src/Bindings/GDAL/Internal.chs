@@ -9,7 +9,6 @@
 
 module Bindings.GDAL.Internal (
     Datatype (..)
-  , Access (..)
   , ColorInterpretation (..)
   , PaletteInterpretation (..)
   , GDALException
@@ -19,6 +18,10 @@ module Bindings.GDAL.Internal (
   , DriverOptions
   , MajorObject
   , Dataset
+  , RWDataset
+  , RODataset
+  , RWBand
+  , ROBand
   , Band
   , Driver
   , ColorTable
@@ -122,7 +125,7 @@ throwIfError msg act = do
     e <- liftM toEnumC act
     case e of
       CE_None -> return ()
-      e       -> throw $ GDALException e msg
+      e'      -> throw $ GDALException e' msg
 
 {# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
 instance Show Datatype where
@@ -176,7 +179,7 @@ instance Show PaletteInterpretation where
 
 data ReadOnly
 data ReadWrite
-newtype (Dataset a) = Dataset (ForeignPtr (Dataset a), Mutex)
+newtype Dataset a = Dataset (ForeignPtr (Dataset a), Mutex)
 
 type RODataset = Dataset ReadOnly
 type RWDataset = Dataset ReadWrite
@@ -186,7 +189,12 @@ withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
 
 withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 
-{#pointer GDALRasterBandH as Band newtype#}
+{#pointer GDALRasterBandH as Band newtype nocode#}
+newtype Band a = Band (Ptr (Band a))
+
+type ROBand = Band ReadOnly
+type RWBand = Band ReadWrite
+
 {#pointer GDALDriverH as Driver newtype#}
 {#pointer GDALColorTableH as ColorTable newtype#}
 {#pointer GDALRasterAttributeTableH as RasterAttributeTable newtype#}
@@ -350,7 +358,7 @@ foreign import ccall unsafe "gdal.h GDALSetGeoTransform" setGeoTransform
         :: (Ptr (Dataset a)) -> ((Ptr CDouble) -> (IO CInt))
 
 
-withBand :: Dataset a -> Int -> (Band -> IO b) -> IO b
+withBand :: Dataset a -> Int -> ((Band a) -> IO b) -> IO b
 withBand ds band f = withDataset ds $ \dPtr -> do
     rBand@(Band p) <- getRasterBand dPtr (fromIntegral band)
     if p == nullPtr
@@ -359,39 +367,66 @@ withBand ds band f = withDataset ds $ \dPtr -> do
         else f rBand
 
 foreign import ccall unsafe "gdal.h GDALGetRasterBand" getRasterBand
-        :: (Ptr (Dataset a)) -> (CInt -> (IO (Band)))
+        :: (Ptr (Dataset a)) -> (CInt -> (IO ((Band a))))
 
 
-{# fun pure unsafe GDALGetRasterDataType as bandDatatype
-   { id `Band'} -> `Datatype' toEnumC #}
+bandDatatype :: Band a -> Datatype
+bandDatatype band = toEnumC . getDatatype_ $ band
 
-bandBlockSize :: Band -> (Int,Int)
-bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr ->
+foreign import ccall unsafe "gdal.h GDALGetRasterDataType" getDatatype_
+   :: Band a -> CInt
+
+
+bandBlockSize :: Band a -> (Int,Int)
+bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    -- unsafePerformIO is safe here since the block size cant change once
    -- a dataset is created
-   {#call unsafe GDALGetBlockSize as ^#} band xPtr yPtr >>
+   getBlockSize_ band xPtr yPtr
    liftA2 (,) (liftM fromIntegral $ peek xPtr) (liftM fromIntegral $ peek yPtr)
 
-bandBlockLen :: Band -> Int
+foreign import ccall unsafe "gdal.h GDALGetBlockSize" getBlockSize_
+    :: Band a -> Ptr CInt -> Ptr CInt -> IO ()
+
+
+bandBlockLen :: Band a -> Int
 bandBlockLen = uncurry (*) . bandBlockSize
 
-bandSize :: Band -> (Int, Int)
+bandSize :: Band a -> (Int, Int)
 bandSize band
-  = ( fromIntegral . {# call pure unsafe GDALGetRasterBandXSize as ^#} $ band
-    , fromIntegral . {# call pure unsafe GDALGetRasterBandYSize as ^#} $ band
-    )
+  = (fromIntegral . getXSize_ $ band, fromIntegral . getYSize_ $ band)
 
-bandNodataValue :: Band -> IO (Maybe Double)
+foreign import ccall unsafe "gdal.h GDALGetRasterBandXSize" getXSize_
+  :: Band a -> CInt
+
+foreign import ccall unsafe "gdal.h GDALGetRasterBandYSize" getYSize_
+  :: Band a -> CInt
+
+
+bandNodataValue :: Band a -> IO (Maybe Double)
 bandNodataValue b = alloca $ \p -> do
-   value <- liftM realToFrac $ {#call unsafe GDALGetRasterNoDataValue as ^#} b p
+   value <- liftM realToFrac $ getNodata_ b p
    hasNodata <- liftM toBool $ peek p
    return (if hasNodata then Just value else Nothing)
    
-{# fun GDALSetRasterNoDataValue as setBandNodataValue
-   { id `Band', `Double'} -> `Error' toEnumC #}
+foreign import ccall unsafe "gdal.h GDALGetRasterNoDataValue" getNodata_
+   :: Band a -> Ptr CInt -> IO CDouble
+   
 
-{# fun GDALFillRaster as fillBand
-    { id `Band', `Double', `Double'} -> `Error' toEnumC #}
+setBandNodataValue :: RWBand -> Double -> IO ()
+setBandNodataValue b v = throwIfError "could not set nodata" $
+                            setNodata_ b (realToFrac v)
+
+foreign import ccall safe "gdal.h GDALSetRasterNoDataValue" setNodata_
+    :: RWBand -> CDouble -> IO CInt
+
+
+fillBand :: RWBand -> Double -> Double -> IO ()
+fillBand b r i = throwIfError "could not fill band" $
+    fillRaster_ b (realToFrac r) (realToFrac i)
+
+foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
+    :: RWBand -> CDouble -> CDouble -> IO CInt
+
 
 class HasDatatype a where
     datatype :: a -> Datatype
@@ -429,7 +464,7 @@ instance (RealFloat a, Storable a) => Storable (Complex a) where
 
 
 readBand :: (Storable a, HasDatatype (Ptr a))
-  => Band
+  => Band b
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -439,7 +474,7 @@ readBand band xoff yoff sx sy bx by pxs lns = do
     fp <- mallocForeignPtrArray (bx * by)
     withForeignPtr fp $ \ptr -> do
       throwIfError "could not advise read" $
-        {#call GDALRasterAdviseRead as ^#}
+        adviseRead_
           band
           (fromIntegral xoff)
           (fromIntegral yoff)
@@ -450,7 +485,7 @@ readBand band xoff yoff sx sy bx by pxs lns = do
           (fromEnumC (datatype ptr))
           (castPtr nullPtr)
       throwIfError "could not read band" $
-        {#call GDALRasterIO as ^#}
+        rasterIO_
           band
           (fromEnumC GF_Read) 
           (fromIntegral xoff)
@@ -464,9 +499,14 @@ readBand band xoff yoff sx sy bx by pxs lns = do
           (fromIntegral pxs)
           (fromIntegral lns)
     return $ unsafeFromForeignPtr0 fp (bx * by)
+
+foreign import ccall safe "gdal.h GDALRasterAdviseRead" adviseRead_
+    :: Band a -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt
+    -> Ptr (Ptr CChar) -> IO CInt
+
         
 writeBand :: (Storable a, HasDatatype (Ptr a))
-  => Band
+  => RWBand
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -480,7 +520,7 @@ writeBand band xoff yoff sx sy bx by pxs lns vec = do
       then throw $ GDALException CE_Failure "vector of wrong size"
       else withForeignPtr fp $ \ptr -> do
         throwIfError "could not write band" $
-          {#call GDALRasterIO as ^#}
+          rasterIO_
             band
             (fromEnumC GF_Write) 
             (fromIntegral xoff)
@@ -494,6 +534,10 @@ writeBand band xoff yoff sx sy bx by pxs lns vec = do
             (fromIntegral pxs)
             (fromIntegral lns)
 
+foreign import ccall safe "gdal.h GDALRasterIO" rasterIO_
+  :: Band a -> CInt -> CInt -> CInt -> CInt -> CInt -> Ptr () -> CInt -> CInt
+  -> CInt -> CInt -> CInt -> IO CInt
+
 
 data Block where
     Block :: (Typeable a, Storable a) => Vector a -> Block
@@ -501,13 +545,12 @@ data Block where
 type MaybeIOVector a = IO (Maybe (Vector a))
 
 readBandBlock :: (Storable a, Typeable a)
-  => Band -> Int -> Int -> MaybeIOVector a
-readBandBlock b x y = do
-  block <- readBandBlock' b x y
+  => Band b -> Int -> Int -> MaybeIOVector a
+readBandBlock b x y =
   liftM (maybe Nothing (\(Block a) -> cast a)) $ readBandBlock' b x y
 
 
-readBandBlock' :: Band -> Int -> Int -> IO (Maybe Block)
+readBandBlock' :: Band b -> Int -> Int -> IO (Maybe Block)
 readBandBlock' b x y = 
   case bandDatatype b of
     GDT_Byte     -> Just . Block <$> (readIt b x y :: IOVector Word8)
@@ -521,19 +564,22 @@ readBandBlock' b x y =
     GDT_CFloat64 -> Just . Block <$> (readIt b x y :: IOVector (Complex Double))
     _            -> return Nothing
   where
-    readIt :: Storable a => Band -> Int -> Int -> IOVector a
+    readIt :: Storable a => Band b -> Int -> Int -> IOVector a
     readIt b x y = do
       f <- mallocForeignPtrArray (bandBlockLen b)
       withForeignPtr f $ \ptr ->
         throwIfError "could not read block" $
-          {#call GDALReadBlock as ^#}
-            b (fromIntegral x) (fromIntegral y) (castPtr ptr)
+          readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
       return $ unsafeFromForeignPtr0 f (bandBlockLen b)
+
+foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
+    :: Band a -> CInt -> CInt -> Ptr () -> IO CInt
+
 
 type IOVector a = IO (Vector a)
 
 writeBandBlock :: (Storable a, Typeable a)
-  => Band
+  => RWBand
   -> Int -> Int
   -> Vector a
   -> IO ()
@@ -546,8 +592,11 @@ writeBandBlock b x y vec = do
            then throw $ GDALException CE_Failure "wrongly typed vector"
            else withForeignPtr fp $ \ptr ->
                 throwIfError "could not write block" $
-                   {#call GDALWriteBlock as ^#}
-                      b (fromIntegral x) (fromIntegral y) (castPtr ptr)
+                   writeBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
+
+foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
+   :: RWBand -> CInt -> CInt -> Ptr () -> IO CInt
+
 
 typeOfBand = typeOfdatatype . bandDatatype
 
