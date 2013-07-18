@@ -22,8 +22,10 @@ module Bindings.GDAL.Internal (
   , ColorTable
   , RasterAttributeTable
 
+  , registerAllDrivers
   , driverByName
   , create
+  , create'
   , createMem
   , flushCache
   , open
@@ -141,22 +143,38 @@ withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 
 {# fun GDALAllRegister as registerAllDrivers {} -> `()'  #}
 
-{# fun GDALGetDriverByName as c_driverByName
+{# fun unsafe GDALGetDriverByName as c_driverByName
     { `String' } -> `Driver' id #}
 
-driverByName :: String -> Maybe Driver
-driverByName s = unsafePerformIO $ do
-    registerAllDrivers
+driverByName :: String -> IO (Maybe Driver)
+driverByName s = do
     driver@(Driver ptr) <- c_driverByName s
     return $ if ptr==nullPtr then Nothing else Just driver
 
 
 type DriverOptions = [(String,String)]
 
-{# fun GDALCreate as create
-    { id `Driver', `String', `Int', `Int', `Int', fromEnumC `Datatype',
-      toOptionList `DriverOptions' }
-    -> `Maybe Dataset' newDatasetHandle* #}
+create :: String -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
+       -> IO (Maybe Dataset)
+create drv path nx ny bands dtype options = do
+    driver <- driverByName drv
+    case driver of
+      Nothing -> return Nothing
+      Just d  -> create' d path nx ny bands dtype options
+
+create' :: Driver -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
+       -> IO (Maybe Dataset)
+create' drv path nx ny bands dtype options = withCString path $ \path' -> do
+    opts <- toOptionList options
+    ptr <- {#call GDALCreate as ^#}
+             drv
+             path'
+             (fromIntegral nx)
+             (fromIntegral ny)
+             (fromIntegral bands)
+             (fromEnumC dtype)
+             opts
+    newDatasetHandle ptr
 
 {# fun GDALOpen as open
     { `String', fromEnumC `Access'} -> `Maybe Dataset' newDatasetHandle* #}
@@ -171,9 +189,9 @@ createCopy' driver path dataset strict options progressFun
     withDataset dataset $ \ds ->
     wrapProgressFun progressFun >>= \pFunc ->
       finally 
-        (let s = if strict then 1 else 0
-             o = toOptionList options
-         in {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr)
+        (do let s = if strict then 1 else 0
+            o <- toOptionList options
+            {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr)
             >>= newDatasetHandle)
         (freeHaskellFunPtr pFunc)
 
@@ -199,14 +217,12 @@ foreign import ccall "gdal.h &GDALClose"
   closeDataset :: FunPtr (Ptr (Dataset) -> IO ())
 
 createMem:: Int -> Int -> Int -> Datatype -> DriverOptions -> IO (Maybe Dataset)
-createMem = case driverByName "MEM" of
-                 Nothing -> (\_ _ _ _ _ -> return Nothing)
-                 Just d  -> create d ""
+createMem = create "MEM" ""
 
 {# fun GDALFlushCache as flushCache
     {  withDataset*  `Dataset'} -> `()' #}
 
-{# fun pure unsafe GDALGetProjectionRef as datasetProjection
+{# fun unsafe GDALGetProjectionRef as datasetProjection
     {  withDataset*  `Dataset'} -> `String' #}
 
 {# fun unsafe GDALSetProjection as setDatasetProjection
@@ -215,10 +231,10 @@ createMem = case driverByName "MEM" of
 data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
     deriving (Eq, Show)
 
-datasetGeotransform :: Dataset -> Maybe Geotransform
-datasetGeotransform ds = unsafePerformIO $ withDataset' ds $ \dPtr -> do
+datasetGeotransform :: Dataset -> IO (Maybe Geotransform)
+datasetGeotransform ds = withDataset' ds $ \dPtr -> do
     allocaArray 6 $ \a -> do
-      let err = {#call pure unsafe GDALGetGeoTransform as ^#} dPtr a
+      err <- {#call unsafe GDALGetGeoTransform as ^#} dPtr a
       case toEnumC err of
            CE_None -> liftM Just $ Geotransform
                        <$> liftM realToFrac (peekElemOff a 0)
@@ -372,8 +388,8 @@ toEnumC :: Enum a => CInt -> a
 toEnumC = toEnum . fromIntegral
 
 
-toOptionList :: [(String,String)] -> Ptr CString
-toOptionList opts =  unsafePerformIO $ foldM folder nullPtr opts
+toOptionList :: [(String,String)] -> IO (Ptr CString)
+toOptionList opts =  foldM folder nullPtr opts
   where folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
                            {#call unsafe CSLSetNameValue as ^#} acc k' v'
 

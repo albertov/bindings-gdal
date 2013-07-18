@@ -24,15 +24,13 @@ import Test.HUnit
 import Bindings.GDAL.Internal
 
 main :: IO ()
-main = $(defaultMainGenerator)
+main = registerAllDrivers >> $(defaultMainGenerator)
 
 case_can_create_compressed_gtiff :: IO ()
 case_can_create_compressed_gtiff
   = withSystemTempDirectory "test." $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
-        d = driverByName "GTIFF"
-    assertBool "Could not load Gtiff driver" (isJust d)
-    ds <- create (fromJust d) p 3000 3000 1 GDT_Int16
+    ds <- create "GTIFF" p 3000 3000 1 GDT_Int16
           [("compress","deflate"), ("zlevel", "9"), ("predictor", "2")]
     assertBool "Could not create dataset" (isJust ds)
     flushCache (fromJust ds)
@@ -42,9 +40,7 @@ case_can_create_and_open_dataset :: IO ()
 case_can_create_and_open_dataset
   = withSystemTempDirectory "test." $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
-        d = driverByName "GTIFF"
-    assertBool "Could not load Gtiff driver" (isJust d)
-    ds <- create (fromJust d) p 100 100 1 GDT_Int16 []
+    ds <- create "GTIFF" p 100 100 1 GDT_Int16 []
     assertBool "Could not create dataset" (isJust ds)
     flushCache (fromJust ds)
     ds2 <- open p GA_ReadOnly
@@ -55,9 +51,9 @@ case_can_create_and_createCopy_dataset
   = withSystemTempDirectory "test." $ \tmpDir -> do
     let p  = joinPath [tmpDir, "test.tif"]
         p2 = joinPath [tmpDir, "test2.tif"]
-        d  = driverByName "GTIFF"
+    d <- driverByName "GTIFF"
     assertBool "Could not load Gtiff driver" (isJust d)
-    ds <- create (fromJust d) p 100 100 1 GDT_Int16 []
+    ds <- create "GTIFF" p 100 100 1 GDT_Int16 []
     assertBool "Could not create dataset" (isJust ds)
     flushCache (fromJust ds)
     ds2 <- createCopy (fromJust d) p2 (fromJust ds) True []
@@ -77,7 +73,7 @@ case_can_set_and_get_geotransform = do
     let gt = Geotransform 5.0 4.0 3.0 2.0 1.0 0.0
     err <- setDatasetGeotransform ds gt
     assertEqual "setDatasetGeotransform returned error" CE_None err
-    let gt2 = datasetGeotransform ds
+    gt2 <- datasetGeotransform ds
     assertBool "error getting geotransform" (isJust gt2)
     assertEqual "geotransform is not the same that was set" gt (fromJust gt2)
 
@@ -87,19 +83,19 @@ case_can_set_and_get_projection = do
     let proj = "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
     err <- setDatasetProjection ds proj
     assertEqual "setDatasetProjection returned error" CE_None err
-    let proj2 = datasetProjection ds
+    proj2 <- datasetProjection ds
     assertEqual "projection is not the same that was set" proj proj2
 
 case_can_get_blockSize :: IO ()
 case_can_get_blockSize = do
     Just ds <- createMem 10 10 1 GDT_Int16 []
-    bsize <- withRasterBand ds 1 (return . blockSize. fromJust)
+    bsize <- withRasterBand ds 1 (return . blockSize . fromJust)
     assertEqual "unexpected block size" (10, 1) bsize
 
 case_can_get_bandSize :: IO ()
 case_can_get_bandSize = do
     Just ds <- createMem 10 10 1 GDT_Int16 []
-    bsize <- withRasterBand ds 1 (return . bandSize. fromJust)
+    bsize <- withRasterBand ds 1 (return . bandSize . fromJust)
     assertEqual "unexpected band size" (10, 10) bsize
 
 case_cannot_get_nonexisting_raster_band :: IO ()
