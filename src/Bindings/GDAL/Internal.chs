@@ -68,14 +68,15 @@ import Data.Complex (Complex(..), realPart, imagPart)
 import Data.Typeable (Typeable, cast, typeOf)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
-import Foreign.C.String
-import Foreign.C.Types
-import Foreign.Ptr
-import Foreign.Storable
-import Foreign.ForeignPtr
-import Foreign.Marshal.Alloc
-import Foreign.Marshal.Array
-import Foreign.Marshal.Utils
+import Foreign.C.String (withCString, CString, peekCString)
+import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
+import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr)
+import Foreign.Storable (Storable(..))
+import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr
+                          ,mallocForeignPtrArray)
+import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Array (allocaArray)
+import Foreign.Marshal.Utils (toBool, fromBool)
 
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -194,7 +195,7 @@ createCopy' driver path dataset strict options progressFun
   = withCString path $ \p ->
     withDataset dataset $ \ds ->
     withProgressFun progressFun $ \pFunc -> do
-        let s = if strict then 1 else 0
+        let s = fromBool strict
         o <- toOptionList options
         {#call GDALCreateCopy as ^#} driver p ds s o pFunc (castPtr nullPtr) >>=
             newDatasetHandle
