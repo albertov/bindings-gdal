@@ -39,7 +39,7 @@ case_can_create_and_open_dataset
     let p = joinPath [tmpDir, "test.tif"]
     ds <- assertNotRaisesGDALException $ create "GTIFF" p 100 100 1 GDT_Int16 []
     flushCache ds
-    _ <- assertNotRaisesGDALException $ open p GA_ReadOnly
+    _ <- assertNotRaisesGDALException $ openReadOnly p
     return ()
 
 case_can_create_and_createCopy_dataset :: IO ()
