@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE GADTs #-}
 
 module Bindings.GDAL.Internal (
     Datatype (..)
@@ -11,6 +12,7 @@ module Bindings.GDAL.Internal (
   , PaletteInterpretation (..)
   , Error (..)
   , Geotransform (..)
+  , MaybeIOVector
   , ProgressFun
 
   , DriverOptions
@@ -46,9 +48,12 @@ module Bindings.GDAL.Internal (
   , withRasterBand
   , bandDatatype
   , blockSize
+  , blockLen
   , bandSize
   , readBand
+  , readBlock
   , writeBand
+  , writeBlock
   , fillBand
 
 ) where
@@ -60,6 +65,7 @@ import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
 import Data.Complex (Complex(..), realPart, imagPart)
+import Data.Typeable (Typeable, cast, typeOf)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
 import Foreign.C.String
@@ -274,6 +280,9 @@ blockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr ->
    {#call unsafe GDALGetBlockSize as ^#} band xPtr yPtr >>
    liftA2 (,) (liftM fromIntegral $ peek xPtr) (liftM fromIntegral $ peek yPtr)
 
+blockLen :: RasterBand -> Int
+blockLen = uncurry (*) . blockSize
+
 bandSize :: RasterBand -> (Int, Int)
 bandSize band
   = ( fromIntegral . {# call pure unsafe GDALGetRasterBandXSize as ^#} $ band
@@ -383,6 +392,82 @@ writeBand band xoff yoff sx sy bx by pxs lns vec = do
             (fromIntegral pxs)
             (fromIntegral lns)
 
+data Block where
+    Block :: (Typeable a, Storable a) => Vector a -> Block
+
+readBlock :: (Storable a, Typeable a)
+  => RasterBand -> Int -> Int -> MaybeIOVector a
+readBlock b x y = do
+  block <- readBlock' b x y
+  liftM (maybe Nothing (\(Block a) -> cast a)) $ readBlock' b x y
+
+
+readBlock' :: RasterBand -> Int -> Int -> IO (Maybe Block)
+readBlock' b x y = 
+  case bandDatatype b of
+    GDT_Byte ->
+      maybeReturn Block (readIt b x y :: MaybeIOVector Word8)
+    GDT_Int16 ->
+      maybeReturn Block (readIt b x y :: MaybeIOVector Int16)
+    GDT_Int32 ->
+      maybeReturn Block (readIt b x y :: MaybeIOVector Int32)
+    GDT_Float32 ->
+      maybeReturn Block (readIt b x y :: MaybeIOVector Float)
+    GDT_Float64 ->
+      maybeReturn Block (readIt b x y :: MaybeIOVector Double)
+    GDT_CInt16 ->
+      maybeReturn Block (readIt b x y :: MaybeIOVector (Complex Float))
+    GDT_CInt32 ->
+      maybeReturn Block (readIt b x y :: MaybeIOVector (Complex Double))
+    GDT_CFloat32 ->
+      maybeReturn Block (readIt b x y :: MaybeIOVector (Complex Float))
+    GDT_CFloat64 ->
+      maybeReturn Block (readIt b x y :: MaybeIOVector (Complex Double))
+    _ -> return Nothing
+  where
+    maybeReturn f act = act >>= maybe (return Nothing) (return . Just . f)
+    readIt b x y = do
+      let l  = blockLen b
+          rb = {#call GDALReadBlock as ^#} b (fromIntegral x) (fromIntegral y)
+      f <- mallocForeignPtrArray l
+      e <- withForeignPtr f (rb . castPtr)
+      if toEnumC e == CE_None
+         then return $ Just $ unsafeFromForeignPtr0 f l
+         else return Nothing
+
+type MaybeIOVector a = IO (Maybe (Vector a))
+
+writeBlock :: (Storable a, Typeable a)
+  => RasterBand
+  -> Int -> Int
+  -> Vector a
+  -> IO (Error)
+writeBlock b x y vec = do
+    let nElems    = blockLen b
+        (fp, len) = unsafeToForeignPtr0 vec
+    if nElems /= len || typeOf vec /= typeOfBand b
+      then return CE_Failure
+      else withForeignPtr fp $ \ptr -> liftM toEnumC $
+          {#call GDALWriteBlock as ^#}
+            b
+            (fromIntegral x)
+            (fromIntegral y)
+            (castPtr ptr)
+
+typeOfBand = typeOfdatatype . bandDatatype
+
+typeOfdatatype dt =
+  case dt of
+    GDT_Byte     -> typeOf (undefined :: Vector Word8)
+    GDT_Int16    -> typeOf (undefined :: Vector Int16)
+    GDT_Int32    -> typeOf (undefined :: Vector Int32)
+    GDT_Float32  -> typeOf (undefined :: Vector Float)
+    GDT_Float64  -> typeOf (undefined :: Vector Double)
+    GDT_CInt16   -> typeOf (undefined :: Vector (Complex Float))
+    GDT_CInt32   -> typeOf (undefined :: Vector (Complex Double))
+    GDT_CFloat32 -> typeOf (undefined :: Vector (Complex Float))
+    GDT_CFloat64 -> typeOf (undefined :: Vector (Complex Double))
+    _            -> typeOf (undefined :: Bool) -- will never match a vector
 
 fromEnumC :: Enum a => a -> CInt
 fromEnumC = fromIntegral . fromEnum

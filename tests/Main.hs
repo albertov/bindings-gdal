@@ -6,7 +6,7 @@ import System.IO.Error (isDoesNotExistError)
 import Data.Complex
 import Data.Int
 import Data.Word
-import Data.Maybe (fromJust, isJust)
+import Data.Maybe (fromJust, isJust, isNothing)
 import qualified Data.Vector.Storable as St
 
 import System.Mem (performGC)
@@ -144,15 +144,26 @@ write_and_read_band dtype vec = do
         assertBool "error reading band" (isJust vec2')
         assertEqualVectors vec vec2
 
-assertEqualVectors :: (Eq a, St.Storable a)
-  => St.Vector a
-  -> St.Vector a
-  -> IO ()
-assertEqualVectors a b = assertBool "vectors are different" (sameL && areEqual)
-  where areEqual  = St.foldl' f True $  St.zipWith (==) a b
-        f True v  = v == True
-        f False _ = False
-        sameL     = St.length a == St.length b
+write_and_read_block dtype len vec = do
+    Just ds <- createMem len 1 1 dtype []
+    withRasterBand ds 1 $ \(Just band) -> do
+        err <- writeBlock band 0 0 vec
+        assertEqual "error writing band" err CE_None
+        vec2' <- readBlock band 0 0
+        let vec2 = fromJust vec2'
+        assertBool "error reading band" (isJust vec2')
+        assertEqualVectors vec vec2
+
+case_write_and_read_block_double :: IO ()
+case_write_and_read_block_double = write_and_read_block GDT_Float64 100 vec
+   where vec = St.generate 100 $ \i -> 1.1 * fromIntegral i
+         vec :: St.Vector Double
+
+case_write_and_read_block_int16 :: IO ()
+case_write_and_read_block_int16 = write_and_read_block GDT_Int16 100 vec
+   where vec = St.generate 100 fromIntegral
+         vec :: St.Vector Int16
+
 
 case_fill_and_read_band_int16 :: IO ()
 case_fill_and_read_band_int16 = do
@@ -207,9 +218,43 @@ case_fill_and_read_band_byte = do
                 f True a = a == value
                 f False _ = False
             assertBool "read is different than filled" allEqual
+
+case_readBlock_returns_Just_on_good_type :: IO ()
+case_readBlock_returns_Just_on_good_type = do
+    Just ds <- createMem 100 100 1 GDT_Int16 []
+    withRasterBand ds 1 $ \(Just band) -> do
+       good <- readBlock band 0 0 :: MaybeIOVector Int16
+       assertBool "Could not read good type" (isJust good)
+
+case_readBlock_returns_Nothing_on_bad_type :: IO ()
+case_readBlock_returns_Nothing_on_bad_type = do
+    Just ds <- createMem 100 100 1 GDT_Int16 []
+    withRasterBand ds 1 $ \(Just band) -> do
+       bad <- readBlock band 0 0 :: MaybeIOVector Word8
+       assertBool "Could read bad type" (isNothing bad)
+
+case_writeBlock_fails_when_writing_bad_type :: IO ()
+case_writeBlock_fails_when_writing_bad_type = do
+    Just ds <- createMem 100 100 1 GDT_Int16 []
+    withRasterBand ds 1 $ \(Just band) -> do
+       let v = St.replicate (blockLen band) 0 :: St.Vector Word8
+       err <- writeBlock band 0 0 v
+       assertBool "Could write bad block" $ CE_None /= err
+
 --
 -- Utils
 --
+
+
+assertEqualVectors :: (Eq a, St.Storable a)
+  => St.Vector a
+  -> St.Vector a
+  -> IO ()
+assertEqualVectors a b = assertBool "vectors are different" (sameL && areEqual)
+  where areEqual  = St.foldl' f True $  St.zipWith (==) a b
+        f True v  = v == True
+        f False _ = False
+        sameL     = St.length a == St.length b
 
 getFileSize :: FilePath -> IO (Maybe Integer)
 getFileSize p = do
