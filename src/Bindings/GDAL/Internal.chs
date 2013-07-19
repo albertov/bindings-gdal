@@ -9,9 +9,9 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module Bindings.GDAL.Internal (
-    IsDataset
-  , IsBand
-  , IsWritableBand
+    HasDataset
+  , HasBand
+  , HasWritebaleBand
   , HasDatatype
   , Datatype (..)
   , ColorInterpretation (..)
@@ -19,7 +19,7 @@ module Bindings.GDAL.Internal (
   , GDALException
   , isGDALException
   , Geotransform (..)
-  , MaybeIOVector
+  , IOVector
   , DriverOptions
   , MajorObject
   , Dataset
@@ -220,8 +220,11 @@ driverByName s = do
 
 type DriverOptions = [(String,String)]
 
-class (HasDatatype t, a ~ReadWrite, d ~ Dataset)
-  => IsDataset d a t where
+class ( HasDatatype t
+      , a ~ ReadWrite
+      , d ~ Dataset,
+      HasWritebaleBand Band ReadWrite t)
+  => HasDataset d a t where
     create :: String -> String -> Int -> Int -> Int -> DriverOptions
            -> IO (d a t)
     create drv path nx ny bands options = do
@@ -238,17 +241,17 @@ create' drv path nx ny bands dtype options = withCString path $ \path' -> do
         dtype' = fromEnumC dtype
     create_ drv path' nx' ny' bands' dtype' opts >>= newDatasetHandle
 
-instance IsDataset Dataset ReadWrite Word8 where
-instance IsDataset Dataset ReadWrite Int16 where
-instance IsDataset Dataset ReadWrite Int32 where
-instance IsDataset Dataset ReadWrite Word16 where
-instance IsDataset Dataset ReadWrite Word32 where
-instance IsDataset Dataset ReadWrite Float where
-instance IsDataset Dataset ReadWrite Double where
-instance IsDataset Dataset ReadWrite (GComplex Int16) where
-instance IsDataset Dataset ReadWrite (GComplex Int32) where
-instance IsDataset Dataset ReadWrite (GComplex Float) where
-instance IsDataset Dataset ReadWrite (GComplex Double) where
+instance HasDataset Dataset ReadWrite Word8 where
+instance HasDataset Dataset ReadWrite Int16 where
+instance HasDataset Dataset ReadWrite Int32 where
+instance HasDataset Dataset ReadWrite Word16 where
+instance HasDataset Dataset ReadWrite Word32 where
+instance HasDataset Dataset ReadWrite Float where
+instance HasDataset Dataset ReadWrite Double where
+instance HasDataset Dataset ReadWrite (GComplex Int16) where
+instance HasDataset Dataset ReadWrite (GComplex Int32) where
+instance HasDataset Dataset ReadWrite (GComplex Float) where
+instance HasDataset Dataset ReadWrite (GComplex Double) where
 
 
 foreign import ccall safe "gdal.h GDALCreate" create_
@@ -303,8 +306,12 @@ foreign import ccall safe "gdal.h GDALCreateCopy" createCopy_
   -> IO (Ptr (RWDataset t))
 
 
+withProgressFun :: forall c.
+  ProgressFun -> (FunPtr ProgressFun -> IO c) -> IO c
 withProgressFun = withCCallback wrapProgressFun
 
+withCCallback :: forall c t a.
+  (t -> IO (FunPtr a)) -> t -> (FunPtr a -> IO c) -> IO c
 withCCallback w f = bracket (w f) freeHaskellFunPtr
 
 type ProgressFun = CDouble -> Ptr CChar -> Ptr () -> IO CInt
@@ -324,10 +331,11 @@ newDatasetHandle p =
 foreign import ccall "gdal.h &GDALClose"
   closeDataset :: FunPtr (Ptr (Dataset a t) -> IO ())
 
-createMem:: IsDataset d a t
+createMem:: HasDataset d a t
   => Int -> Int -> Int -> DriverOptions -> IO (d a t)
 createMem = create "MEM" ""
 
+flushCache :: forall a t. Dataset a t -> IO ()
 flushCache d = withDataset d flushCache'
 
 foreign import ccall safe "gdal.h GDALFlushCache" flushCache'
@@ -599,68 +607,66 @@ foreign import ccall safe "gdal.h GDALRasterIO" rasterIO_
   -> CInt -> CInt -> CInt -> IO CInt
 
 
-type MaybeIOVector a = IO (Maybe (Vector a))
+type IOVector a = IO (Vector a)
 
 class (HasDatatype t, b ~ Band)
-  => IsBand b a t where
-    readBandBlock  :: b a t -> Int -> Int -> MaybeIOVector t
+  => HasBand b a t where
+    readBandBlock  :: b a t -> Int -> Int -> IOVector t
     readBandBlock b x y
-      = if typeOf (undefined :: Vector t) /= typeOfBand b
-            then return Nothing
+      = if not $ isValidDatatype b (undefined :: Vector t)
+            then throw $ GDALException CE_Failure "wrong band type"
             else do
                 f <- mallocForeignPtrArray (bandBlockLen b)
                 withForeignPtr f $ \ptr ->
                   throwIfError "could not read block" $
                     readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
-                return $ Just $ unsafeFromForeignPtr0 f (bandBlockLen b)
+                return $ unsafeFromForeignPtr0 f (bandBlockLen b)
 
 foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
     :: (Band a t) -> CInt -> CInt -> Ptr () -> IO CInt
 
-invalidVType v b = sizeOf v /= datatypeSize (bandDatatype b)
-
-class (IsBand b a t, a~ReadWrite) => IsWritableBand b a t where
+class (HasBand b a t, a ~ ReadWrite) => HasWritebaleBand b a t where
     writeBandBlock :: b a t -> Int -> Int -> Vector t -> IO ()
     writeBandBlock b x y vec = do
         let nElems    = bandBlockLen b
             (fp, len) = unsafeToForeignPtr0 vec
         if nElems /= len
-          then throw $ GDALException CE_Failure "wrongly sized vector"
-          else if typeOf vec /= typeOfBand b
-               then throw $ GDALException CE_Failure "wrongly typed vector"
-               else withForeignPtr fp $ \ptr ->
-                    throwIfError "could not write block" $
-                       writeBlock_ b (fromIntegral x) (fromIntegral y)
-                                     (castPtr ptr)
+           then throw $ GDALException CE_Failure "wrongly sized vector"
+           else if not $ isValidDatatype b vec
+                then throw $ GDALException CE_Failure "wrongly typed vector"
+                else withForeignPtr fp $ \ptr ->
+                     throwIfError "could not write block" $
+                        writeBlock_ b (fromIntegral x) (fromIntegral y)
+                                      (castPtr ptr)
 
 foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
    :: (RWBand t) -> CInt -> CInt -> Ptr () -> IO CInt
 
 
 
-instance forall a. IsBand Band a Word8 where
-instance forall a. IsBand Band a Word16 where
-instance forall a. IsBand Band a Word32 where
-instance forall a. IsBand Band a Int16 where
-instance forall a. IsBand Band a Int32 where
-instance forall a. IsBand Band a Float where
-instance forall a. IsBand Band a Double where
-instance forall a. IsBand Band a (GComplex Int16) where
-instance forall a. IsBand Band a (GComplex Int32) where
-instance forall a. IsBand Band a (GComplex Float) where
-instance forall a. IsBand Band a (GComplex Double) where
+instance forall a. HasBand Band a Word8 where
+instance forall a. HasBand Band a Word16 where
+instance forall a. HasBand Band a Word32 where
+instance forall a. HasBand Band a Int16 where
+instance forall a. HasBand Band a Int32 where
+instance forall a. HasBand Band a Float where
+instance forall a. HasBand Band a Double where
+instance forall a. HasBand Band a (GComplex Int16) where
+instance forall a. HasBand Band a (GComplex Int32) where
+instance forall a. HasBand Band a (GComplex Float) where
+instance forall a. HasBand Band a (GComplex Double) where
 
-instance IsWritableBand Band ReadWrite Word8
-instance IsWritableBand Band ReadWrite Word16
-instance IsWritableBand Band ReadWrite Word32
-instance IsWritableBand Band ReadWrite Int16
-instance IsWritableBand Band ReadWrite Int32
-instance IsWritableBand Band ReadWrite Float
-instance IsWritableBand Band ReadWrite Double
-instance IsWritableBand Band ReadWrite (GComplex Int16) where
-instance IsWritableBand Band ReadWrite (GComplex Int32) where
-instance IsWritableBand Band ReadWrite (GComplex Float) where
-instance IsWritableBand Band ReadWrite (GComplex Double) where
+instance HasWritebaleBand Band ReadWrite Word8
+instance HasWritebaleBand Band ReadWrite Word16
+instance HasWritebaleBand Band ReadWrite Word32
+instance HasWritebaleBand Band ReadWrite Int16
+instance HasWritebaleBand Band ReadWrite Int32
+instance HasWritebaleBand Band ReadWrite Float
+instance HasWritebaleBand Band ReadWrite Double
+instance HasWritebaleBand Band ReadWrite (GComplex Int16) where
+instance HasWritebaleBand Band ReadWrite (GComplex Int32) where
+instance HasWritebaleBand Band ReadWrite (GComplex Float) where
+instance HasWritebaleBand Band ReadWrite (GComplex Double) where
 
 class (Storable a, Typeable a) => HasDatatype a where
     datatype :: a -> Datatype
@@ -677,23 +683,25 @@ instance HasDatatype (GComplex Int32) where datatype _ = GDT_CInt32
 instance HasDatatype (GComplex Float) where datatype _ = GDT_CFloat32
 instance HasDatatype (GComplex Double) where datatype _ = GDT_CFloat64
 
-
-typeOfBand = typeOfdatatype . bandDatatype
-
-typeOfdatatype dt =
-  case dt of
-    GDT_Byte     -> typeOf (undefined :: Vector Word8)
-    GDT_UInt16   -> typeOf (undefined :: Vector Word16)
-    GDT_UInt32   -> typeOf (undefined :: Vector Word32)
-    GDT_Int16    -> typeOf (undefined :: Vector Int16)
-    GDT_Int32    -> typeOf (undefined :: Vector Int32)
-    GDT_Float32  -> typeOf (undefined :: Vector Float)
-    GDT_Float64  -> typeOf (undefined :: Vector Double)
-    GDT_CInt16   -> typeOf (undefined :: Vector (GComplex Int16))
-    GDT_CInt32   -> typeOf (undefined :: Vector (GComplex Int32))
-    GDT_CFloat32 -> typeOf (undefined :: Vector (GComplex Float))
-    GDT_CFloat64 -> typeOf (undefined :: Vector (GComplex Double))
-    _            -> typeOf (undefined :: Bool) -- will never match a vector
+isValidDatatype :: forall a t v.  Typeable v
+  => Band a t -> v -> Bool
+isValidDatatype b v = typeOfBand b == typeOf v
+  where
+    typeOfBand        = typeOfdatatype . bandDatatype
+    typeOfdatatype dt =
+      case dt of
+        GDT_Byte     -> typeOf (undefined :: Vector Word8)
+        GDT_UInt16   -> typeOf (undefined :: Vector Word16)
+        GDT_UInt32   -> typeOf (undefined :: Vector Word32)
+        GDT_Int16    -> typeOf (undefined :: Vector Int16)
+        GDT_Int32    -> typeOf (undefined :: Vector Int32)
+        GDT_Float32  -> typeOf (undefined :: Vector Float)
+        GDT_Float64  -> typeOf (undefined :: Vector Double)
+        GDT_CInt16   -> typeOf (undefined :: Vector (GComplex Int16))
+        GDT_CInt32   -> typeOf (undefined :: Vector (GComplex Int32))
+        GDT_CFloat32 -> typeOf (undefined :: Vector (GComplex Float))
+        GDT_CFloat64 -> typeOf (undefined :: Vector (GComplex Double))
+        _            -> typeOf (undefined :: Bool) -- will never match a vector
 
 fromEnumC :: Enum a => a -> CInt
 fromEnumC = fromIntegral . fromEnum
@@ -719,4 +727,5 @@ acquireMutex = takeMVar
 releaseMutex :: Mutex -> IO ()
 releaseMutex m = putMVar m ()
 
+withMutex :: forall a. Mutex -> IO a -> IO a
 withMutex m action = finally (acquireMutex m >> action) (releaseMutex m)

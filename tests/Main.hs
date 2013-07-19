@@ -27,8 +27,9 @@ case_can_create_compressed_gtiff :: IO ()
 case_can_create_compressed_gtiff
   = withSystemTempDirectory "test." $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
-    ds <- assertNotRaisesGDALException $ create "GTIFF" p 3000 3000 1
-          [("compress","deflate"), ("zlevel", "9"), ("predictor", "2")] :: IO (RWDataset Int16)
+        o = [("compress","deflate"), ("zlevel", "9"), ("predictor", "2")]
+    ds <- assertNotThrowsGDALException $
+            create "GTIFF" p 3000 3000 1 o :: IO (RWDataset Int16)
     flushCache ds
     assertExistsAndSizeGreaterThan p 20000
 
@@ -36,17 +37,19 @@ case_can_create_and_open_dataset :: IO ()
 case_can_create_and_open_dataset
   = withSystemTempDirectory "test." $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
-    ds <- assertNotRaisesGDALException $ create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
+    ds <- assertNotThrowsGDALException $
+            create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
     flushCache ds
-    _ <- assertNotRaisesGDALException $ openReadOnly p
+    _ <- assertNotThrowsGDALException $ openReadOnly p
     return ()
 
 case_can_create_and_createCopy_dataset :: IO ()
 case_can_create_and_createCopy_dataset
   = withSystemTempDirectory "test." $ \tmpDir -> do
     let p  = joinPath [tmpDir, "test.tif"]
-    ds <- assertNotRaisesGDALException $ createMem 100 100 1 [] :: IO (RWDataset Int16)
-    ds2 <- assertNotRaisesGDALException $ createCopy "GTIFF" p ds True []
+    ds <- assertNotThrowsGDALException $
+            createMem 100 100 1 [] :: IO (RWDataset Int16)
+    ds2 <- assertNotThrowsGDALException $ createCopy "GTIFF" p ds True []
     flushCache ds2
     assertExistsAndSizeGreaterThan p 0
 
@@ -59,21 +62,47 @@ case_can_get_band_count = do
 case_can_get_existing_raster_band :: IO ()
 case_can_get_existing_raster_band = do
     ds <- createMem 10 10 1 [] :: IO (RWDataset Int16)
-    assertNotRaisesGDALException $ withBand ds 1 (\_ -> return ())
+    assertNotThrowsGDALException $ withBand ds 1 (\_ -> return ())
+
+case_dataset_is_created_with_correct_datatype :: IO ()
+case_dataset_is_created_with_correct_datatype = do
+    let assertType t b = assertEqual "unexpected datatype" t (bandDatatype b)
+    ds <- createMem 10 10 1 [] :: IO (RWDataset Word8)
+    withBand ds 1 (assertType GDT_Byte)
+    ds1 <- createMem 10 10 1 [] :: IO (RWDataset Word16)
+    withBand ds1 1 (assertType GDT_UInt16)
+    ds2 <- createMem 10 10 1 [] :: IO (RWDataset Word32)
+    withBand ds2 1 (assertType GDT_UInt32)
+    ds3 <- createMem 10 10 1 [] :: IO (RWDataset Int16)
+    withBand ds3 1 (assertType GDT_Int16)
+    ds4 <- createMem 10 10 1 [] :: IO (RWDataset Int32)
+    withBand ds4 1 (assertType GDT_Int32)
+    ds5 <- createMem 10 10 1 [] :: IO (RWDataset Float)
+    withBand ds5 1 (assertType GDT_Float32)
+    ds6 <- createMem 10 10 1 [] :: IO (RWDataset Double)
+    withBand ds6 1 (assertType GDT_Float64)
+    ds7 <- createMem 10 10 1 [] :: IO (RWDataset (GComplex Int16))
+    withBand ds7 1 (assertType GDT_CInt16)
+    ds8 <- createMem 10 10 1 [] :: IO (RWDataset (GComplex Int32))
+    withBand ds8 1 (assertType GDT_CInt32)
+    ds9 <- createMem 10 10 1 [] :: IO (RWDataset (GComplex Float))
+    withBand ds9 1 (assertType GDT_CFloat32)
+    ds10 <- createMem 10 10 1 [] :: IO (RWDataset (GComplex Double))
+    withBand ds10 1 (assertType GDT_CFloat64)
 
 case_can_set_and_get_geotransform :: IO ()
 case_can_set_and_get_geotransform = do
     ds <- createMem 10 10 1 [] :: IO (RWDataset Int16)
     let gt = Geotransform 5.0 4.0 3.0 2.0 1.0 0.0
-    assertNotRaisesGDALException $ setDatasetGeotransform ds gt
-    gt2 <- assertNotRaisesGDALException $ datasetGeotransform ds
+    assertNotThrowsGDALException $ setDatasetGeotransform ds gt
+    gt2 <- assertNotThrowsGDALException $ datasetGeotransform ds
     assertEqual "geotransform is not the same that was set" gt gt2
 
 case_can_set_and_get_projection :: IO ()
 case_can_set_and_get_projection = do
     ds <- createMem 10 10 1 [] :: IO (RWDataset Int16)
     let proj = "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
-    assertNotRaisesGDALException $ setDatasetProjection ds proj
+    assertNotThrowsGDALException $ setDatasetProjection ds proj
     proj2 <- datasetProjection ds
     assertEqual "projection is not the same that was set" proj proj2
 
@@ -103,7 +132,7 @@ case_can_get_bandSize = do
 case_cannot_get_nonexisting_raster_band :: IO ()
 case_cannot_get_nonexisting_raster_band = do
     ds <- createMem 10 10 1 [] :: IO (RWDataset Int16)
-    assertRaisesGDALException $ withBand ds 2 undefined
+    assertThrowsGDALException $ withBand ds 2 undefined
 
 case_can_get_rasterband_datatype :: IO ()
 case_can_get_rasterband_datatype = do
@@ -131,36 +160,50 @@ case_write_and_read_band_complex_float32 = write_and_read_band vec
          vec :: St.Vector (GComplex Float)
          fun i = (fromIntegral i * 1.1) :+ (fromIntegral i * 2.2)
 
-case_sort_of_write_and_read_band_complex_int16 :: IO ()
-case_sort_of_write_and_read_band_complex_int16
+case_write_and_read_band_complex_int16 :: IO ()
+case_write_and_read_band_complex_int16
   = write_and_read_band vec
     where vec = St.generate 10000 fun
           vec :: St.Vector (GComplex Int16)
           fun i = (fromIntegral i) :+ (fromIntegral i)
 
+can_write_one_type_and_read_another_with_automatic_conversion :: IO ()
+can_write_one_type_and_read_another_with_automatic_conversion = do
+    ds <- createMem 100 100 1 [] :: IO (RWDataset Int16)
+    withBand ds 1 $ \band -> do
+        let len   = bandBlockLen band
+            (x,y) = bandBlockSize band
+        let vec = St.generate len fromIntegral
+        writeBandBlock band 0 0 vec
+        vec2 <- readBand band 0 0 x y x y 0 0 :: IO (St.Vector Double)
+        assertEqualVectors vec (St.map round vec2)
 
-write_and_read_band ::
-  forall a . (Eq a, IsDataset Dataset ReadWrite a, IsWritableBand Band ReadWrite a)
+can_write_and_read_with_automatic_conversion :: IO ()
+can_write_and_read_with_automatic_conversion = do
+    ds <- createMem 100 100 1 [] :: IO (RWDataset Int16)
+    let vec   = St.generate 10000 fromIntegral :: St.Vector Double
+    withBand ds 1 $ \band -> do
+        writeBand band 0 0 100 100 100 100 0 0 vec
+        vec2 <- readBand band 0 0 100 100 100 100 0 0
+        assertEqualVectors vec vec2
+
+write_and_read_band :: forall a . (Eq a , HasDataset Dataset ReadWrite a)
   => St.Vector a -> IO ()
 write_and_read_band vec = do
     ds <- createMem 100 100 1 [] :: IO (RWDataset a)
     withBand ds 1 $ \band -> do
-        assertNotRaisesGDALException $
-            writeBand band 0 0 100 100 100 100 0 0 vec
-        vec2 <- assertNotRaisesGDALException $
-                   readBand band 0 0 100 100 100 100 0 0
+        writeBand band 0 0 100 100 100 100 0 0 vec
+        vec2 <- readBand band 0 0 100 100 100 100 0 0
         assertEqualVectors vec vec2
 
-write_and_read_block ::
-  forall a. (Eq a, IsDataset Dataset ReadWrite a, IsWritableBand Band ReadWrite a)
+write_and_read_block :: forall a. (Eq a, HasDataset Dataset ReadWrite a)
   => Int -> St.Vector a -> IO ()
 write_and_read_block len vec = do
-    ds <- createMem len 1 1 [] :: IO (RWDataset a)
+    ds <- createMem len 1 1 []
     withBand ds 1 $ \band -> do
-        assertNotRaisesGDALException $ writeBandBlock band 0 0 vec
-        vec2 <- assertNotRaisesGDALException $ readBandBlock band 0 0
-        assertBool "wrong type" (isJust vec2)
-        assertEqualVectors vec (fromJust vec2)
+        assertNotThrowsGDALException $ writeBandBlock band 0 0 vec
+        vec2 <- assertNotThrowsGDALException $ readBandBlock band 0 0
+        assertEqualVectors vec vec2
 
 case_write_and_read_block_double :: IO ()
 case_write_and_read_block_double = write_and_read_block 100 vec
@@ -188,8 +231,8 @@ case_fill_and_read_band_int16 = do
         ds <- createMem 100 100 1 [] :: IO (RWDataset Int16)
         withBand ds 1 $ \band -> do
             performGC -- try to segfault by causing premature calls to GDALClose
-            assertNotRaisesGDALException $ fillBand band (fromIntegral value) 0
-            v <- assertNotRaisesGDALException $
+            assertNotThrowsGDALException $ fillBand band (fromIntegral value) 0
+            v <- assertNotThrowsGDALException $
                     readBand band 0 0 100 100 100 100 0 0
             assertEqual "length mismatch" 10000 (St.length v)
             let allEqual = St.foldl' f True v
@@ -197,26 +240,39 @@ case_fill_and_read_band_int16 = do
                 f False _ = False
             assertBool "read is different than filled" allEqual
 
-
-case_readBandBlock_returns_Just_on_good_type :: IO ()
-case_readBandBlock_returns_Just_on_good_type = do
-    ds <- createMem 100 100 1 [] :: IO (RWDataset Int16)
-    withBand ds 1 $ \band -> do
-       good <- assertNotRaisesGDALException $
-                  readBandBlock band 0 0 :: MaybeIOVector Int16
-       assertBool "Could not read good type" (isJust good)
-
-case_readBandBlock_returns_Nothing_on_bad_type :: IO ()
-case_readBandBlock_returns_Nothing_on_bad_type = do
+case_can_open_unknown_type_dataset_and_readBand :: IO ()
+case_can_open_unknown_type_dataset_and_readBand = do
     withSystemTempDirectory "test." $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
       ds <- create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
       flushCache ds
       ds2 <- openReadOnly p
       withBand ds2 1 $ \band -> do
-        bad <- assertNotRaisesGDALException $
-                 readBandBlock band 0 0 :: MaybeIOVector Word8
-        assertBool "Could read bad type" (isNothing bad)
+        _ <- readBand band 0 0 100 100 100 100 0 0 :: IO (St.Vector Double)
+        return ()
+
+
+case_readBandBlock_doesnt_throw_on_good_type :: IO ()
+case_readBandBlock_doesnt_throw_on_good_type = do
+    withSystemTempDirectory "test." $ \tmpDir -> do
+      let p = joinPath [tmpDir, "test.tif"]
+      ds <- create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
+      flushCache ds
+      ds2 <- openReadOnly p :: IO (RODataset Int16)
+      withBand ds2 1 $ \band -> do
+        _ <- assertNotThrowsGDALException $ readBandBlock band 0 0
+        return ()
+
+case_readBandBlock_throws_on_bad_type :: IO ()
+case_readBandBlock_throws_on_bad_type = do
+    withSystemTempDirectory "test." $ \tmpDir -> do
+      let p = joinPath [tmpDir, "test.tif"]
+      ds <- create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
+      flushCache ds
+      ds2 <- openReadOnly p :: IO (RODataset Word8)
+      withBand ds2 1 $ \band -> do
+        _ <- assertThrowsGDALException $ readBandBlock band 0 0
+        return ()
 
 case_writeBandBlock_fails_when_writing_bad_type :: IO ()
 case_writeBandBlock_fails_when_writing_bad_type = do
@@ -227,7 +283,7 @@ case_writeBandBlock_fails_when_writing_bad_type = do
       ds2 <- openReadWrite p
       withBand ds2 1 $ \band -> do
          let v = St.replicate (bandBlockLen band) 0 :: St.Vector Word8
-         assertRaisesGDALException $ writeBandBlock band 0 0 v
+         assertThrowsGDALException $ writeBandBlock band 0 0 v
 
 --
 -- Utils
@@ -259,15 +315,17 @@ assertExistsAndSizeGreaterThan p s = do
                 show s)
                (s2 > s)
 
-assertRaisesGDALException a = do
+assertThrowsGDALException :: forall a. IO a -> IO ()
+assertThrowsGDALException a = do
     r <- tryJust (guard . isGDALException) a
     case r of
       Left _  -> return ()
-      Right _ -> assertBool "did not raise GDALException" False
+      Right _ -> assertBool "did not throw GDALException" False
 
-assertNotRaisesGDALException a = do
+assertNotThrowsGDALException :: forall b. IO b -> IO b
+assertNotThrowsGDALException a = do
     r <- tryJust (guard . isGDALException) a
     case r of
-      Left e  -> assertBool ("raised exception: " ++ show e) False
+      Left e  -> assertBool ("threw exception: " ++ show e) False
                  >> return undefined
       Right v -> return v
