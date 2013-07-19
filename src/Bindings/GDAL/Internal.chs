@@ -2,13 +2,18 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Bindings.GDAL.Internal (
-    Datatype (..)
+    IsDataset
+  , IsBand
+  , IsWritableBand
+  , HasDatatype
+  , Datatype (..)
   , ColorInterpretation (..)
   , PaletteInterpretation (..)
   , GDALException
@@ -18,6 +23,8 @@ module Bindings.GDAL.Internal (
   , DriverOptions
   , MajorObject
   , Dataset
+  , ReadWrite
+  , ReadOnly
   , RWDataset
   , RODataset
   , RWBand
@@ -26,6 +33,7 @@ module Bindings.GDAL.Internal (
   , Driver
   , ColorTable
   , RasterAttributeTable
+  , GComplex (..)
 
   , setQuietErrorHandler
 
@@ -71,9 +79,9 @@ import Control.Exception (finally, bracket, throw, Exception(..), SomeException)
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
-import Data.Complex (Complex(..), realPart, imagPart)
+import qualified Data.Complex as Complex
 import Data.Maybe (isJust)
-import Data.Typeable (Typeable, cast, typeOf)
+import Data.Typeable (Typeable, typeOf)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
 import Foreign.C.String (withCString, CString, peekCString)
@@ -177,21 +185,22 @@ instance Show PaletteInterpretation where
 
 data ReadOnly
 data ReadWrite
-newtype Dataset a = Dataset (ForeignPtr (Dataset a), Mutex)
+newtype (Dataset a t) = Dataset (ForeignPtr (Dataset a t), Mutex)
 
-type RODataset = Dataset ReadOnly
-type RWDataset = Dataset ReadWrite
+type RODataset t = Dataset ReadOnly t
+type RWDataset t = Dataset ReadWrite t
 
-withDataset, withDataset' :: (Dataset a) -> (Ptr (Dataset a) -> IO b) -> IO b
+withDataset, withDataset' :: (Dataset a t) -> (Ptr (Dataset a t) -> IO b) -> IO b
 withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
 
 withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 
 {#pointer GDALRasterBandH as Band newtype nocode#}
-newtype Band a = Band (Ptr (Band a))
+newtype (Band a t) = Band (Ptr ((Band a t)))
 
-type ROBand = Band ReadOnly
-type RWBand = Band ReadWrite
+type ROBand t = Band ReadOnly t
+type RWBand t = Band ReadWrite t
+
 
 {#pointer GDALDriverH as Driver newtype#}
 {#pointer GDALColorTableH as ColorTable newtype#}
@@ -211,14 +220,16 @@ driverByName s = do
 
 type DriverOptions = [(String,String)]
 
-create :: String -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
-       -> IO RWDataset
-create drv path nx ny bands dtype options = do
-    d <- driverByName  drv
-    create' d path nx ny bands dtype options
+class (HasDatatype t, a ~ReadWrite, d ~ Dataset)
+  => IsDataset d a t where
+    create :: String -> String -> Int -> Int -> Int -> DriverOptions
+           -> IO (d a t)
+    create drv path nx ny bands options = do
+        d <- driverByName  drv
+        create' d path nx ny bands (datatype (undefined :: t)) options
 
 create' :: Driver -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
-       -> IO RWDataset
+       -> IO (Dataset ReadWrite t)
 create' drv path nx ny bands dtype options = withCString path $ \path' -> do
     opts <- toOptionList options
     let nx'    = fromIntegral nx
@@ -226,6 +237,19 @@ create' drv path nx ny bands dtype options = withCString path $ \path' -> do
         bands' = fromIntegral bands
         dtype' = fromEnumC dtype
     create_ drv path' nx' ny' bands' dtype' opts >>= newDatasetHandle
+
+instance IsDataset Dataset ReadWrite Word8 where
+instance IsDataset Dataset ReadWrite Int16 where
+instance IsDataset Dataset ReadWrite Int32 where
+instance IsDataset Dataset ReadWrite Word16 where
+instance IsDataset Dataset ReadWrite Word32 where
+instance IsDataset Dataset ReadWrite Float where
+instance IsDataset Dataset ReadWrite Double where
+instance IsDataset Dataset ReadWrite (GComplex Int16) where
+instance IsDataset Dataset ReadWrite (GComplex Int32) where
+instance IsDataset Dataset ReadWrite (GComplex Float) where
+instance IsDataset Dataset ReadWrite (GComplex Double) where
+
 
 foreign import ccall safe "gdal.h GDALCreate" create_
   :: Driver
@@ -235,22 +259,23 @@ foreign import ccall safe "gdal.h GDALCreate" create_
   -> CInt
   -> CInt
   -> Ptr CString
-  -> IO (Ptr RWDataset)
+  -> IO (Ptr (RWDataset t))
 
-openReadOnly :: String -> IO RODataset
+openReadOnly :: String -> IO (RODataset t)
 openReadOnly p = withCString p openIt
   where openIt p' = open_ p' (fromEnumC GA_ReadOnly) >>= newDatasetHandle
 
-openReadWrite :: String -> IO RWDataset
+openReadWrite :: String -> IO (RWDataset t)
 openReadWrite p = withCString p openIt
   where openIt p' = open_ p' (fromEnumC GA_Update) >>= newDatasetHandle
 
 foreign import ccall safe "gdal.h GDALOpen" open_
-   :: CString -> CInt -> IO (Ptr (Dataset a))
+   :: CString -> CInt -> IO (Ptr (Dataset a t))
 
 
-createCopy' :: Driver -> String -> (Dataset a) -> Bool -> DriverOptions
-            -> ProgressFun -> IO (Dataset a)
+createCopy' ::
+  Driver -> String -> (Dataset a t) -> Bool -> DriverOptions
+  -> ProgressFun -> IO (RWDataset t)
 createCopy' driver path dataset strict options progressFun
   = withCString path $ \p ->
     withDataset dataset $ \ds ->
@@ -259,26 +284,28 @@ createCopy' driver path dataset strict options progressFun
         o <- toOptionList options
         createCopy_ driver p ds s o pFunc (castPtr nullPtr) >>= newDatasetHandle
 
+
+createCopy ::
+  String -> String -> (Dataset a t) -> Bool -> DriverOptions
+  -> IO (RWDataset t)
+createCopy driver path dataset strict options = do
+  d <- driverByName driver
+  createCopy' d path dataset strict options (\_ _ _ -> return 1)
+
 foreign import ccall safe "gdal.h GDALCreateCopy" createCopy_
   :: Driver
   -> Ptr CChar
-  -> Ptr (Dataset a)
+  -> Ptr (Dataset a t)
   -> CInt
   -> Ptr CString
   -> FunPtr ProgressFun
   -> Ptr ()
-  -> IO (Ptr (Dataset a))
+  -> IO (Ptr (RWDataset t))
 
 
 withProgressFun = withCCallback wrapProgressFun
 
 withCCallback w f = bracket (w f) freeHaskellFunPtr
-
-createCopy :: String -> String -> (Dataset a) -> Bool -> DriverOptions
-           -> IO (Dataset a)
-createCopy driver path dataset strict options = do
-  d <- driverByName driver
-  createCopy' d path dataset strict options (\_ _ _ -> return 1)
 
 type ProgressFun = CDouble -> Ptr CChar -> Ptr () -> IO CInt
 
@@ -286,7 +313,7 @@ foreign import ccall "wrapper"
   wrapProgressFun :: ProgressFun -> IO (FunPtr ProgressFun)
 
 
-newDatasetHandle :: Ptr (Dataset a) -> IO (Dataset a)
+newDatasetHandle :: Ptr (Dataset a t) -> IO (Dataset a t)
 newDatasetHandle p =
     if p==nullPtr
         then throw $ GDALException CE_Failure "Could not create dataset"
@@ -295,38 +322,39 @@ newDatasetHandle p =
                 return $ Dataset (fp, mutex)
 
 foreign import ccall "gdal.h &GDALClose"
-  closeDataset :: FunPtr (Ptr (Dataset a) -> IO ())
+  closeDataset :: FunPtr (Ptr (Dataset a t) -> IO ())
 
-createMem:: Int -> Int -> Int -> Datatype -> DriverOptions -> IO RWDataset
+createMem:: IsDataset d a t
+  => Int -> Int -> Int -> DriverOptions -> IO (d a t)
 createMem = create "MEM" ""
 
 flushCache d = withDataset d flushCache'
 
 foreign import ccall safe "gdal.h GDALFlushCache" flushCache'
-  :: Ptr (Dataset a) -> IO ()
+  :: Ptr (Dataset a t) -> IO ()
 
 
-datasetProjection :: Dataset a -> IO String
+datasetProjection :: Dataset a t -> IO String
 datasetProjection d = withDataset d $ \d' -> do
     p <- getProjection_ d'
     peekCString p
 
 foreign import ccall unsafe "gdal.h GDALGetProjectionRef" getProjection_
-  :: Ptr (Dataset a) -> IO (Ptr CChar)
+  :: Ptr (Dataset a t) -> IO (Ptr CChar)
 
 
-setDatasetProjection :: RWDataset -> String -> IO ()
+setDatasetProjection :: (RWDataset t) -> String -> IO ()
 setDatasetProjection d p = throwIfError "could not set projection" f
   where f = withDataset d $ \d' -> withCString p $ \p' -> setProjection' d' p'
 
 foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
-  :: Ptr (Dataset a) -> Ptr CChar -> IO CInt
+  :: Ptr (Dataset a t) -> Ptr CChar -> IO CInt
 
 
 data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
     deriving (Eq, Show)
 
-datasetGeotransform :: Dataset a -> IO Geotransform
+datasetGeotransform :: Dataset a t -> IO Geotransform
 datasetGeotransform ds = withDataset' ds $ \dPtr -> do
     allocaArray 6 $ \a -> do
       throwIfError "could not get geotransform" $ getGeoTransform dPtr a
@@ -338,9 +366,9 @@ datasetGeotransform ds = withDataset' ds $ \dPtr -> do
                    <*> liftM realToFrac (peekElemOff a 5)
 
 foreign import ccall unsafe "gdal.h GDALGetGeoTransform" getGeoTransform
-  :: Ptr (Dataset a) -> Ptr CDouble -> IO CInt
+  :: Ptr (Dataset a t) -> Ptr CDouble -> IO CInt
 
-setDatasetGeotransform :: RWDataset -> Geotransform -> IO ()
+setDatasetGeotransform :: (RWDataset t) -> Geotransform -> IO ()
 setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
     allocaArray 6 $ \a -> do
         let (Geotransform g0 g1 g2 g3 g4 g5) = gt
@@ -353,15 +381,15 @@ setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
         throwIfError "could not set geotransform" $ setGeoTransform dPtr a
 
 foreign import ccall unsafe "gdal.h GDALSetGeoTransform" setGeoTransform
-  :: Ptr (Dataset a) -> Ptr CDouble -> IO CInt
+  :: Ptr (Dataset a t) -> Ptr CDouble -> IO CInt
 
-datasetBandCount :: Dataset a -> IO (Int)
+datasetBandCount :: Dataset a t -> IO (Int)
 datasetBandCount d = liftM fromIntegral $ withDataset d bandCount_
 
 foreign import ccall unsafe "gdal.h GDALGetRasterCount" bandCount_
-  :: Ptr (Dataset a) -> IO CInt
+  :: Ptr (Dataset a t) -> IO CInt
 
-withBand :: Dataset a -> Int -> ((Band a) -> IO b) -> IO b
+withBand :: Dataset a t -> Int -> (Band a t -> IO b) -> IO b
 withBand ds band f = withDataset ds $ \dPtr -> do
     rBand@(Band p) <- getRasterBand dPtr (fromIntegral band)
     if p == nullPtr
@@ -370,17 +398,17 @@ withBand ds band f = withDataset ds $ \dPtr -> do
         else f rBand
 
 foreign import ccall unsafe "gdal.h GDALGetRasterBand" getRasterBand
-  :: Ptr (Dataset a) -> CInt -> IO (Band a)
+  :: Ptr (Dataset a t) -> CInt -> IO ((Band a t))
 
 
-bandDatatype :: Band a -> Datatype
+bandDatatype :: (Band a t) -> Datatype
 bandDatatype band = toEnumC . getDatatype_ $ band
 
 foreign import ccall unsafe "gdal.h GDALGetRasterDataType" getDatatype_
-  :: Band a -> CInt
+  :: (Band a t) -> CInt
 
 
-bandBlockSize :: Band a -> (Int,Int)
+bandBlockSize :: (Band a t) -> (Int,Int)
 bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    -- unsafePerformIO is safe here since the block size cant change once
    -- a dataset is created
@@ -388,86 +416,114 @@ bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    liftA2 (,) (liftM fromIntegral $ peek xPtr) (liftM fromIntegral $ peek yPtr)
 
 foreign import ccall unsafe "gdal.h GDALGetBlockSize" getBlockSize_
-    :: Band a -> Ptr CInt -> Ptr CInt -> IO ()
+    :: (Band a t) -> Ptr CInt -> Ptr CInt -> IO ()
 
 
-bandBlockLen :: Band a -> Int
+bandBlockLen :: (Band a t) -> Int
 bandBlockLen = uncurry (*) . bandBlockSize
 
-bandSize :: Band a -> (Int, Int)
+bandSize :: (Band a t) -> (Int, Int)
 bandSize band
   = (fromIntegral . getXSize_ $ band, fromIntegral . getYSize_ $ band)
 
 foreign import ccall unsafe "gdal.h GDALGetRasterBandXSize" getXSize_
-  :: Band a -> CInt
+  :: (Band a t) -> CInt
 
 foreign import ccall unsafe "gdal.h GDALGetRasterBandYSize" getYSize_
-  :: Band a -> CInt
+  :: (Band a t) -> CInt
 
 
-bandNodataValue :: Band a -> IO (Maybe Double)
+bandNodataValue :: (Band a t) -> IO (Maybe Double)
 bandNodataValue b = alloca $ \p -> do
    value <- liftM realToFrac $ getNodata_ b p
    hasNodata <- liftM toBool $ peek p
    return (if hasNodata then Just value else Nothing)
    
 foreign import ccall unsafe "gdal.h GDALGetRasterNoDataValue" getNodata_
-   :: Band a -> Ptr CInt -> IO CDouble
+   :: (Band a t) -> Ptr CInt -> IO CDouble
    
 
-setBandNodataValue :: RWBand -> Double -> IO ()
+setBandNodataValue :: (RWBand t) -> Double -> IO ()
 setBandNodataValue b v = throwIfError "could not set nodata" $
                             setNodata_ b (realToFrac v)
 
 foreign import ccall safe "gdal.h GDALSetRasterNoDataValue" setNodata_
-    :: RWBand -> CDouble -> IO CInt
+    :: (RWBand t) -> CDouble -> IO CInt
 
 
-fillBand :: RWBand -> Double -> Double -> IO ()
+fillBand :: (RWBand t) -> Double -> Double -> IO ()
 fillBand b r i = throwIfError "could not fill band" $
     fillRaster_ b (realToFrac r) (realToFrac i)
 
 foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
-    :: RWBand -> CDouble -> CDouble -> IO CInt
+    :: (RWBand t) -> CDouble -> CDouble -> IO CInt
 
 
-class HasDatatype a where
-    datatype :: a -> Datatype
-
-instance HasDatatype (Ptr Word8)  where datatype _ = GDT_Byte
-instance HasDatatype (Ptr Word16) where datatype _ = GDT_UInt16
-instance HasDatatype (Ptr Word32) where datatype _ = GDT_UInt32
-instance HasDatatype (Ptr Int16)  where datatype _ = GDT_Int16
-instance HasDatatype (Ptr Int32)  where datatype _ = GDT_Int32
-instance HasDatatype (Ptr Float)  where datatype _ = GDT_Float32
-instance HasDatatype (Ptr Double) where datatype _ = GDT_Float64
--- GDT_CInt16 or GDT_CInt32 can be written as Complex (Float|Double) but
--- will be truncated by GDAL. Both can be read as Complex (Float|Double).
--- This is a limitation imposed by Complex a which constrains a to be a
--- RealFloat.
-instance HasDatatype (Ptr (Complex Float)) where datatype _ = GDT_CFloat32
-instance HasDatatype (Ptr (Complex Double)) where datatype _ = GDT_CFloat64
 
 
-instance (RealFloat a, Storable a) => Storable (Complex a) where
+data GComplex a = (:+) !a !a deriving (Eq, Show, Typeable)
+
+class IsGComplex a where
+   type ComplexType a :: *
+   toComplex :: GComplex a -> Complex.Complex (ComplexType a)
+   fromComplex :: Complex.Complex (ComplexType a) -> GComplex a
+
+   toComplex (r :+  i) = (toUnit r) Complex.:+ (toUnit i)
+   fromComplex (r Complex.:+ i) = (fromUnit r) :+ (fromUnit i)
+
+   toUnit :: a -> ComplexType a
+   fromUnit :: ComplexType a -> a
+
+instance IsGComplex Int16 where
+   type ComplexType Int16 = Float
+   toUnit = fromIntegral
+   fromUnit = round
+
+instance IsGComplex Int32 where
+   type ComplexType Int32 = Double
+   toUnit = fromIntegral
+   fromUnit = round
+
+instance IsGComplex Float where
+   type ComplexType Float = Float
+   toUnit = id
+   fromUnit = id
+
+instance IsGComplex Double where
+   type ComplexType Double = Double
+   toUnit = id
+   fromUnit = id
+
+
+instance Storable a => Storable (GComplex a) where
   sizeOf _ = sizeOf (undefined :: a) * 2
   alignment _ = alignment (undefined :: a)
  
-  {-# SPECIALIZE INLINE peek :: Ptr (Complex Float) -> IO (Complex Float) #-}
-  {-# SPECIALIZE INLINE peek :: Ptr (Complex Double) -> IO (Complex Double) #-}
+  {-# SPECIALIZE INLINE peek ::
+      Ptr (GComplex Double) -> IO (GComplex Double) #-}
+  {-# SPECIALIZE INLINE peek ::
+      Ptr (GComplex Float) -> IO (GComplex Float) #-}
+  {-# SPECIALIZE INLINE peek ::
+      Ptr (GComplex Int16) -> IO (GComplex Int16) #-}
+  {-# SPECIALIZE INLINE peek ::
+      Ptr (GComplex Int32) -> IO (GComplex Int32) #-}
   peek p = (:+) <$> peekElemOff (castPtr p) 0 <*> peekElemOff (castPtr p) 1
 
   {-# SPECIALIZE INLINE
-      poke :: Ptr (Complex Float) -> Complex Float -> IO () #-}
+      poke :: Ptr (GComplex Float) -> GComplex Float -> IO () #-}
   {-# SPECIALIZE INLINE
-      poke :: Ptr (Complex Double) -> Complex Double -> IO () #-}
-  poke p v = pokeElemOff (castPtr p) 0 (realPart v) >>
-             pokeElemOff (castPtr p) 1 (imagPart v)
+      poke :: Ptr (GComplex Double) -> GComplex Double -> IO () #-}
+  {-# SPECIALIZE INLINE
+      poke :: Ptr (GComplex Int16) -> GComplex Int16 -> IO () #-}
+  {-# SPECIALIZE INLINE
+      poke :: Ptr (GComplex Int32) -> GComplex Int32 -> IO () #-}
+  poke p (r :+ i)
+    = pokeElemOff (castPtr p) 0 r >> pokeElemOff (castPtr p) 1 i
 
 
 
-readBand :: (Storable a, HasDatatype (Ptr a))
-  => Band b
+readBand :: forall a b t. HasDatatype a
+  => (Band b t)
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -475,6 +531,7 @@ readBand :: (Storable a, HasDatatype (Ptr a))
   -> IO (Vector a)
 readBand band xoff yoff sx sy bx by pxs lns = do
     fp <- mallocForeignPtrArray (bx * by)
+    let dtype = fromEnumC (datatype (undefined :: a))
     withForeignPtr fp $ \ptr -> do
       throwIfError "could not advise read" $
         adviseRead_
@@ -485,7 +542,7 @@ readBand band xoff yoff sx sy bx by pxs lns = do
           (fromIntegral sy)
           (fromIntegral bx)
           (fromIntegral by)
-          (fromEnumC (datatype ptr))
+          dtype
           (castPtr nullPtr)
       throwIfError "could not read band" $
         rasterIO_
@@ -498,18 +555,18 @@ readBand band xoff yoff sx sy bx by pxs lns = do
           (castPtr ptr)
           (fromIntegral bx)
           (fromIntegral by)
-          (fromEnumC (datatype ptr))
+          dtype
           (fromIntegral pxs)
           (fromIntegral lns)
     return $ unsafeFromForeignPtr0 fp (bx * by)
 
 foreign import ccall safe "gdal.h GDALRasterAdviseRead" adviseRead_
-    :: Band a -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt
+    :: (Band a t) -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt
     -> Ptr (Ptr CChar) -> IO CInt
 
         
-writeBand :: (Storable a, HasDatatype (Ptr a))
-  => RWBand
+writeBand :: forall a t. HasDatatype a
+  => (RWBand t)
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -533,72 +590,92 @@ writeBand band xoff yoff sx sy bx by pxs lns vec = do
             (castPtr ptr)
             (fromIntegral bx)
             (fromIntegral by)
-            (fromEnumC (datatype ptr))
+            (fromEnumC (datatype (undefined :: a)))
             (fromIntegral pxs)
             (fromIntegral lns)
 
 foreign import ccall safe "gdal.h GDALRasterIO" rasterIO_
-  :: Band a -> CInt -> CInt -> CInt -> CInt -> CInt -> Ptr () -> CInt -> CInt
+  :: (Band a t) -> CInt -> CInt -> CInt -> CInt -> CInt -> Ptr () -> CInt -> CInt
   -> CInt -> CInt -> CInt -> IO CInt
 
 
-data Block where
-    Block :: (Typeable a, Storable a) => Vector a -> Block
-
 type MaybeIOVector a = IO (Maybe (Vector a))
 
-readBandBlock :: (Storable a, Typeable a)
-  => Band b -> Int -> Int -> MaybeIOVector a
-readBandBlock b x y =
-  liftM (maybe Nothing (\(Block a) -> cast a)) $ readBandBlock' b x y
-
-
-readBandBlock' :: Band b -> Int -> Int -> IO (Maybe Block)
-readBandBlock' b x y = 
-  case bandDatatype b of
-    GDT_Byte     -> Just . Block <$> (readIt b x y :: IOVector Word8)
-    GDT_Int16    -> Just . Block <$> (readIt b x y :: IOVector Int16)
-    GDT_Int32    -> Just . Block <$> (readIt b x y :: IOVector Int32)
-    GDT_Float32  -> Just . Block <$> (readIt b x y :: IOVector Float)
-    GDT_Float64  -> Just . Block <$> (readIt b x y :: IOVector Double)
-    GDT_CInt16   -> Just . Block <$> (readIt b x y :: IOVector (Complex Float))
-    GDT_CInt32   -> Just . Block <$> (readIt b x y :: IOVector (Complex Double))
-    GDT_CFloat32 -> Just . Block <$> (readIt b x y :: IOVector (Complex Float))
-    GDT_CFloat64 -> Just . Block <$> (readIt b x y :: IOVector (Complex Double))
-    _            -> return Nothing
-  where
-    readIt :: Storable a => Band b -> Int -> Int -> IOVector a
-    readIt b x y = do
-      f <- mallocForeignPtrArray (bandBlockLen b)
-      withForeignPtr f $ \ptr ->
-        throwIfError "could not read block" $
-          readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
-      return $ unsafeFromForeignPtr0 f (bandBlockLen b)
+class (HasDatatype t, b ~ Band)
+  => IsBand b a t where
+    readBandBlock  :: b a t -> Int -> Int -> MaybeIOVector t
+    readBandBlock b x y
+      = if typeOf (undefined :: Vector t) /= typeOfBand b
+            then return Nothing
+            else do
+                f <- mallocForeignPtrArray (bandBlockLen b)
+                withForeignPtr f $ \ptr ->
+                  throwIfError "could not read block" $
+                    readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
+                return $ Just $ unsafeFromForeignPtr0 f (bandBlockLen b)
 
 foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
-    :: Band a -> CInt -> CInt -> Ptr () -> IO CInt
+    :: (Band a t) -> CInt -> CInt -> Ptr () -> IO CInt
 
+invalidVType v b = sizeOf v /= datatypeSize (bandDatatype b)
 
-type IOVector a = IO (Vector a)
-
-writeBandBlock :: (Storable a, Typeable a)
-  => RWBand
-  -> Int -> Int
-  -> Vector a
-  -> IO ()
-writeBandBlock b x y vec = do
-    let nElems    = bandBlockLen b
-        (fp, len) = unsafeToForeignPtr0 vec
-    if nElems /= len 
-      then throw $ GDALException CE_Failure "wrongly sized vector"
-      else if typeOf vec /= typeOfBand b
-           then throw $ GDALException CE_Failure "wrongly typed vector"
-           else withForeignPtr fp $ \ptr ->
-                throwIfError "could not write block" $
-                   writeBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
+class (IsBand b a t, a~ReadWrite) => IsWritableBand b a t where
+    writeBandBlock :: b a t -> Int -> Int -> Vector t -> IO ()
+    writeBandBlock b x y vec = do
+        let nElems    = bandBlockLen b
+            (fp, len) = unsafeToForeignPtr0 vec
+        if nElems /= len
+          then throw $ GDALException CE_Failure "wrongly sized vector"
+          else if typeOf vec /= typeOfBand b
+               then throw $ GDALException CE_Failure "wrongly typed vector"
+               else withForeignPtr fp $ \ptr ->
+                    throwIfError "could not write block" $
+                       writeBlock_ b (fromIntegral x) (fromIntegral y)
+                                     (castPtr ptr)
 
 foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
-   :: RWBand -> CInt -> CInt -> Ptr () -> IO CInt
+   :: (RWBand t) -> CInt -> CInt -> Ptr () -> IO CInt
+
+
+
+instance forall a. IsBand Band a Word8 where
+instance forall a. IsBand Band a Word16 where
+instance forall a. IsBand Band a Word32 where
+instance forall a. IsBand Band a Int16 where
+instance forall a. IsBand Band a Int32 where
+instance forall a. IsBand Band a Float where
+instance forall a. IsBand Band a Double where
+instance forall a. IsBand Band a (GComplex Int16) where
+instance forall a. IsBand Band a (GComplex Int32) where
+instance forall a. IsBand Band a (GComplex Float) where
+instance forall a. IsBand Band a (GComplex Double) where
+
+instance IsWritableBand Band ReadWrite Word8
+instance IsWritableBand Band ReadWrite Word16
+instance IsWritableBand Band ReadWrite Word32
+instance IsWritableBand Band ReadWrite Int16
+instance IsWritableBand Band ReadWrite Int32
+instance IsWritableBand Band ReadWrite Float
+instance IsWritableBand Band ReadWrite Double
+instance IsWritableBand Band ReadWrite (GComplex Int16) where
+instance IsWritableBand Band ReadWrite (GComplex Int32) where
+instance IsWritableBand Band ReadWrite (GComplex Float) where
+instance IsWritableBand Band ReadWrite (GComplex Double) where
+
+class (Storable a, Typeable a) => HasDatatype a where
+    datatype :: a -> Datatype
+
+instance HasDatatype Word8  where datatype _ = GDT_Byte
+instance HasDatatype Word16 where datatype _ = GDT_UInt16
+instance HasDatatype Word32 where datatype _ = GDT_UInt32
+instance HasDatatype Int16  where datatype _ = GDT_Int16
+instance HasDatatype Int32  where datatype _ = GDT_Int32
+instance HasDatatype Float  where datatype _ = GDT_Float32
+instance HasDatatype Double where datatype _ = GDT_Float64
+instance HasDatatype (GComplex Int16) where datatype _ = GDT_CInt16
+instance HasDatatype (GComplex Int32) where datatype _ = GDT_CInt32
+instance HasDatatype (GComplex Float) where datatype _ = GDT_CFloat32
+instance HasDatatype (GComplex Double) where datatype _ = GDT_CFloat64
 
 
 typeOfBand = typeOfdatatype . bandDatatype
@@ -606,14 +683,16 @@ typeOfBand = typeOfdatatype . bandDatatype
 typeOfdatatype dt =
   case dt of
     GDT_Byte     -> typeOf (undefined :: Vector Word8)
+    GDT_UInt16   -> typeOf (undefined :: Vector Word16)
+    GDT_UInt32   -> typeOf (undefined :: Vector Word32)
     GDT_Int16    -> typeOf (undefined :: Vector Int16)
     GDT_Int32    -> typeOf (undefined :: Vector Int32)
     GDT_Float32  -> typeOf (undefined :: Vector Float)
     GDT_Float64  -> typeOf (undefined :: Vector Double)
-    GDT_CInt16   -> typeOf (undefined :: Vector (Complex Float))
-    GDT_CInt32   -> typeOf (undefined :: Vector (Complex Double))
-    GDT_CFloat32 -> typeOf (undefined :: Vector (Complex Float))
-    GDT_CFloat64 -> typeOf (undefined :: Vector (Complex Double))
+    GDT_CInt16   -> typeOf (undefined :: Vector (GComplex Int16))
+    GDT_CInt32   -> typeOf (undefined :: Vector (GComplex Int32))
+    GDT_CFloat32 -> typeOf (undefined :: Vector (GComplex Float))
+    GDT_CFloat64 -> typeOf (undefined :: Vector (GComplex Double))
     _            -> typeOf (undefined :: Bool) -- will never match a vector
 
 fromEnumC :: Enum a => a -> CInt
