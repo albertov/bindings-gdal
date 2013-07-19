@@ -48,6 +48,7 @@ module Bindings.GDAL.Internal (
   , setDatasetProjection
   , datasetGeotransform
   , setDatasetGeotransform
+  , datasetBandCount
 
   , withBand
   , bandDatatype
@@ -109,9 +110,6 @@ foreign import ccall "cpl_error.h &CPLQuietErrorHandler"
 
 foreign import ccall "cpl_error.h CPLSetErrorHandler"
   c_setErrorHandler :: FunPtr ErrorHandler -> IO (FunPtr ErrorHandler)
-
-foreign import ccall "wrapper"
-  wrapErrorHandler :: ErrorHandler -> IO (FunPtr ErrorHandler)
 
 setQuietErrorHandler :: IO ()
 setQuietErrorHandler = setErrorHandler c_quietErrorHandler
@@ -237,7 +235,7 @@ foreign import ccall safe "gdal.h GDALCreate" create_
   -> CInt
   -> CInt
   -> Ptr CString
-  -> IO (Ptr (Dataset a))
+  -> IO (Ptr RWDataset)
 
 openReadOnly :: String -> IO RODataset
 openReadOnly p = withCString p openIt
@@ -305,7 +303,7 @@ createMem = create "MEM" ""
 flushCache d = withDataset d flushCache'
 
 foreign import ccall safe "gdal.h GDALFlushCache" flushCache'
-        :: (Ptr (Dataset a)) -> (IO ())
+  :: Ptr (Dataset a) -> IO ()
 
 
 datasetProjection :: Dataset a -> IO String
@@ -314,7 +312,7 @@ datasetProjection d = withDataset d $ \d' -> do
     peekCString p
 
 foreign import ccall unsafe "gdal.h GDALGetProjectionRef" getProjection_
-        :: (Ptr (Dataset a)) -> (IO (Ptr CChar))
+  :: Ptr (Dataset a) -> IO (Ptr CChar)
 
 
 setDatasetProjection :: RWDataset -> String -> IO ()
@@ -322,7 +320,7 @@ setDatasetProjection d p = throwIfError "could not set projection" f
   where f = withDataset d $ \d' -> withCString p $ \p' -> setProjection' d' p'
 
 foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
-        :: (Ptr (Dataset a)) -> ((Ptr CChar) -> (IO CInt))
+  :: Ptr (Dataset a) -> Ptr CChar -> IO CInt
 
 
 data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
@@ -340,7 +338,7 @@ datasetGeotransform ds = withDataset' ds $ \dPtr -> do
                    <*> liftM realToFrac (peekElemOff a 5)
 
 foreign import ccall unsafe "gdal.h GDALGetGeoTransform" getGeoTransform
-        :: (Ptr (Dataset a)) -> ((Ptr CDouble) -> (IO CInt))
+  :: Ptr (Dataset a) -> Ptr CDouble -> IO CInt
 
 setDatasetGeotransform :: RWDataset -> Geotransform -> IO ()
 setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
@@ -355,8 +353,13 @@ setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
         throwIfError "could not set geotransform" $ setGeoTransform dPtr a
 
 foreign import ccall unsafe "gdal.h GDALSetGeoTransform" setGeoTransform
-        :: (Ptr (Dataset a)) -> ((Ptr CDouble) -> (IO CInt))
+  :: Ptr (Dataset a) -> Ptr CDouble -> IO CInt
 
+datasetBandCount :: Dataset a -> IO (Int)
+datasetBandCount d = liftM fromIntegral $ withDataset d bandCount_
+
+foreign import ccall unsafe "gdal.h GDALGetRasterCount" bandCount_
+  :: Ptr (Dataset a) -> IO CInt
 
 withBand :: Dataset a -> Int -> ((Band a) -> IO b) -> IO b
 withBand ds band f = withDataset ds $ \dPtr -> do
@@ -367,14 +370,14 @@ withBand ds band f = withDataset ds $ \dPtr -> do
         else f rBand
 
 foreign import ccall unsafe "gdal.h GDALGetRasterBand" getRasterBand
-        :: (Ptr (Dataset a)) -> (CInt -> (IO ((Band a))))
+  :: Ptr (Dataset a) -> CInt -> IO (Band a)
 
 
 bandDatatype :: Band a -> Datatype
 bandDatatype band = toEnumC . getDatatype_ $ band
 
 foreign import ccall unsafe "gdal.h GDALGetRasterDataType" getDatatype_
-   :: Band a -> CInt
+  :: Band a -> CInt
 
 
 bandBlockSize :: Band a -> (Int,Int)

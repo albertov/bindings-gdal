@@ -51,6 +51,11 @@ case_can_create_and_createCopy_dataset
     flushCache ds2
     assertExistsAndSizeGreaterThan p 0
 
+case_can_get_band_count :: IO ()
+case_can_get_band_count = do
+    ds <- createMem 10 10 5 GDT_Int16 []
+    bc <- datasetBandCount ds
+    assertEqual "unexpected number of bands" 5 bc
 
 case_can_get_existing_raster_band :: IO ()
 case_can_get_existing_raster_band = do
