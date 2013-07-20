@@ -21,7 +21,7 @@ library
                      OSGeo.OSR,
                      OSGeo.OSR.Internal
   other-modules:     OSGeo.Util
-  build-depends:     base ==4.5.*,
+  build-depends:     base >=4.5,
                      vector
   ghc-options:       -O2 -funbox-strict-fields -Wall
 

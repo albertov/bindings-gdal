@@ -14,8 +14,6 @@ module OSGeo.GDAL.Internal (
   , HasWritebaleBand
   , HasDatatype
   , Datatype (..)
-  , ColorInterpretation (..)
-  , PaletteInterpretation (..)
   , GDALException
   , isGDALException
   , Geotransform (..)
@@ -158,29 +156,6 @@ instance Show Datatype where
 {# enum GDALAccess as Access {upcaseFirstLetter} deriving (Eq, Show) #}
 
 {# enum GDALRWFlag as RwFlag {upcaseFirstLetter} deriving (Eq, Show) #}
-
-{# enum GDALColorInterp as ColorInterpretation {upcaseFirstLetter}
-   deriving (Eq) #}
-
-instance Show ColorInterpretation where
-    show = getColorInterpretationName
-
-{# fun pure unsafe GDALGetColorInterpretationName as getColorInterpretationName
-    { fromEnumC `ColorInterpretation' } -> `String' #}
-
-{# fun pure unsafe GDALGetColorInterpretationByName as getColorInterpretationByName
-    { `String' } -> `ColorInterpretation' toEnumC #}
-
-
-{# enum GDALPaletteInterp as PaletteInterpretation {upcaseFirstLetter}
-   deriving (Eq) #}
-
-instance Show PaletteInterpretation where
-    show = getPaletteInterpretationName
-
-{# fun pure unsafe GDALGetPaletteInterpretationName as getPaletteInterpretationName
-    { fromEnumC `PaletteInterpretation' } -> `String' #}
-
 
 {#pointer GDALMajorObjectH as MajorObject newtype#}
 {#pointer GDALDatasetH as Dataset foreign newtype nocode#}
