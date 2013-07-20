@@ -211,17 +211,20 @@ class ( HasDatatype t
 create' :: Driver -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
        -> IO (Dataset ReadWrite t)
 create' drv path nx ny bands dtype options = withCString path $ \path' -> do
-    opts <- toOptionList options
     let nx'    = fromIntegral nx
         ny'    = fromIntegral ny
         bands' = fromIntegral bands
         dtype' = fromEnumC dtype
-    create_ drv path' nx' ny' bands' dtype' opts >>= newDatasetHandle
+    withOptionList options $ \opts ->
+        create_ drv path' nx' ny' bands' dtype' opts >>= newDatasetHandle
 
-toOptionList :: [(String,String)] -> IO (Ptr CString)
-toOptionList opts =  foldM folder nullPtr opts
-  where folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
+withOptionList ::
+  [(String, String)] -> (Ptr CString -> IO c) -> IO c
+withOptionList opts = bracket (toOptionList opts) freeOptionList
+  where toOptionList opts =  foldM folder nullPtr opts
+        folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
                            {#call unsafe CSLSetNameValue as ^#} acc k' v'
+        freeOptionList = {#call unsafe CSLDestroy as ^#} . castPtr
 
 instance HasDataset Dataset ReadWrite Word8 where
 instance HasDataset Dataset ReadWrite Int16 where
@@ -266,8 +269,9 @@ createCopy' driver path dataset strict options progressFun
     withDataset dataset $ \ds ->
     withProgressFun progressFun $ \pFunc -> do
         let s = fromBool strict
-        o <- toOptionList options
-        createCopy_ driver p ds s o pFunc (castPtr nullPtr) >>= newDatasetHandle
+        withOptionList options $ \o ->
+            createCopy_ driver p ds s o pFunc (castPtr nullPtr)
+            >>= newDatasetHandle
 
 
 createCopy ::
