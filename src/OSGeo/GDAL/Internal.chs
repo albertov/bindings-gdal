@@ -34,8 +34,12 @@ module OSGeo.GDAL.Internal (
   , GComplex (..)
 
   , setQuietErrorHandler
+  , unDataset
+  , unBand
 
-  , withAllDrivers
+  , withAllDriversRegistered
+  , registerAllDrivers
+  , destroyDriverManager
   , driverByName
   , create
   , create'
@@ -165,6 +169,8 @@ data ReadOnly
 data ReadWrite
 newtype (Dataset a t) = Dataset (ForeignPtr (Dataset a t), Mutex)
 
+unDataset (Dataset (d, _)) = d
+
 type RODataset = Dataset ReadOnly
 type RWDataset = Dataset ReadWrite
 withDataset, withDataset' :: (Dataset a t) -> (Ptr (Dataset a t) -> IO b) -> IO b
@@ -175,6 +181,8 @@ withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 {#pointer GDALRasterBandH as Band newtype nocode#}
 newtype (Band a t) = Band (Ptr ((Band a t)))
 
+unBand (Band b) = b
+
 type ROBand = Band ReadOnly
 type RWBand = Band ReadWrite
 
@@ -183,11 +191,12 @@ type RWBand = Band ReadWrite
 {#pointer GDALColorTableH as ColorTable newtype#}
 {#pointer GDALRasterAttributeTableH as RasterAttributeTable newtype#}
 
-{# fun GDALAllRegister as registerAllDrivers {} -> `()'  #}
+{#fun GDALAllRegister as registerAllDrivers {} -> `()'  #}
 
-withAllDrivers act
-  = registerAllDrivers >>
-    finally act {#call GDALDestroyDriverManager as ^#}
+{#fun GDALDestroyDriverManager as destroyDriverManager {} -> `()'#}
+
+withAllDriversRegistered act
+  = registerAllDrivers >> finally act destroyDriverManager
 
 {# fun unsafe GDALGetDriverByName as c_driverByName
     { `String' } -> `Driver' id #}

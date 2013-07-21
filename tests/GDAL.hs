@@ -20,7 +20,7 @@ import Test.HUnit
 import OSGeo.GDAL.Internal
 
 main :: IO ()
-main = setQuietErrorHandler >> withAllDrivers $(defaultMainGenerator)
+main = setQuietErrorHandler >> withAllDriversRegistered $(defaultMainGenerator)
 
 
 case_can_create_compressed_gtiff :: IO ()
