@@ -8,7 +8,7 @@
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Bindings.GDAL.Internal (
+module Bindings.OSGeo.GDAL.Internal (
     HasDataset
   , HasBand
   , HasWritebaleBand
@@ -74,8 +74,7 @@ module Bindings.GDAL.Internal (
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
-import Control.Concurrent (newMVar, takeMVar, putMVar, MVar)
-import Control.Exception (finally, bracket, throw, Exception(..), SomeException)
+import Control.Exception (bracket, throw, Exception(..), SomeException)
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
@@ -96,9 +95,12 @@ import Foreign.Marshal.Utils (toBool, fromBool)
 
 import System.IO.Unsafe (unsafePerformIO)
 
+import Bindings.OSGeo.Util
+
 #include "gdal.h"
 #include "cpl_string.h"
 #include "cpl_error.h"
+
 
 data GDALException = GDALException Error String
      deriving (Show, Typeable)
@@ -240,6 +242,11 @@ create' drv path nx ny bands dtype options = withCString path $ \path' -> do
         bands' = fromIntegral bands
         dtype' = fromEnumC dtype
     create_ drv path' nx' ny' bands' dtype' opts >>= newDatasetHandle
+
+toOptionList :: [(String,String)] -> IO (Ptr CString)
+toOptionList opts =  foldM folder nullPtr opts
+  where folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
+                           {#call unsafe CSLSetNameValue as ^#} acc k' v'
 
 instance HasDataset Dataset ReadWrite Word8 where
 instance HasDataset Dataset ReadWrite Int16 where
@@ -703,29 +710,3 @@ isValidDatatype b v = typeOfBand b == typeOf v
         GDT_CFloat64 -> typeOf (undefined :: Vector (GComplex Double))
         _            -> typeOf (undefined :: Bool) -- will never match a vector
 
-fromEnumC :: Enum a => a -> CInt
-fromEnumC = fromIntegral . fromEnum
-
-toEnumC :: Enum a => CInt -> a
-toEnumC = toEnum . fromIntegral
-
-
-toOptionList :: [(String,String)] -> IO (Ptr CString)
-toOptionList opts =  foldM folder nullPtr opts
-  where folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
-                           {#call unsafe CSLSetNameValue as ^#} acc k' v'
-
-type Mutex = MVar ()
-
-newMutex :: IO Mutex
-newMutex = newMVar ()
-
-
-acquireMutex :: Mutex -> IO ()
-acquireMutex = takeMVar
-
-releaseMutex :: Mutex -> IO ()
-releaseMutex m = putMVar m ()
-
-withMutex :: forall a. Mutex -> IO a -> IO a
-withMutex m action = finally (acquireMutex m >> action) (releaseMutex m)
