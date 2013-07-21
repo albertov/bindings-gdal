@@ -73,6 +73,8 @@ module OSGeo.GDAL.Internal (
   , writeBandBlock
   , fillBand
 
+  , toComplex
+  , fromComplex
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
@@ -468,8 +470,10 @@ foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
 
 
 
-data GComplex a = (:+) !a !a deriving (Eq, Show, Typeable)
+data GComplex a = (:+) !a !a deriving (Eq, Typeable)
 infix 6 :+
+instance Show a => Show (GComplex a) where
+  show (r :+ i) = show r ++ " :+ " ++ show i
 
 class IsGComplex a where
    type ComplexType a :: *
