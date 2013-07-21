@@ -469,6 +469,7 @@ foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
 
 
 data GComplex a = (:+) !a !a deriving (Eq, Show, Typeable)
+infix 6 :+
 
 class IsGComplex a where
    type ComplexType a :: *
