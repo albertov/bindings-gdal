@@ -1,7 +1,7 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module Bindings.OSGeo.OGR.Internal (
+module OSGeo.OGR.Internal (
     Error (..)
   , OGRException (..)
   , isOGRException
@@ -25,7 +25,7 @@ import Foreign.Marshal.Utils (toBool, fromBool)
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import Bindings.OSGeo.Util
+import OSGeo.Util
 
 #include "ogr_core.h"
 

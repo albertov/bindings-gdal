@@ -14,13 +14,13 @@ cabal-version:       >=1.8
 library
   build-tools:       c2hs
   hs-source-dirs:    src
-  exposed-modules:   Bindings.OSGeo.GDAL,
-                     Bindings.OSGeo.GDAL.Internal,
-                     Bindings.OSGeo.OGR,
-                     Bindings.OSGeo.OGR.Internal
-                     Bindings.OSGeo.OSR,
-                     Bindings.OSGeo.OSR.Internal
-  other-modules:     Bindings.OSGeo.Util
+  exposed-modules:   OSGeo.GDAL,
+                     OSGeo.GDAL.Internal,
+                     OSGeo.OGR,
+                     OSGeo.OGR.Internal
+                     OSGeo.OSR,
+                     OSGeo.OSR.Internal
+  other-modules:     OSGeo.Util
   build-depends:     base ==4.5.*,
                      vector
   ghc-options:       -O2 -funbox-strict-fields -Wall

@@ -17,7 +17,7 @@ import Test.Framework.TH
 import Test.Framework.Providers.HUnit
 import Test.HUnit
 
-import Bindings.OSGeo.GDAL.Internal
+import OSGeo.GDAL.Internal
 
 main :: IO ()
 main = setQuietErrorHandler >> registerAllDrivers >> $(defaultMainGenerator)

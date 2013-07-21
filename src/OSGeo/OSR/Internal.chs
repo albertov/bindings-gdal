@@ -1,6 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface , BangPatterns  #-}
 
-module Bindings.OSGeo.OSR.Internal (
+module OSGeo.OSR.Internal (
     SpatialReference
   , fromWkt
   , fromProj4
@@ -24,8 +24,8 @@ import Foreign.Marshal.Utils (toBool, fromBool)
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import Bindings.OSGeo.Util
-import Bindings.OSGeo.OGR 
+import OSGeo.Util
+import OSGeo.OGR 
 
 #include "ogr_srs_api.h"
 #include "cpl_vsi.h"

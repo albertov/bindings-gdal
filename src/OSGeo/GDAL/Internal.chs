@@ -8,7 +8,7 @@
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Bindings.OSGeo.GDAL.Internal (
+module OSGeo.GDAL.Internal (
     HasDataset
   , HasBand
   , HasWritebaleBand
@@ -95,7 +95,7 @@ import Foreign.Marshal.Utils (toBool, fromBool)
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import Bindings.OSGeo.Util
+import OSGeo.Util
 
 #include "gdal.h"
 #include "cpl_string.h"

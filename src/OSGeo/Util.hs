@@ -1,4 +1,4 @@
-module Bindings.OSGeo.Util (
+module OSGeo.Util (
     fromEnumC
   , toEnumC
   , Mutex
