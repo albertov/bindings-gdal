@@ -35,7 +35,7 @@ module OSGeo.GDAL.Internal (
 
   , setQuietErrorHandler
 
-  , registerAllDrivers
+  , withAllDrivers
   , driverByName
   , create
   , create'
@@ -72,7 +72,8 @@ module OSGeo.GDAL.Internal (
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
-import Control.Exception (bracket, throw, Exception(..), SomeException)
+import Control.Exception (bracket, throw, Exception(..), SomeException,
+                          finally)
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
@@ -165,8 +166,7 @@ data ReadWrite
 newtype (Dataset a t) = Dataset (ForeignPtr (Dataset a t), Mutex)
 
 type RODataset t = Dataset ReadOnly t
-type RWDataset t = Dataset ReadWrite t
-
+type RWDataset t = Dataset ReadWrite t 
 withDataset, withDataset' :: (Dataset a t) -> (Ptr (Dataset a t) -> IO b) -> IO b
 withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
 
@@ -184,6 +184,10 @@ type RWBand t = Band ReadWrite t
 {#pointer GDALRasterAttributeTableH as RasterAttributeTable newtype#}
 
 {# fun GDALAllRegister as registerAllDrivers {} -> `()'  #}
+
+withAllDrivers act
+  = registerAllDrivers >>
+    finally act {#call GDALDestroyDriverManager as ^#}
 
 {# fun unsafe GDALGetDriverByName as c_driverByName
     { `String' } -> `Driver' id #}
@@ -221,7 +225,7 @@ create' drv path nx ny bands dtype options = withCString path $ \path' -> do
 withOptionList ::
   [(String, String)] -> (Ptr CString -> IO c) -> IO c
 withOptionList opts = bracket (toOptionList opts) freeOptionList
-  where toOptionList opts =  foldM folder nullPtr opts
+  where toOptionList = foldM folder nullPtr
         folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
                            {#call unsafe CSLSetNameValue as ^#} acc k' v'
         freeOptionList = {#call unsafe CSLDestroy as ^#} . castPtr
