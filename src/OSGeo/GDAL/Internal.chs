@@ -165,8 +165,8 @@ data ReadOnly
 data ReadWrite
 newtype (Dataset a t) = Dataset (ForeignPtr (Dataset a t), Mutex)
 
-type RODataset t = Dataset ReadOnly t
-type RWDataset t = Dataset ReadWrite t 
+type RODataset = Dataset ReadOnly
+type RWDataset = Dataset ReadWrite
 withDataset, withDataset' :: (Dataset a t) -> (Ptr (Dataset a t) -> IO b) -> IO b
 withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
 
@@ -175,8 +175,8 @@ withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 {#pointer GDALRasterBandH as Band newtype nocode#}
 newtype (Band a t) = Band (Ptr ((Band a t)))
 
-type ROBand t = Band ReadOnly t
-type RWBand t = Band ReadWrite t
+type ROBand = Band ReadOnly
+type RWBand = Band ReadWrite
 
 
 {#pointer GDALDriverH as Driver newtype#}
