@@ -6,10 +6,24 @@
 
 module OSGeo.OSR.Internal (
     SpatialReference
+
   , fromWkt
   , fromProj4
   , fromEPSG
-  , exportToPrettyWkt
+  , fromXML
+
+  , toWkt
+  , toProj4
+  , toXML
+
+  , isGeographic
+  , isLocal
+  , isProjected
+  , isSameGeoCS
+  , isSame
+
+  , getAngularUnits
+  , getLinearUnits
 ) where
 
 import Control.Applicative ((<$>), (<*>))
@@ -17,11 +31,11 @@ import Control.Exception (throw, catchJust, fromException)
 import Control.Monad (liftM)
 
 import Foreign.C.String (withCString, CString, peekCString)
-import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
-import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr)
+import Foreign.C.Types (CInt(..), CDouble(..), CChar(..))
+import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr
-                          ,mallocForeignPtrArray)
+import Foreign.ForeignPtr ( ForeignPtr, withForeignPtr, newForeignPtr
+                          , mallocForeignPtrArray)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray)
 import Foreign.Marshal.Utils (toBool, fromBool)
@@ -34,23 +48,39 @@ import OSGeo.OGR
 
 newtype SpatialReference = SpatialReference (ForeignPtr (SpatialReference))
 withSpatialReference (SpatialReference fptr) = withForeignPtr fptr
-{-# LINE 33 "src/OSGeo/OSR/Internal.chs" #-}
+{-# LINE 47 "src/OSGeo/OSR/Internal.chs" #-}
 
 instance Show SpatialReference where
-   show s = exportToPrettyWkt s False
+   show = toWkt
 
-exportToPrettyWkt :: SpatialReference -> Bool -> String
-exportToPrettyWkt s simpl = unsafePerformIO $
+toWkt :: SpatialReference -> String
+toWkt s = exportWith fun s
+  where
+    fun s' p = oSRExportToPrettyWkt s' p 1
+
+toProj4 :: SpatialReference -> String
+toProj4 = exportWith oSRExportToProj4
+{-# LINE 58 "src/OSGeo/OSR/Internal.chs" #-}
+
+toXML :: SpatialReference -> String
+toXML = exportWith fun
+  where
+    fun s' p = oSRExportToXML s' p (castPtr nullPtr)
+
+exportWith ::
+     (Ptr SpatialReference -> Ptr CString -> IO (CInt))
+  -> SpatialReference
+  -> String
+exportWith fun s = unsafePerformIO $
     alloca $ \ptr -> do
-      err <- withSpatialReference s $ \s' ->
-               oSRExportToPrettyWkt s' ptr (fromBool simpl)
+      err <- withSpatialReference s (\s' -> fun s' ptr)
       case toEnumC err of
          None -> do str <- peek ptr
                     wkt <- peekCString str
                     vSIFree (castPtr str)
                     return wkt
-         err' -> return "<error converting to pretty WKT"
-
+         err' -> throw $ OGRException Failure
+               "OSGeo.OSR.Internal.exportWith: error exporting SpatialReference"
    
 
 foreign import ccall unsafe "ogr_srs_api.h OSRNewSpatialReference"
@@ -69,7 +99,7 @@ newSpatialRefHandle p
 emptySpatialRef :: IO SpatialReference
 emptySpatialRef = c_newSpatialRef (castPtr nullPtr) >>= newSpatialRefHandle
 
-fromWkt, fromProj4 :: String -> Either Error SpatialReference
+fromWkt, fromProj4, fromXML :: String -> Either Error SpatialReference
 fromWkt s
   = unsafePerformIO $ catchJust guardIt createIt (return . Left)
   where
@@ -82,6 +112,7 @@ fromWkt s
           Just (OGRException err _) -> Just err
 
 fromProj4 = fromImporter importFromProj4
+fromXML = fromImporter importFromXML
 
 fromEPSG :: Int -> Either Error SpatialReference
 fromEPSG = fromImporter importFromEPSG
@@ -104,7 +135,7 @@ importFromProj4 a1 a2 =
   importFromProj4'_ a1' a2' >>= \res ->
   let {res' = id res} in
   return (res')
-{-# LINE 97 "src/OSGeo/OSR/Internal.chs" #-}
+{-# LINE 127 "src/OSGeo/OSR/Internal.chs" #-}
 
 importFromEPSG :: SpatialReference -> Int -> IO (CInt)
 importFromEPSG a1 a2 =
@@ -113,16 +144,124 @@ importFromEPSG a1 a2 =
   importFromEPSG'_ a1' a2' >>= \res ->
   let {res' = id res} in
   return (res')
-{-# LINE 100 "src/OSGeo/OSR/Internal.chs" #-}
+{-# LINE 130 "src/OSGeo/OSR/Internal.chs" #-}
 
-foreign import ccall unsafe "OSGeo/OSR/Internal.chs.h OSRExportToPrettyWkt"
+importFromXML :: SpatialReference -> String -> IO (CInt)
+importFromXML a1 a2 =
+  withSpatialReference a1 $ \a1' -> 
+  withCString a2 $ \a2' -> 
+  importFromXML'_ a1' a2' >>= \res ->
+  let {res' = id res} in
+  return (res')
+{-# LINE 133 "src/OSGeo/OSR/Internal.chs" #-}
+
+isGeographic :: SpatialReference -> Bool
+isGeographic a1 =
+  unsafePerformIO $
+  withSpatialReference a1 $ \a1' -> 
+  let {res = isGeographic'_ a1'} in
+  let {res' = toBool res} in
+  return (res')
+{-# LINE 136 "src/OSGeo/OSR/Internal.chs" #-}
+
+isLocal :: SpatialReference -> Bool
+isLocal a1 =
+  unsafePerformIO $
+  withSpatialReference a1 $ \a1' -> 
+  let {res = isLocal'_ a1'} in
+  let {res' = toBool res} in
+  return (res')
+{-# LINE 139 "src/OSGeo/OSR/Internal.chs" #-}
+
+isProjected :: SpatialReference -> Bool
+isProjected a1 =
+  unsafePerformIO $
+  withSpatialReference a1 $ \a1' -> 
+  let {res = isProjected'_ a1'} in
+  let {res' = toBool res} in
+  return (res')
+{-# LINE 142 "src/OSGeo/OSR/Internal.chs" #-}
+
+isSameGeoCS :: SpatialReference -> SpatialReference -> Bool
+isSameGeoCS a1 a2 =
+  unsafePerformIO $
+  withSpatialReference a1 $ \a1' -> 
+  withSpatialReference a2 $ \a2' -> 
+  let {res = isSameGeoCS'_ a1' a2'} in
+  let {res' = toBool res} in
+  return (res')
+{-# LINE 146 "src/OSGeo/OSR/Internal.chs" #-}
+
+isSame :: SpatialReference -> SpatialReference -> Bool
+isSame a1 a2 =
+  unsafePerformIO $
+  withSpatialReference a1 $ \a1' -> 
+  withSpatialReference a2 $ \a2' -> 
+  let {res = isSame'_ a1' a2'} in
+  let {res' = toBool res} in
+  return (res')
+{-# LINE 150 "src/OSGeo/OSR/Internal.chs" #-}
+
+instance Eq SpatialReference where
+  (==) = isSame
+
+getLinearUnits :: SpatialReference -> (Double, String)
+getLinearUnits = getUnitsWith oSRGetLinearUnits
+{-# LINE 156 "src/OSGeo/OSR/Internal.chs" #-}
+
+getAngularUnits :: SpatialReference -> (Double, String)
+getAngularUnits = getUnitsWith oSRGetAngularUnits
+{-# LINE 159 "src/OSGeo/OSR/Internal.chs" #-}
+
+getUnitsWith ::
+     (Ptr SpatialReference -> Ptr CString -> IO CDouble)
+  -> SpatialReference
+  -> (Double, String)
+getUnitsWith fun s = unsafePerformIO $
+    alloca $ \p -> do
+      value <- withSpatialReference s (\s' -> fun s' p)
+      ptr <- peek p
+      units <- peekCString ptr
+      return (realToFrac value, units)
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRExportToPrettyWkt"
   oSRExportToPrettyWkt :: ((Ptr (SpatialReference)) -> ((Ptr (Ptr CChar)) -> (CInt -> (IO CInt))))
 
-foreign import ccall unsafe "OSGeo/OSR/Internal.chs.h VSIFree"
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRExportToProj4"
+  oSRExportToProj4 :: ((Ptr (SpatialReference)) -> ((Ptr (Ptr CChar)) -> (IO CInt)))
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRExportToXML"
+  oSRExportToXML :: ((Ptr (SpatialReference)) -> ((Ptr (Ptr CChar)) -> ((Ptr CChar) -> (IO CInt))))
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h VSIFree"
   vSIFree :: ((Ptr ()) -> (IO ()))
 
-foreign import ccall unsafe "OSGeo/OSR/Internal.chs.h OSRImportFromProj4"
+foreign import ccall safe "src/OSGeo/OSR/Internal.chs.h OSRImportFromProj4"
   importFromProj4'_ :: ((Ptr (SpatialReference)) -> ((Ptr CChar) -> (IO CInt)))
 
-foreign import ccall unsafe "OSGeo/OSR/Internal.chs.h OSRImportFromEPSG"
+foreign import ccall safe "src/OSGeo/OSR/Internal.chs.h OSRImportFromEPSG"
   importFromEPSG'_ :: ((Ptr (SpatialReference)) -> (CInt -> (IO CInt)))
+
+foreign import ccall safe "src/OSGeo/OSR/Internal.chs.h OSRImportFromXML"
+  importFromXML'_ :: ((Ptr (SpatialReference)) -> ((Ptr CChar) -> (IO CInt)))
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRIsGeographic"
+  isGeographic'_ :: ((Ptr (SpatialReference)) -> CInt)
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRIsLocal"
+  isLocal'_ :: ((Ptr (SpatialReference)) -> CInt)
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRIsProjected"
+  isProjected'_ :: ((Ptr (SpatialReference)) -> CInt)
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRIsSameGeogCS"
+  isSameGeoCS'_ :: ((Ptr (SpatialReference)) -> ((Ptr (SpatialReference)) -> CInt))
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRIsSame"
+  isSame'_ :: ((Ptr (SpatialReference)) -> ((Ptr (SpatialReference)) -> CInt))
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRGetLinearUnits"
+  oSRGetLinearUnits :: ((Ptr (SpatialReference)) -> ((Ptr (Ptr CChar)) -> (IO CDouble)))
+
+foreign import ccall unsafe "src/OSGeo/OSR/Internal.chs.h OSRGetAngularUnits"
+  oSRGetAngularUnits :: ((Ptr (SpatialReference)) -> ((Ptr (Ptr CChar)) -> (IO CDouble)))

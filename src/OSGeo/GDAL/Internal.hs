@@ -38,8 +38,12 @@ module OSGeo.GDAL.Internal (
   , GComplex (..)
 
   , setQuietErrorHandler
+  , unDataset
+  , unBand
 
-  , withAllDrivers
+  , withAllDriversRegistered
+  , registerAllDrivers
+  , destroyDriverManager
   , driverByName
   , create
   , create'
@@ -73,6 +77,8 @@ module OSGeo.GDAL.Internal (
   , writeBandBlock
   , fillBand
 
+  , toComplex
+  , fromComplex
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
@@ -130,7 +136,7 @@ instance Enum Error where
   toEnum 4 = CE_Fatal
   toEnum unmatched = error ("Error.toEnum: Cannot match " ++ show unmatched)
 
-{-# LINE 112 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 118 "src/OSGeo/GDAL/Internal.chs" #-}
 
 
 type ErrorHandler = CInt -> CInt -> CString -> IO ()
@@ -199,7 +205,7 @@ instance Enum Datatype where
   toEnum 12 = GDT_TypeCount
   toEnum unmatched = error ("Datatype.toEnum: Cannot match " ++ show unmatched)
 
-{-# LINE 137 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 143 "src/OSGeo/GDAL/Internal.chs" #-}
 instance Show Datatype where
    show = getDatatypeName
 
@@ -209,7 +215,7 @@ datatypeSize a1 =
   let {res = datatypeSize'_ a1'} in
   let {res' = fromIntegral res} in
   (res')
-{-# LINE 142 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 148 "src/OSGeo/GDAL/Internal.chs" #-}
 
 datatypeIsComplex :: Datatype -> Bool
 datatypeIsComplex a1 =
@@ -217,7 +223,7 @@ datatypeIsComplex a1 =
   let {res = datatypeIsComplex'_ a1'} in
   let {res' = toBool res} in
   (res')
-{-# LINE 145 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 151 "src/OSGeo/GDAL/Internal.chs" #-}
 
 getDatatypeName :: Datatype -> String
 getDatatypeName a1 =
@@ -226,7 +232,7 @@ getDatatypeName a1 =
   let {res = getDatatypeName'_ a1'} in
   peekCString res >>= \res' ->
   return (res')
-{-# LINE 148 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 154 "src/OSGeo/GDAL/Internal.chs" #-}
 
 datatypeByName :: String -> Datatype
 datatypeByName a1 =
@@ -235,7 +241,7 @@ datatypeByName a1 =
   let {res = datatypeByName'_ a1'} in
   let {res' = toEnumC res} in
   return (res')
-{-# LINE 151 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 157 "src/OSGeo/GDAL/Internal.chs" #-}
 
 datatypeUnion :: Datatype -> Datatype -> Datatype
 datatypeUnion a1 a2 =
@@ -244,7 +250,7 @@ datatypeUnion a1 a2 =
   let {res = datatypeUnion'_ a1' a2'} in
   let {res' = toEnumC res} in
   (res')
-{-# LINE 154 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 160 "src/OSGeo/GDAL/Internal.chs" #-}
 
 
 data Access = GA_ReadOnly
@@ -258,7 +264,7 @@ instance Enum Access where
   toEnum 1 = GA_Update
   toEnum unmatched = error ("Access.toEnum: Cannot match " ++ show unmatched)
 
-{-# LINE 157 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 163 "src/OSGeo/GDAL/Internal.chs" #-}
 
 data RwFlag = GF_Read
             | GF_Write
@@ -271,16 +277,18 @@ instance Enum RwFlag where
   toEnum 1 = GF_Write
   toEnum unmatched = error ("RwFlag.toEnum: Cannot match " ++ show unmatched)
 
-{-# LINE 159 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 165 "src/OSGeo/GDAL/Internal.chs" #-}
 
 newtype MajorObject = MajorObject (Ptr (MajorObject))
-{-# LINE 161 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 167 "src/OSGeo/GDAL/Internal.chs" #-}
 
-{-# LINE 162 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 168 "src/OSGeo/GDAL/Internal.chs" #-}
 
 data ReadOnly
 data ReadWrite
 newtype (Dataset a t) = Dataset (ForeignPtr (Dataset a t), Mutex)
+
+unDataset (Dataset (d, _)) = d
 
 type RODataset = Dataset ReadOnly
 type RWDataset = Dataset ReadWrite
@@ -290,30 +298,36 @@ withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
 withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
 
 
-{-# LINE 175 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 183 "src/OSGeo/GDAL/Internal.chs" #-}
 newtype (Band a t) = Band (Ptr ((Band a t)))
+
+unBand (Band b) = b
 
 type ROBand = Band ReadOnly
 type RWBand = Band ReadWrite
 
 
 newtype Driver = Driver (Ptr (Driver))
-{-# LINE 182 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 192 "src/OSGeo/GDAL/Internal.chs" #-}
 newtype ColorTable = ColorTable (Ptr (ColorTable))
-{-# LINE 183 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 193 "src/OSGeo/GDAL/Internal.chs" #-}
 newtype RasterAttributeTable = RasterAttributeTable (Ptr (RasterAttributeTable))
-{-# LINE 184 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 194 "src/OSGeo/GDAL/Internal.chs" #-}
 
 registerAllDrivers :: IO ()
 registerAllDrivers =
   registerAllDrivers'_ >>= \res ->
   return ()
-{-# LINE 186 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 196 "src/OSGeo/GDAL/Internal.chs" #-}
 
-withAllDrivers act
-  = registerAllDrivers >>
-    finally act gDALDestroyDriverManager
-{-# LINE 190 "src/OSGeo/GDAL/Internal.chs" #-}
+destroyDriverManager :: IO ()
+destroyDriverManager =
+  destroyDriverManager'_ >>= \res ->
+  return ()
+{-# LINE 198 "src/OSGeo/GDAL/Internal.chs" #-}
+
+withAllDriversRegistered act
+  = registerAllDrivers >> finally act destroyDriverManager
 
 c_driverByName :: String -> IO (Driver)
 c_driverByName a1 =
@@ -321,7 +335,7 @@ c_driverByName a1 =
   c_driverByName'_ a1' >>= \res ->
   let {res' = id res} in
   return (res')
-{-# LINE 193 "src/OSGeo/GDAL/Internal.chs" #-}
+{-# LINE 204 "src/OSGeo/GDAL/Internal.chs" #-}
 
 driverByName :: String -> IO Driver
 driverByName s = do
@@ -590,7 +604,10 @@ foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
 
 
 
-data GComplex a = (:+) !a !a deriving (Eq, Show, Typeable)
+data GComplex a = (:+) !a !a deriving (Eq, Typeable)
+infix 6 :+
+instance Show a => Show (GComplex a) where
+  show (r :+ i) = show r ++ " :+ " ++ show i
 
 class IsGComplex a where
    type ComplexType a :: *
@@ -825,32 +842,32 @@ isValidDatatype b v = typeOfBand b == typeOf v
         _            -> typeOf (undefined :: Bool) -- will never match a vector
 
 
-foreign import ccall unsafe "OSGeo/GDAL/Internal.chs.h GDALGetDataTypeSize"
+foreign import ccall unsafe "src/OSGeo/GDAL/Internal.chs.h GDALGetDataTypeSize"
   datatypeSize'_ :: (CInt -> CInt)
 
-foreign import ccall unsafe "OSGeo/GDAL/Internal.chs.h GDALDataTypeIsComplex"
+foreign import ccall unsafe "src/OSGeo/GDAL/Internal.chs.h GDALDataTypeIsComplex"
   datatypeIsComplex'_ :: (CInt -> CInt)
 
-foreign import ccall unsafe "OSGeo/GDAL/Internal.chs.h GDALGetDataTypeName"
+foreign import ccall unsafe "src/OSGeo/GDAL/Internal.chs.h GDALGetDataTypeName"
   getDatatypeName'_ :: (CInt -> (Ptr CChar))
 
-foreign import ccall unsafe "OSGeo/GDAL/Internal.chs.h GDALGetDataTypeByName"
+foreign import ccall unsafe "src/OSGeo/GDAL/Internal.chs.h GDALGetDataTypeByName"
   datatypeByName'_ :: ((Ptr CChar) -> CInt)
 
-foreign import ccall unsafe "OSGeo/GDAL/Internal.chs.h GDALDataTypeUnion"
+foreign import ccall unsafe "src/OSGeo/GDAL/Internal.chs.h GDALDataTypeUnion"
   datatypeUnion'_ :: (CInt -> (CInt -> CInt))
 
-foreign import ccall safe "OSGeo/GDAL/Internal.chs.h GDALAllRegister"
+foreign import ccall safe "src/OSGeo/GDAL/Internal.chs.h GDALAllRegister"
   registerAllDrivers'_ :: (IO ())
 
-foreign import ccall safe "OSGeo/GDAL/Internal.chs.h GDALDestroyDriverManager"
-  gDALDestroyDriverManager :: (IO ())
+foreign import ccall safe "src/OSGeo/GDAL/Internal.chs.h GDALDestroyDriverManager"
+  destroyDriverManager'_ :: (IO ())
 
-foreign import ccall unsafe "OSGeo/GDAL/Internal.chs.h GDALGetDriverByName"
+foreign import ccall unsafe "src/OSGeo/GDAL/Internal.chs.h GDALGetDriverByName"
   c_driverByName'_ :: ((Ptr CChar) -> (IO (Driver)))
 
-foreign import ccall unsafe "OSGeo/GDAL/Internal.chs.h CSLSetNameValue"
+foreign import ccall unsafe "src/OSGeo/GDAL/Internal.chs.h CSLSetNameValue"
   cSLSetNameValue :: ((Ptr (Ptr CChar)) -> ((Ptr CChar) -> ((Ptr CChar) -> (IO (Ptr (Ptr CChar))))))
 
-foreign import ccall unsafe "OSGeo/GDAL/Internal.chs.h CSLDestroy"
+foreign import ccall unsafe "src/OSGeo/GDAL/Internal.chs.h CSLDestroy"
   cSLDestroy :: ((Ptr (Ptr CChar)) -> (IO ()))
