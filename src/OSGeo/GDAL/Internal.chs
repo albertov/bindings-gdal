@@ -29,6 +29,7 @@ module OSGeo.GDAL.Internal (
   , ROBand
   , Band
   , Driver
+  , DriverName
   , ColorTable
   , RasterAttributeTable
   , GComplex (..)
@@ -105,6 +106,9 @@ import OSGeo.Util
 #include "gdal.h"
 #include "cpl_string.h"
 #include "cpl_error.h"
+
+
+type DriverName = String
 
 
 data GDALException = GDALException Error String
