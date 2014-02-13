@@ -143,5 +143,5 @@ throwIfError msg act = do
       None -> return ()
       e'   -> throw $ OGRException e' msg
 
-foreign import ccall unsafe "src/OSGeo/OGR/Internal.chs.h OGRGeometryTypeToName"
+foreign import ccall unsafe "OSGeo/OGR/Internal.chs.h OGRGeometryTypeToName"
   oGRGeometryTypeToName :: (CInt -> (IO (Ptr CChar)))

@@ -12,6 +12,7 @@ build-type:          Custom
 cabal-version:       >=1.8
 
 library
+  --build-tools:       c2hs
   hs-source-dirs:    src
   exposed-modules:   OSGeo.GDAL,
                      OSGeo.GDAL.Internal,
