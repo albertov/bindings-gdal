@@ -71,6 +71,7 @@ module OSGeo.GDAL.Internal (
   , readBand
   , readBandBlock
   , writeBand
+  , writeBand'
   , writeBandBlock
   , fillBand
 
@@ -581,6 +582,16 @@ foreign import ccall safe "gdal.h GDALRasterAdviseRead" adviseRead_
     -> Ptr (Ptr CChar) -> IO CInt
 
         
+writeBand' :: forall a. HasDatatype a
+  => (RWBand a)
+  -> Int -> Int
+  -> Int -> Int
+  -> Int -> Int
+  -> Int -> Int
+  -> Vector a
+  -> IO ()
+writeBand' = writeBand
+
 writeBand :: forall a t. HasDatatype a
   => (RWBand t)
   -> Int -> Int
