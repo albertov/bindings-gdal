@@ -15,7 +15,7 @@ before_install:
 
 install:
  - cabal-1.18 update
- - travis_retry cabal-1.18 install -j2 alex happy c2hs
+ - travis_retry cabal-1.18 install -j2 alex happy c2hs==0.16.5
 
 script:
  - travis_retry cabal-1.18 install -j2 --enable-tests --only-dependencies
