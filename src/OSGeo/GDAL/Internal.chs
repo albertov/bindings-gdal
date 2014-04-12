@@ -77,6 +77,10 @@ module OSGeo.GDAL.Internal (
 
   , toComplex
   , fromComplex
+
+  -- Internal Util
+  , throwIfError
+  , withDataset
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
