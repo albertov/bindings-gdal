@@ -341,7 +341,7 @@ createMem:: HasDataset d a t
   => Int -> Int -> Int -> DriverOptions -> IO (d a t)
 createMem = create "MEM" ""
 
-flushCache :: forall a t. Dataset a t -> IO ()
+flushCache :: forall t. RWDataset t -> IO ()
 flushCache d = withDataset d flushCache'
 
 foreign import ccall safe "gdal.h GDALFlushCache" flushCache'
@@ -358,7 +358,8 @@ foreign import ccall unsafe "gdal.h GDALGetProjectionRef" getProjection_
 
 
 setDatasetProjection :: (RWDataset t) -> String -> IO ()
-setDatasetProjection d p = throwIfError "could not set projection" f
+setDatasetProjection d p = throwIfError
+                           "setDatasetProjection: could not set projection" f
   where f = withDataset d $ \d' -> withCString p $ \p' -> setProjection' d' p'
 
 foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
