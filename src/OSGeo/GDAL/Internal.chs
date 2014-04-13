@@ -55,6 +55,7 @@ module OSGeo.GDAL.Internal (
   , datatypeUnion
   , datatypeIsComplex
 
+  , datasetSize
   , datasetProjection
   , setDatasetProjection
   , datasetGeotransform
@@ -69,6 +70,7 @@ module OSGeo.GDAL.Internal (
   , bandNodataValue
   , setBandNodataValue
   , readBand
+  , readBand'
   , readBandBlock
   , writeBand
   , writeBand'
@@ -351,6 +353,16 @@ flushCache d = withDataset d flushCache'
 foreign import ccall safe "gdal.h GDALFlushCache" flushCache'
   :: Ptr (Dataset a t) -> IO ()
 
+datasetSize :: Dataset a t -> (Int, Int)
+datasetSize ds = unsafePerformIO $ withDataset ds $ \dsPtr ->
+    return ( fromIntegral . getDatasetXSize_ $ dsPtr
+           , fromIntegral . getDatasetYSize_ $ dsPtr)
+
+foreign import ccall unsafe "gdal.h GDALGetRasterXSize" getDatasetXSize_
+  :: Ptr (Dataset a t) -> CInt
+
+foreign import ccall unsafe "gdal.h GDALGetRasterYSize" getDatasetYSize_
+  :: Ptr (Dataset a t) -> CInt
 
 datasetProjection :: Dataset a t -> IO String
 datasetProjection d = withDataset d $ \d' -> do
@@ -443,12 +455,12 @@ bandBlockLen = uncurry (*) . bandBlockSize
 
 bandSize :: (Band a t) -> (Int, Int)
 bandSize band
-  = (fromIntegral . getXSize_ $ band, fromIntegral . getYSize_ $ band)
+  = (fromIntegral . getBandXSize_ $ band, fromIntegral . getBandYSize_ $ band)
 
-foreign import ccall unsafe "gdal.h GDALGetRasterBandXSize" getXSize_
+foreign import ccall unsafe "gdal.h GDALGetRasterBandXSize" getBandXSize_
   :: (Band a t) -> CInt
 
-foreign import ccall unsafe "gdal.h GDALGetRasterBandYSize" getYSize_
+foreign import ccall unsafe "gdal.h GDALGetRasterBandYSize" getBandYSize_
   :: (Band a t) -> CInt
 
 
@@ -543,6 +555,15 @@ instance Storable a => Storable (GComplex a) where
     = pokeElemOff (castPtr p) 0 r >> pokeElemOff (castPtr p) 1 i
 
 
+
+readBand' :: HasDatatype a
+  => (Band b a)
+  -> Int -> Int
+  -> Int -> Int
+  -> Int -> Int
+  -> Int -> Int
+  -> IO (Vector a)
+readBand' = readBand
 
 readBand :: forall a b t. HasDatatype a
   => (Band b t)

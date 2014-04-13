@@ -1,5 +1,5 @@
 name:                bindings-gdal
-version:             1.10.1.0
+version:             1.10.2.0
 synopsis:            Bindings to the GDAL library
 -- description:         
 license:             BSD3
