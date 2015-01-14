@@ -1,15 +1,20 @@
 name:                bindings-gdal
 version:             1.10.2.0
 synopsis:            Bindings to the GDAL library
--- description:         
+description:         Provides (incomplete) c-bindings to the Geospatial Data Abstraction Library
 license:             BSD3
 license-file:        LICENSE
 author:              Alberto Valverde Gonzalez
 maintainer:          alberto@meteogrid.com
--- copyright:           
+copyright:           2013-2015
 category:            Bindings
 build-type:          Custom
 cabal-version:       >=1.8
+
+source-repository head
+  type:              git
+  location:          https://github.com/meteogrid/bindings-gdal.git
+
 
 library
   build-tools:       c2hs
@@ -22,9 +27,9 @@ library
                      OSGeo.OSR,
                      OSGeo.OSR.Internal
   other-modules:     OSGeo.Util
-  build-depends:     base >=4.5,
-                     vector
-  ghc-options:       -O2 -funbox-strict-fields -Wall
+  build-depends:     base >=4.5 && < 4.9
+                   , vector
+  ghc-options:       -funbox-strict-fields -Wall
 
 test-suite GDAL
   type:            exitcode-stdio-1.0
