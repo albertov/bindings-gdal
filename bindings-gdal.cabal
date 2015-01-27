@@ -1,5 +1,5 @@
 name:                bindings-gdal
-version:             1.10.2.0
+version:             1.10.3
 synopsis:            Bindings to the GDAL library
 description:         Provides (incomplete) c-bindings to the Geospatial Data Abstraction Library
 license:             BSD3

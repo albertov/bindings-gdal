@@ -208,8 +208,9 @@ type RWBand = Band ReadWrite
 
 {#fun GDALDestroyDriverManager as destroyDriverManager {} -> `()'#}
 
+{-# DEPRECATED withAllDriversRegistered "Don't use this since it does not destry the driver manager anymore. registerAllDrivers manually and call destroyDriverManager at your own peril since it will likely cause a double free if a dataset's finalizer runs after destroyDriverManager" #-}
 withAllDriversRegistered act
-  = registerAllDrivers >> finally act destroyDriverManager
+  = registerAllDrivers >> act
 
 {# fun unsafe GDALGetDriverByName as c_driverByName
     { `String' } -> `Driver' id #}
