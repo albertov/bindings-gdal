@@ -180,7 +180,7 @@ instance Show Datatype where
 
 data ReadOnly
 data ReadWrite
-newtype (Dataset a t) = Dataset (ForeignPtr (Dataset a t), Mutex)
+newtype Dataset a t = Dataset (ForeignPtr (Dataset a t), Mutex)
 
 unDataset (Dataset (d, _)) = d
 
@@ -229,7 +229,7 @@ class ( HasDatatype t
       , d ~ Dataset,
       HasWritebaleBand Band ReadWrite t)
   => HasDataset d a t where
-    create :: String -> String -> Int -> Int -> Int -> DriverOptions
+    create :: String -> FilePath -> Int -> Int -> Int -> DriverOptions
            -> IO (d a t)
     create drv path nx ny bands options = do
         d <- driverByName  drv
