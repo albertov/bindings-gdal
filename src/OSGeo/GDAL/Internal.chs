@@ -658,21 +658,18 @@ instance HasDatatype (GComplex Double) where datatype _ = GDT_CFloat64
 
 isValidDatatype :: forall s a t v.  Typeable v
   => Band s a t -> v -> Bool
-isValidDatatype b v = typeOfBand b == typeOf v
-  where
-    typeOfBand        = typeOfdatatype . bandDatatype
-    typeOfdatatype dt =
-      case dt of
-        GDT_Byte     -> typeOf (undefined :: Vector Word8)
-        GDT_UInt16   -> typeOf (undefined :: Vector Word16)
-        GDT_UInt32   -> typeOf (undefined :: Vector Word32)
-        GDT_Int16    -> typeOf (undefined :: Vector Int16)
-        GDT_Int32    -> typeOf (undefined :: Vector Int32)
-        GDT_Float32  -> typeOf (undefined :: Vector Float)
-        GDT_Float64  -> typeOf (undefined :: Vector Double)
-        GDT_CInt16   -> typeOf (undefined :: Vector (GComplex Int16))
-        GDT_CInt32   -> typeOf (undefined :: Vector (GComplex Int32))
-        GDT_CFloat32 -> typeOf (undefined :: Vector (GComplex Float))
-        GDT_CFloat64 -> typeOf (undefined :: Vector (GComplex Double))
-        _            -> typeOf (undefined :: Bool) -- will never match a vector
-
+isValidDatatype b v
+  = let vt = typeOf v
+    in case bandDatatype b of
+      GDT_Byte     -> vt == typeOf (undefined :: Vector Word8)
+      GDT_UInt16   -> vt == typeOf (undefined :: Vector Word16)
+      GDT_UInt32   -> vt == typeOf (undefined :: Vector Word32)
+      GDT_Int16    -> vt == typeOf (undefined :: Vector Int16)
+      GDT_Int32    -> vt == typeOf (undefined :: Vector Int32)
+      GDT_Float32  -> vt == typeOf (undefined :: Vector Float)
+      GDT_Float64  -> vt == typeOf (undefined :: Vector Double)
+      GDT_CInt16   -> vt == typeOf (undefined :: Vector (GComplex Int16))
+      GDT_CInt32   -> vt == typeOf (undefined :: Vector (GComplex Int32))
+      GDT_CFloat32 -> vt == typeOf (undefined :: Vector (GComplex Float))
+      GDT_CFloat64 -> vt == typeOf (undefined :: Vector (GComplex Double))
+      _            -> False
