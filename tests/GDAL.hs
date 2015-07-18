@@ -168,8 +168,8 @@ case_write_and_read_band_complex_int16
           vec :: St.Vector (GComplex Int16)
           fun i = (fromIntegral i) :+ (fromIntegral i)
 
-can_write_one_type_and_read_another_with_automatic_conversion :: IO ()
-can_write_one_type_and_read_another_with_automatic_conversion
+case_can_write_one_type_and_read_another_with_automatic_conversion :: IO ()
+case_can_write_one_type_and_read_another_with_automatic_conversion
   = assertNotThrowsGDALException $ do
       ds <- createMem 100 100 1 [] :: IO (RWDataset Int16)
       withBand ds 1 $ \band -> do
@@ -180,8 +180,8 @@ can_write_one_type_and_read_another_with_automatic_conversion
           vec2 <- readBand band 0 0 x y x y 0 0 :: IO (St.Vector Double)
           assertEqualVectors vec (St.map round vec2)
 
-can_write_and_read_with_automatic_conversion :: IO ()
-can_write_and_read_with_automatic_conversion
+case_can_write_and_read_with_automatic_conversion :: IO ()
+case_can_write_and_read_with_automatic_conversion
   = assertNotThrowsGDALException $ do
       ds <- createMem 100 100 1 [] :: IO (RWDataset Int16)
       let vec   = St.generate 10000 fromIntegral :: St.Vector Double
@@ -286,7 +286,6 @@ case_writeBandBlock_fails_when_writing_bad_type = do
       withBand ds2 1 $ \band -> do
          let v = St.replicate (bandBlockLen band) 0 :: St.Vector Word8
          assertThrowsGDALException $ writeBandBlock band 0 0 v
-
 --
 -- Utils
 --
