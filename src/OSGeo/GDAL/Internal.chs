@@ -10,8 +10,7 @@
 {-# LANGUAGE RankNTypes #-}
 
 module OSGeo.GDAL.Internal (
-    HasDataset
-  , HasDatatype
+    HasDatatype
   , Datatype (..)
   , GDALException
   , isGDALException
@@ -75,9 +74,6 @@ module OSGeo.GDAL.Internal (
   , writeBand'
   , writeBandBlock
   , fillBand
-
-  , toComplex
-  , fromComplex
 
   -- Internal Util
   , throwIfError
@@ -223,19 +219,18 @@ driverByName s = do
 
 type DriverOptions = [(String,String)]
 
-class ( HasDatatype t
-      , a ~ ReadWrite
-      , d ~ Dataset
-      )
-  => HasDataset d a t where
-    create :: String -> FilePath -> Int -> Int -> Int -> DriverOptions
-           -> IO (d a t)
-    create drv path nx ny bands options = do
-        d <- driverByName  drv
-        create' d path nx ny bands (datatype (undefined :: t)) options
+create
+  :: forall t. HasDatatype t
+  => String -> FilePath -> Int -> Int -> Int -> DriverOptions
+  -> IO (Dataset ReadWrite t)
+create drv path nx ny bands options = do
+    d <- driverByName  drv
+    create' d path nx ny bands (datatype (undefined :: t)) options
 
-create' :: Driver -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
-       -> IO (Dataset ReadWrite t)
+create'
+  :: forall t. HasDatatype t
+  => Driver -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
+  -> IO (Dataset ReadWrite t)
 create' drv path nx ny bands dtype options = withCString path $ \path' -> do
     let nx'    = fromIntegral nx
         ny'    = fromIntegral ny
@@ -251,18 +246,6 @@ withOptionList opts = bracket (toOptionList opts) freeOptionList
         folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
                            {#call unsafe CSLSetNameValue as ^#} acc k' v'
         freeOptionList = {#call unsafe CSLDestroy as ^#} . castPtr
-
-instance HasDataset Dataset ReadWrite Word8 where
-instance HasDataset Dataset ReadWrite Int16 where
-instance HasDataset Dataset ReadWrite Int32 where
-instance HasDataset Dataset ReadWrite Word16 where
-instance HasDataset Dataset ReadWrite Word32 where
-instance HasDataset Dataset ReadWrite Float where
-instance HasDataset Dataset ReadWrite Double where
-instance HasDataset Dataset ReadWrite (GComplex Int16) where
-instance HasDataset Dataset ReadWrite (GComplex Int32) where
-instance HasDataset Dataset ReadWrite (GComplex Float) where
-instance HasDataset Dataset ReadWrite (GComplex Double) where
 
 
 foreign import ccall safe "gdal.h GDALCreate" create_
@@ -343,8 +326,9 @@ newDatasetHandle p =
 foreign import ccall "gdal.h &GDALClose"
   closeDataset :: FunPtr (Ptr (Dataset a t) -> IO ())
 
-createMem:: HasDataset d a t
-  => Int -> Int -> Int -> DriverOptions -> IO (d a t)
+createMem
+  :: HasDatatype t
+  => Int -> Int -> Int -> DriverOptions -> IO (Dataset ReadWrite t)
 createMem = create "MEM" ""
 
 flushCache :: forall t. RWDataset t -> IO ()
@@ -496,38 +480,6 @@ data GComplex a = (:+) !a !a deriving (Eq, Typeable)
 infix 6 :+
 instance Show a => Show (GComplex a) where
   show (r :+ i) = show r ++ " :+ " ++ show i
-
-class IsGComplex a where
-   type ComplexType a :: *
-   toComplex :: GComplex a -> Complex.Complex (ComplexType a)
-   fromComplex :: Complex.Complex (ComplexType a) -> GComplex a
-
-   toComplex (r :+  i) = (toUnit r) Complex.:+ (toUnit i)
-   fromComplex (r Complex.:+ i) = (fromUnit r) :+ (fromUnit i)
-
-   toUnit :: a -> ComplexType a
-   fromUnit :: ComplexType a -> a
-
-instance IsGComplex Int16 where
-   type ComplexType Int16 = Float
-   toUnit = fromIntegral
-   fromUnit = round
-
-instance IsGComplex Int32 where
-   type ComplexType Int32 = Double
-   toUnit = fromIntegral
-   fromUnit = round
-
-instance IsGComplex Float where
-   type ComplexType Float = Float
-   toUnit = id
-   fromUnit = id
-
-instance IsGComplex Double where
-   type ComplexType Double = Double
-   toUnit = id
-   fromUnit = id
-
 
 instance Storable a => Storable (GComplex a) where
   sizeOf _ = sizeOf (undefined :: a) * 2

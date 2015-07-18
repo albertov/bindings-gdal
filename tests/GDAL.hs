@@ -190,7 +190,7 @@ case_can_write_and_read_with_automatic_conversion
           vec2 <- readBand band 0 0 100 100 100 100 0 0
           assertEqualVectors vec vec2
 
-write_and_read_band :: forall a . (Eq a , HasDataset Dataset ReadWrite a)
+write_and_read_band :: forall a . (Eq a , HasDatatype a)
   => St.Vector a -> IO ()
 write_and_read_band vec = assertNotThrowsGDALException $ do
     ds <- createMem 100 100 1 [] :: IO (RWDataset a)
@@ -199,7 +199,7 @@ write_and_read_band vec = assertNotThrowsGDALException $ do
         vec2 <- readBand band 0 0 100 100 100 100 0 0
         assertEqualVectors vec vec2
 
-write_and_read_block :: forall a. (Eq a, HasDataset Dataset ReadWrite a)
+write_and_read_block :: forall a. (Eq a, HasDatatype a)
   => St.Vector a -> IO ()
 write_and_read_block vec = assertNotThrowsGDALException $ do
     ds <- createMem (St.length vec) 1 1 []
