@@ -17,7 +17,6 @@ module OSGeo.GDAL.Internal (
   , Geotransform (..)
   , IOVector
   , DriverOptions
-  , MajorObject
   , Dataset
   , ReadWrite
   , ReadOnly
@@ -28,15 +27,12 @@ module OSGeo.GDAL.Internal (
   , Band
   , Driver
   , DriverName
-  , ColorTable
-  , RasterAttributeTable
   , GComplex (..)
 
   , setQuietErrorHandler
   , unDataset
   , unBand
 
-  , withAllDriversRegistered
   , registerAllDrivers
   , destroyDriverManager
   , driverByName
@@ -81,12 +77,10 @@ module OSGeo.GDAL.Internal (
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
-import Control.Exception (bracket, throw, Exception(..), SomeException,
-                          finally)
+import Control.Exception (bracket, throw, Exception(..), SomeException)
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
-import qualified Data.Complex as Complex
 import Data.Maybe (isJust)
 import Data.Typeable (Typeable, typeOf)
 import Data.Word (Word8, Word16, Word32)
@@ -170,25 +164,25 @@ instance Show Datatype where
 
 {# enum GDALRWFlag as RwFlag {upcaseFirstLetter} deriving (Eq, Show) #}
 
-{#pointer GDALMajorObjectH as MajorObject newtype#}
 {#pointer GDALDatasetH as Dataset foreign newtype nocode#}
 
 data ReadOnly
 data ReadWrite
 newtype Dataset a t = Dataset (ForeignPtr (Dataset a t), Mutex)
 
+unDataset :: Dataset a t -> ForeignPtr (Dataset a t)
 unDataset (Dataset (d, _)) = d
 
 type RODataset = Dataset ReadOnly
 type RWDataset = Dataset ReadWrite
-withDataset, withDataset' :: (Dataset a t) -> (Ptr (Dataset a t) -> IO b) -> IO b
-withDataset ds@(Dataset (_, m)) fun = withMutex m $ withDataset' ds fun
 
-withDataset' (Dataset (fptr,_)) = withForeignPtr fptr
+withDataset :: (Dataset a t) -> (Ptr (Dataset a t) -> IO b) -> IO b
+withDataset (Dataset (fptr,_)) = withForeignPtr fptr
 
 {#pointer GDALRasterBandH as Band newtype nocode#}
-newtype (Band s a t) = Band (Ptr ((Band s a t)))
+newtype (Band s a t) = Band (Ptr (Band s a t))
 
+unBand :: Band s a t -> Ptr (Band s a t)
 unBand (Band b) = b
 
 type ROBand s = Band s ReadOnly
@@ -196,16 +190,10 @@ type RWBand s = Band s ReadWrite
 
 
 {#pointer GDALDriverH as Driver newtype#}
-{#pointer GDALColorTableH as ColorTable newtype#}
-{#pointer GDALRasterAttributeTableH as RasterAttributeTable newtype#}
 
 {#fun GDALAllRegister as registerAllDrivers {} -> `()'  #}
 
 {#fun GDALDestroyDriverManager as destroyDriverManager {} -> `()'#}
-
-{-# DEPRECATED withAllDriversRegistered "Don't use this since it does not destroy the driver manager anymore. registerAllDrivers manually and call destroyDriverManager at your own peril since it will likely cause a double free if a dataset's finalizer runs after destroyDriverManager" #-}
-withAllDriversRegistered act
-  = registerAllDrivers >> act
 
 {# fun unsafe GDALGetDriverByName as c_driverByName
     { `String' } -> `Driver' id #}
@@ -370,7 +358,7 @@ data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
     deriving (Eq, Show)
 
 datasetGeotransform :: Dataset a t -> IO Geotransform
-datasetGeotransform ds = withDataset' ds $ \dPtr -> do
+datasetGeotransform ds = withDataset ds $ \dPtr -> do
     allocaArray 6 $ \a -> do
       throwIfError "could not get geotransform" $ getGeoTransform dPtr a
       Geotransform <$> liftM realToFrac (peekElemOff a 0)
