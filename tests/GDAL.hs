@@ -29,7 +29,7 @@ case_can_create_compressed_gtiff
     assertNotThrowsGDALException $ do
       let p = joinPath [tmpDir, "test.tif"]
           o = [("compress","deflate"), ("zlevel", "9"), ("predictor", "2")]
-      ds <- create "GTIFF" p 3000 3000 1 o :: IO (RWDataset Int16)
+      ds <- create GTIFF p 3000 3000 1 o :: IO (RWDataset Int16)
       flushCache ds
       assertExistsAndSizeGreaterThan p 20000
 
@@ -38,7 +38,7 @@ case_can_create_and_open_dataset
   = withSystemTempDirectory "test." $ \tmpDir ->
     assertNotThrowsGDALException $ do
       let p = joinPath [tmpDir, "test.tif"]
-      ds <- create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
+      ds <- create GTIFF p 100 100 1 [] :: IO (RWDataset Int16)
       flushCache ds
       _ <- openReadOnly p
       return ()
@@ -49,7 +49,7 @@ case_can_create_and_createCopy_dataset
     assertNotThrowsGDALException $ do
       let p  = joinPath [tmpDir, "test.tif"]
       ds <- createMem 100 100 1 [] :: IO (RWDataset Int16)
-      ds2 <- createCopy "GTIFF" p ds True []
+      ds2 <- createCopy GTIFF p ds True []
       flushCache ds2
       assertExistsAndSizeGreaterThan p 0
 
@@ -246,7 +246,7 @@ case_can_open_unknown_type_dataset_and_readBand :: IO ()
 case_can_open_unknown_type_dataset_and_readBand = assertNotThrowsGDALException $
     withSystemTempDirectory "test." $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
-      ds <- create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
+      ds <- create GTIFF p 100 100 1 [] :: IO (RWDataset Int16)
       flushCache ds
       ds2 <- openReadOnly p
       withBand ds2 1 $ \band -> do
@@ -258,7 +258,7 @@ case_readBandBlock_doesnt_throw_on_good_type :: IO ()
 case_readBandBlock_doesnt_throw_on_good_type = assertNotThrowsGDALException $
     withSystemTempDirectory "test." $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
-      ds <- create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
+      ds <- create GTIFF p 100 100 1 [] :: IO (RWDataset Int16)
       flushCache ds
       ds2 <- openReadOnly p :: IO (RODataset Int16)
       withBand ds2 1 $ \band -> do
@@ -269,7 +269,7 @@ case_readBandBlock_throws_on_bad_type :: IO ()
 case_readBandBlock_throws_on_bad_type = do
     withSystemTempDirectory "test." $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
-      ds <- create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
+      ds <- create GTIFF p 100 100 1 [] :: IO (RWDataset Int16)
       flushCache ds
       ds2 <- openReadOnly p :: IO (RODataset Word8)
       withBand ds2 1 $ \band -> do
@@ -280,7 +280,7 @@ case_writeBandBlock_fails_when_writing_bad_type :: IO ()
 case_writeBandBlock_fails_when_writing_bad_type = do
     withSystemTempDirectory "test." $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
-      ds <- create "GTIFF" p 100 100 1 [] :: IO (RWDataset Int16)
+      ds <- create GTIFF p 100 100 1 [] :: IO (RWDataset Int16)
       flushCache ds
       ds2 <- openReadWrite p
       withBand ds2 1 $ \band -> do

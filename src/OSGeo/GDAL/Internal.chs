@@ -8,6 +8,7 @@
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module OSGeo.GDAL.Internal (
     HasDatatype
@@ -17,6 +18,7 @@ module OSGeo.GDAL.Internal (
   , Geotransform (..)
   , IOVector
   , DriverOptions
+  , Driver (..)
   , Dataset
   , ReadWrite
   , ReadOnly
@@ -25,8 +27,6 @@ module OSGeo.GDAL.Internal (
   , RWBand
   , ROBand
   , Band
-  , Driver
-  , DriverName
   , GComplex (..)
 
   , setQuietErrorHandler
@@ -35,7 +35,6 @@ module OSGeo.GDAL.Internal (
 
   , registerAllDrivers
   , destroyDriverManager
-  , driverByName
   , create
   , create'
   , createMem
@@ -96,6 +95,8 @@ import Foreign.Marshal.Array (allocaArray)
 import Foreign.Marshal.Utils (toBool, fromBool)
 
 import System.IO.Unsafe (unsafePerformIO)
+import System.Process (readProcess)
+import Data.Char (toUpper)
 
 import OSGeo.Util
 
@@ -104,8 +105,9 @@ import OSGeo.Util
 #include "cpl_error.h"
 
 
-type DriverName = String
-
+$(let names = fmap (words . map toUpper) $
+                readProcess "gdal-config" ["--formats"] ""
+  in createEnum "Driver" names)
 
 data GDALException = GDALException Error String
      deriving (Show, Typeable)
@@ -189,18 +191,18 @@ type ROBand s = Band s ReadOnly
 type RWBand s = Band s ReadWrite
 
 
-{#pointer GDALDriverH as Driver newtype#}
+{#pointer GDALDriverH as DriverH newtype#}
 
 {#fun GDALAllRegister as registerAllDrivers {} -> `()'  #}
 
 {#fun GDALDestroyDriverManager as destroyDriverManager {} -> `()'#}
 
 {# fun unsafe GDALGetDriverByName as c_driverByName
-    { `String' } -> `Driver' id #}
+    { `String' } -> `DriverH' id #}
 
-driverByName :: String -> IO Driver
+driverByName :: Driver -> IO DriverH
 driverByName s = do
-    driver@(Driver ptr) <- c_driverByName s
+    driver@(DriverH ptr) <- c_driverByName (show s)
     if ptr==nullPtr
         then throw $ GDALException CE_Failure "failed to load driver"
         else return driver
@@ -209,11 +211,10 @@ type DriverOptions = [(String,String)]
 
 create
   :: forall t. HasDatatype t
-  => String -> FilePath -> Int -> Int -> Int -> DriverOptions
+  => Driver -> FilePath -> Int -> Int -> Int -> DriverOptions
   -> IO (Dataset ReadWrite t)
 create drv path nx ny bands options = do
-    d <- driverByName  drv
-    create' d path nx ny bands (datatype (undefined :: t)) options
+    create' drv path nx ny bands (datatype (undefined :: t)) options
 
 create'
   :: forall t. HasDatatype t
@@ -224,8 +225,9 @@ create' drv path nx ny bands dtype options = withCString path $ \path' -> do
         ny'    = fromIntegral ny
         bands' = fromIntegral bands
         dtype' = fromEnumC dtype
+    d <- driverByName drv
     withOptionList options $ \opts ->
-        create_ drv path' nx' ny' bands' dtype' opts >>= newDatasetHandle
+        c_create d path' nx' ny' bands' dtype' opts >>= newDatasetHandle
 
 withOptionList ::
   [(String, String)] -> (Ptr CString -> IO c) -> IO c
@@ -236,8 +238,8 @@ withOptionList opts = bracket (toOptionList opts) freeOptionList
         freeOptionList = {#call unsafe CSLDestroy as ^#} . castPtr
 
 
-foreign import ccall safe "gdal.h GDALCreate" create_
-  :: Driver
+foreign import ccall safe "gdal.h GDALCreate" c_create
+  :: DriverH
   -> CString
   -> CInt
   -> CInt
@@ -246,11 +248,11 @@ foreign import ccall safe "gdal.h GDALCreate" create_
   -> Ptr CString
   -> IO (Ptr (RWDataset t))
 
-openReadOnly :: String -> IO (RODataset t)
+openReadOnly :: FilePath -> IO (RODataset t)
 openReadOnly p = withCString p openIt
   where openIt p' = open_ p' (fromEnumC GA_ReadOnly) >>= newDatasetHandle
 
-openReadWrite :: String -> IO (RWDataset t)
+openReadWrite :: FilePath -> IO (RWDataset t)
 openReadWrite p = withCString p openIt
   where openIt p' = open_ p' (fromEnumC GA_Update) >>= newDatasetHandle
 
@@ -261,25 +263,25 @@ foreign import ccall safe "gdal.h GDALOpen" open_
 createCopy' ::
   Driver -> String -> (Dataset a t) -> Bool -> DriverOptions
   -> ProgressFun -> IO (RWDataset t)
-createCopy' driver path dataset strict options progressFun
-  = withCString path $ \p ->
+createCopy' driver path dataset strict options progressFun = do
+  d <- driverByName driver
+  withCString path $ \p ->
     withDataset dataset $ \ds ->
     withProgressFun progressFun $ \pFunc -> do
         let s = fromBool strict
         withOptionList options $ \o ->
-            createCopy_ driver p ds s o pFunc (castPtr nullPtr)
+            c_createCopy d p ds s o pFunc (castPtr nullPtr)
             >>= newDatasetHandle
 
 
 createCopy ::
-  String -> String -> (Dataset a t) -> Bool -> DriverOptions
+  Driver -> FilePath -> (Dataset a t) -> Bool -> DriverOptions
   -> IO (RWDataset t)
 createCopy driver path dataset strict options = do
-  d <- driverByName driver
-  createCopy' d path dataset strict options (\_ _ _ -> return 1)
+  createCopy' driver path dataset strict options (\_ _ _ -> return 1)
 
-foreign import ccall safe "gdal.h GDALCreateCopy" createCopy_
-  :: Driver
+foreign import ccall safe "gdal.h GDALCreateCopy" c_createCopy
+  :: DriverH
   -> Ptr CChar
   -> Ptr (Dataset a t)
   -> CInt
@@ -317,7 +319,7 @@ foreign import ccall "gdal.h &GDALClose"
 createMem
   :: HasDatatype t
   => Int -> Int -> Int -> DriverOptions -> IO (Dataset ReadWrite t)
-createMem = create "MEM" ""
+createMem = create MEM ""
 
 flushCache :: forall t. RWDataset t -> IO ()
 flushCache d = withDataset d flushCache'
