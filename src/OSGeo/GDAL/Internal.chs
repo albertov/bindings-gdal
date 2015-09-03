@@ -11,9 +11,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module OSGeo.GDAL.Internal (
-    GDALType
+    GDAL
+  , runGDAL
+  , GDALType
   , Datatype (..)
   , GDALException (..)
   , isGDALException
@@ -36,7 +40,6 @@ module OSGeo.GDAL.Internal (
   , registerAllDrivers
   , destroyDriverManager
   , create
-  , create'
   , createMem
   , flushCache
   , openReadOnly
@@ -55,13 +58,13 @@ module OSGeo.GDAL.Internal (
   , setDatasetGeotransform
   , datasetBandCount
 
-  , withBand
   , bandDatatype
   , bandBlockSize
   , bandBlockLen
   , bandSize
   , bandNodataValue
   , setBandNodataValue
+  , getBand
   , readBand
   , readBandBlock
   , writeBand
@@ -70,12 +73,15 @@ module OSGeo.GDAL.Internal (
 
   -- Internal Util
   , throwIfError
-  , withDataset
+  , datasetPtr
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
 import Control.Exception (bracket, throw, Exception(..), SomeException)
 import Control.Monad (liftM, foldM)
+import Control.Monad.Trans.Resource (
+  ResourceT, runResourceT, MonadBaseControl, register)
+import Control.Monad.IO.Class (MonadIO(..))
 
 import Data.Int (Int16, Int32)
 import Data.Complex (Complex(..))
@@ -108,6 +114,18 @@ import OSGeo.Util
 $(let names = fmap (words . map toUpper) $
                 readProcess "gdal-config" ["--formats"] ""
   in createEnum "Driver" names)
+
+
+newtype GDAL s a = GDAL (ResourceT IO a)
+
+deriving instance Functor (GDAL s)
+deriving instance Applicative (GDAL s)
+deriving instance Monad (GDAL s)
+deriving instance MonadIO (GDAL s)
+
+
+runGDAL :: (forall s. GDAL s a) -> IO a
+runGDAL (GDAL a) = registerAllDrivers >> runResourceT a
 
 data GDALException = Unknown !Error !String
                    | InvalidType
@@ -174,21 +192,22 @@ instance Show Datatype where
 
 {#pointer GDALDatasetH as Dataset foreign newtype nocode#}
 
+
 data DatasetMode = ReadOnly | ReadWrite
 
 type ReadOnly  = 'ReadOnly
 type ReadWrite = 'ReadWrite
 
-newtype Dataset (t::DatasetMode) a = Dataset (ForeignPtr (Dataset t a), Mutex)
+newtype Dataset (t::DatasetMode) a = Dataset (Ptr (Dataset t a), Mutex)
 
-unDataset :: Dataset a t -> ForeignPtr (Dataset a t)
+unDataset :: Dataset a t -> Ptr (Dataset a t)
 unDataset (Dataset (d, _)) = d
 
 type RODataset = Dataset ReadOnly
 type RWDataset = Dataset ReadWrite
 
-withDataset :: (Dataset a t) -> (Ptr (Dataset a t) -> IO b) -> IO b
-withDataset (Dataset (fptr,_)) = withForeignPtr fptr
+datasetPtr :: (Dataset t a) -> Ptr (Dataset t a)
+datasetPtr (Dataset (fptr,_)) = fptr
 
 {#pointer GDALRasterBandH as Band newtype nocode#}
 newtype (Band s (t::DatasetMode) a) = Band (Ptr (Band s t a))
@@ -209,8 +228,8 @@ type RWBand s = Band s ReadWrite
 {# fun unsafe GDALGetDriverByName as c_driverByName
     { `String' } -> `DriverH' id #}
 
-driverByName :: Driver -> IO DriverH
-driverByName s = do
+driverByName :: Driver -> GDAL s DriverH
+driverByName s = GDAL $ liftIO $ do
     driver@(DriverH ptr) <- c_driverByName (show s)
     if ptr==nullPtr
         then throw DriverLoadError
@@ -219,24 +238,19 @@ driverByName s = do
 type DriverOptions = [(String,String)]
 
 create
-  :: forall t. GDALType t
-  => Driver -> FilePath -> Int -> Int -> Int -> DriverOptions
-  -> IO (Dataset ReadWrite t)
+  :: forall s a. GDALType a
+  => Driver -> String -> Int -> Int -> Int -> DriverOptions
+  -> GDAL s (Dataset ReadWrite a)
 create drv path nx ny bands options = do
-    create' drv path nx ny bands (datatype (Proxy :: Proxy t)) options
-
-create'
-  :: forall t. GDALType t
-  => Driver -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
-  -> IO (Dataset ReadWrite t)
-create' drv path nx ny bands dtype options = withCString path $ \path' -> do
+  d <- driverByName drv
+  ptr <- liftIO $ withCString path $ \path' -> do
     let nx'    = fromIntegral nx
         ny'    = fromIntegral ny
         bands' = fromIntegral bands
-        dtype' = fromEnumC dtype
-    d <- driverByName drv
+        dtype' = fromEnumC $ datatype (Proxy :: Proxy a)
     withOptionList options $ \opts ->
-        c_create d path' nx' ny' bands' dtype' opts >>= newDatasetHandle
+        c_create d path' nx' ny' bands' dtype' opts
+  newDatasetHandle ptr
 
 withOptionList ::
   [(String, String)] -> (Ptr CString -> IO c) -> IO c
@@ -257,20 +271,25 @@ foreign import ccall safe "gdal.h GDALCreate" c_create
   -> Ptr CString
   -> IO (Ptr (RWDataset t))
 
-openReadOnly :: GDALType a => FilePath -> IO (RODataset a)
-openReadOnly p = withCString p $ \p' ->
-  open_ p' (fromEnumC GA_ReadOnly) >>= newDatasetHandle >>= checkType
+openReadOnly :: GDALType a => FilePath -> GDAL s (RODataset a)
+openReadOnly p = do
+  ptr <- liftIO (withCString p $ \p' -> open_ p' (fromEnumC GA_ReadOnly))
+  newDatasetHandle ptr >>= checkType
 
-openReadWrite :: GDALType a => FilePath -> IO (RWDataset a)
-openReadWrite p = withCString p $ \p' ->
-  open_ p' (fromEnumC GA_Update) >>= newDatasetHandle >>= checkType
+openReadWrite :: GDALType a => FilePath -> GDAL s (RWDataset a)
+openReadWrite p = do
+  ptr <- liftIO (withCString p $ \p' -> open_ p' (fromEnumC GA_ReadOnly))
+  newDatasetHandle ptr >>= checkType
 
-checkType :: forall t a. GDALType a => Dataset t a -> IO (Dataset t a)
+checkType
+  :: forall s t a. GDALType a
+  => Dataset t a -> GDAL s (Dataset t a)
 checkType ds
-  | datasetBandCount ds > 0 = withBand ds 1 $ \b ->
+  | datasetBandCount ds > 0 = do
+      b <- getBand ds 1
       if datatype (Proxy :: Proxy a) == bandDatatype b
         then return ds
-        else throw InvalidType
+        else liftIO (throw InvalidType)
   | otherwise = return ds
 
 {-
@@ -291,21 +310,20 @@ foreign import ccall safe "gdal.h GDALOpen" open_
 
 createCopy' :: GDALType a
   => Driver -> String -> (Dataset t a) -> Bool -> DriverOptions
-  -> ProgressFun -> IO (RWDataset a)
+  -> ProgressFun -> GDAL s (RWDataset a)
 createCopy' driver path dataset strict options progressFun = do
   d <- driverByName driver
-  withCString path $ \p ->
-    withDataset dataset $ \ds ->
+  let ds = datasetPtr dataset
+  ptr <- liftIO $ withCString path $ \p ->
     withProgressFun progressFun $ \pFunc -> do
         let s = fromBool strict
         withOptionList options $ \o ->
             c_createCopy d p ds s o pFunc (castPtr nullPtr)
-            >>= newDatasetHandle
-
+  newDatasetHandle ptr
 
 createCopy :: GDALType a
   => Driver -> FilePath -> (Dataset t a) -> Bool -> DriverOptions
-  -> IO (RWDataset a)
+  -> GDAL s (RWDataset a)
 createCopy driver path dataset strict options = do
   createCopy' driver path dataset strict options (\_ _ _ -> return 1)
 
@@ -334,32 +352,34 @@ foreign import ccall "wrapper"
   wrapProgressFun :: ProgressFun -> IO (FunPtr ProgressFun)
 
 
-newDatasetHandle :: GDALType a => Ptr (Dataset t a) -> IO (Dataset t a)
-newDatasetHandle p =
+newDatasetHandle :: GDALType a
+  => Ptr (Dataset t a) -> GDAL s (Dataset t a)
+newDatasetHandle p = GDAL $
     if p==nullPtr
-        then throw NullDatasetHandle
-        else do fp <- newForeignPtr closeDataset p
-                mutex <- newMutex
-                return $ Dataset (fp, mutex)
+        then liftIO $ throw NullDatasetHandle
+        else do mutex <- liftIO newMutex
+                _ <- register (c_closeDataset p)
+                return $ Dataset (p, mutex)
 
-foreign import ccall "gdal.h &GDALClose"
-  closeDataset :: FunPtr (Ptr (Dataset a t) -> IO ())
+foreign import ccall "gdal.h GDALClose"
+  c_closeDataset :: Ptr (Dataset a t) -> IO ()
 
 createMem
-  :: GDALType t
-  => Int -> Int -> Int -> DriverOptions -> IO (Dataset ReadWrite t)
+  :: GDALType a
+  => Int -> Int -> Int -> DriverOptions -> GDAL s (Dataset ReadWrite a)
 createMem = create MEM ""
 
-flushCache :: forall t. RWDataset t -> IO ()
-flushCache d = withDataset d flushCache'
+flushCache :: forall s a. RWDataset a -> GDAL s ()
+flushCache = GDAL . liftIO . flushCache' . datasetPtr
 
 foreign import ccall safe "gdal.h GDALFlushCache" flushCache'
   :: Ptr (Dataset a t) -> IO ()
 
 datasetSize :: Dataset a t -> (Int, Int)
-datasetSize ds = unsafePerformIO $ withDataset ds $ \dsPtr ->
-    return ( fromIntegral . getDatasetXSize_ $ dsPtr
-           , fromIntegral . getDatasetYSize_ $ dsPtr)
+datasetSize ds =
+  ( fromIntegral . getDatasetXSize_ $ dsPtr
+  , fromIntegral . getDatasetYSize_ $ dsPtr)
+  where dsPtr = datasetPtr ds
 
 foreign import ccall unsafe "gdal.h GDALGetRasterXSize" getDatasetXSize_
   :: Ptr (Dataset a t) -> CInt
@@ -367,19 +387,19 @@ foreign import ccall unsafe "gdal.h GDALGetRasterXSize" getDatasetXSize_
 foreign import ccall unsafe "gdal.h GDALGetRasterYSize" getDatasetYSize_
   :: Ptr (Dataset a t) -> CInt
 
-datasetProjection :: Dataset a t -> IO String
-datasetProjection d = withDataset d $ \d' -> do
-    p <- getProjection_ d'
+datasetProjection :: Dataset a t -> GDAL s String
+datasetProjection d = GDAL $ liftIO $ do
+    p <- getProjection_ (datasetPtr d)
     peekCString p
 
 foreign import ccall unsafe "gdal.h GDALGetProjectionRef" getProjection_
   :: Ptr (Dataset a t) -> IO (Ptr CChar)
 
 
-setDatasetProjection :: (RWDataset t) -> String -> IO ()
-setDatasetProjection d p = throwIfError
-                           "setDatasetProjection: could not set projection" f
-  where f = withDataset d $ \d' -> withCString p $ \p' -> setProjection' d' p'
+setDatasetProjection :: (RWDataset t) -> String -> GDAL s ()
+setDatasetProjection d p = GDAL $ liftIO $
+  throwIfError "setDatasetProjection: could not set projection" $
+    withCString p $ \p' -> setProjection' (datasetPtr d) p'
 
 foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
   :: Ptr (Dataset a t) -> Ptr CChar -> IO CInt
@@ -388,48 +408,51 @@ foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
 data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
     deriving (Eq, Show)
 
-datasetGeotransform :: Dataset a t -> IO Geotransform
-datasetGeotransform ds = withDataset ds $ \dPtr -> do
-    allocaArray 6 $ \a -> do
-      throwIfError "could not get geotransform" $ getGeoTransform dPtr a
-      Geotransform <$> liftM realToFrac (peekElemOff a 0)
-                   <*> liftM realToFrac (peekElemOff a 1)
-                   <*> liftM realToFrac (peekElemOff a 2)
-                   <*> liftM realToFrac (peekElemOff a 3)
-                   <*> liftM realToFrac (peekElemOff a 4)
-                   <*> liftM realToFrac (peekElemOff a 5)
+datasetGeotransform :: Dataset a t -> GDAL s Geotransform
+datasetGeotransform d = GDAL $ liftIO $
+  allocaArray 6 $ \a -> do
+    throwIfError "could not get geotransform" $ getGeoTransform dPtr a
+    Geotransform <$> liftM realToFrac (peekElemOff a 0)
+                 <*> liftM realToFrac (peekElemOff a 1)
+                 <*> liftM realToFrac (peekElemOff a 2)
+                 <*> liftM realToFrac (peekElemOff a 3)
+                 <*> liftM realToFrac (peekElemOff a 4)
+                 <*> liftM realToFrac (peekElemOff a 5)
+  where dPtr = datasetPtr d
 
 foreign import ccall unsafe "gdal.h GDALGetGeoTransform" getGeoTransform
   :: Ptr (Dataset a t) -> Ptr CDouble -> IO CInt
 
-setDatasetGeotransform :: (RWDataset t) -> Geotransform -> IO ()
-setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
-    allocaArray 6 $ \a -> do
-        let (Geotransform g0 g1 g2 g3 g4 g5) = gt
-        pokeElemOff a 0 (realToFrac g0)
-        pokeElemOff a 1 (realToFrac g1)
-        pokeElemOff a 2 (realToFrac g2)
-        pokeElemOff a 3 (realToFrac g3)
-        pokeElemOff a 4 (realToFrac g4)
-        pokeElemOff a 5 (realToFrac g5)
-        throwIfError "could not set geotransform" $ setGeoTransform dPtr a
+setDatasetGeotransform :: (RWDataset t) -> Geotransform -> GDAL s ()
+setDatasetGeotransform ds gt = GDAL $ liftIO $ 
+  allocaArray 6 $ \a -> do
+      let (Geotransform g0 g1 g2 g3 g4 g5) = gt
+      pokeElemOff a 0 (realToFrac g0)
+      pokeElemOff a 1 (realToFrac g1)
+      pokeElemOff a 2 (realToFrac g2)
+      pokeElemOff a 3 (realToFrac g3)
+      pokeElemOff a 4 (realToFrac g4)
+      pokeElemOff a 5 (realToFrac g5)
+      throwIfError "could not set geotransform" $ setGeoTransform dPtr a
+  where dPtr = datasetPtr ds
+
 
 foreign import ccall unsafe "gdal.h GDALSetGeoTransform" setGeoTransform
   :: Ptr (Dataset a t) -> Ptr CDouble -> IO CInt
 
 datasetBandCount :: Dataset a t -> Int
 datasetBandCount d
-  = unsafePerformIO $ liftM fromIntegral $ withDataset d bandCount_
+  = unsafePerformIO $ liftM fromIntegral $ bandCount_ (datasetPtr d)
 
 foreign import ccall unsafe "gdal.h GDALGetRasterCount" bandCount_
   :: Ptr (Dataset a t) -> IO CInt
 
-withBand :: Dataset a t -> Int -> (forall s. Band s a t -> IO b) -> IO b
-withBand ds band f = withDataset ds $ \dPtr -> do
-    rBand@(Band p) <- getRasterBand dPtr (fromIntegral band)
+getBand :: Dataset t a -> Int -> GDAL s (Band s t a)
+getBand ds band = GDAL $ liftIO $ do
+    rBand@(Band p) <- getRasterBand (datasetPtr ds) (fromIntegral band)
     if p == nullPtr
         then throw (InvalidBand band)
-        else f rBand
+        else return rBand
 
 foreign import ccall unsafe "gdal.h GDALGetRasterBand" getRasterBand
   :: Ptr (Dataset a t) -> CInt -> IO ((Band s a t))
@@ -467,8 +490,8 @@ foreign import ccall unsafe "gdal.h GDALGetRasterBandYSize" getBandYSize_
   :: (Band s a t) -> CInt
 
 
-bandNodataValue :: (Band s a t) -> IO (Maybe Double)
-bandNodataValue b = alloca $ \p -> do
+bandNodataValue :: (Band s a t) -> GDAL s (Maybe Double)
+bandNodataValue b = liftIO $ alloca $ \p -> do
    value <- liftM realToFrac $ getNodata_ b p
    hasNodata <- liftM toBool $ peek p
    return (if hasNodata then Just value else Nothing)
@@ -477,16 +500,16 @@ foreign import ccall unsafe "gdal.h GDALGetRasterNoDataValue" getNodata_
    :: (Band s a t) -> Ptr CInt -> IO CDouble
    
 
-setBandNodataValue :: (RWBand s t) -> Double -> IO ()
-setBandNodataValue b v = throwIfError "could not set nodata" $
+setBandNodataValue :: (RWBand s t) -> Double -> GDAL s ()
+setBandNodataValue b v = liftIO $ throwIfError "could not set nodata" $
                             setNodata_ b (realToFrac v)
 
 foreign import ccall safe "gdal.h GDALSetRasterNoDataValue" setNodata_
     :: (RWBand s t) -> CDouble -> IO CInt
 
 
-fillBand :: (RWBand s t) -> Double -> Double -> IO ()
-fillBand b r i = throwIfError "could not fill band" $
+fillBand :: (RWBand s t) -> Double -> Double -> GDAL s ()
+fillBand b r i = liftIO $ throwIfError "could not fill band" $
     fillRaster_ b (realToFrac r) (realToFrac i)
 
 foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
@@ -499,8 +522,8 @@ readBand :: forall s t a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> IO (Vector a)
-readBand band xoff yoff sx sy bx by pxs lns = do
+  -> GDAL s (Vector a)
+readBand band xoff yoff sx sy bx by pxs lns = liftIO $ do
     fp <- mallocForeignPtrArray (bx * by)
     let dtype = fromEnumC (datatype (Proxy :: Proxy a))
     withForeignPtr fp $ \ptr -> do
@@ -543,8 +566,8 @@ writeBand :: forall s a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Vector a
-  -> IO ()
-writeBand band xoff yoff sx sy bx by pxs lns vec = do
+  -> GDAL s ()
+writeBand band xoff yoff sx sy bx by pxs lns vec = liftIO $ do
     let nElems    = bx * by
         (fp, len) = unsafeToForeignPtr0 vec
     if nElems /= len
@@ -571,8 +594,8 @@ foreign import ccall safe "gdal.h GDALRasterIO" rasterIO_
 
 readBandBlock
   :: forall s t a. GDALType a
-  => Band s t a -> Int -> Int -> IO (Vector a)
-readBandBlock b x y = do
+  => Band s t a -> Int -> Int -> GDAL s (Vector a)
+readBandBlock b x y = liftIO $ do
   f <- mallocForeignPtrArray (bandBlockLen b)
   withForeignPtr f $ \ptr ->
     throwIfError "could not read block" $
@@ -584,8 +607,8 @@ foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
 
 writeBandBlock
   :: forall s a. GDALType a
-  => RWBand s a -> Int -> Int -> Vector a -> IO ()
-writeBandBlock b x y vec = do
+  => RWBand s a -> Int -> Int -> Vector a -> GDAL s ()
+writeBandBlock b x y vec = liftIO $ do
   let nElems    = bandBlockLen b
       (fp, len) = unsafeToForeignPtr0 vec
   if nElems /= len
