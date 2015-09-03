@@ -3,6 +3,7 @@
 import Control.Monad (forM_, guard)
 import Control.Exception (tryJust)
 import System.IO.Error (isDoesNotExistError)
+import Data.Complex (Complex(..))
 import Data.Int
 import Data.Word
 import Data.Maybe (fromJust, isJust, isNothing)
@@ -82,13 +83,13 @@ case_dataset_is_created_with_correct_datatype
     withBand ds5 1 (assertType GDT_Float32)
     ds6 <- createMem 10 10 1 [] :: IO (RWDataset Double)
     withBand ds6 1 (assertType GDT_Float64)
-    ds7 <- createMem 10 10 1 [] :: IO (RWDataset (GComplex Int16))
+    ds7 <- createMem 10 10 1 [] :: IO (RWDataset (Complex Int16))
     withBand ds7 1 (assertType GDT_CInt16)
-    ds8 <- createMem 10 10 1 [] :: IO (RWDataset (GComplex Int32))
+    ds8 <- createMem 10 10 1 [] :: IO (RWDataset (Complex Int32))
     withBand ds8 1 (assertType GDT_CInt32)
-    ds9 <- createMem 10 10 1 [] :: IO (RWDataset (GComplex Float))
+    ds9 <- createMem 10 10 1 [] :: IO (RWDataset (Complex Float))
     withBand ds9 1 (assertType GDT_CFloat32)
-    ds10 <- createMem 10 10 1 [] :: IO (RWDataset (GComplex Double))
+    ds10 <- createMem 10 10 1 [] :: IO (RWDataset (Complex Double))
     withBand ds10 1 (assertType GDT_CFloat64)
 
 case_can_set_and_get_geotransform :: IO ()
@@ -158,14 +159,14 @@ case_write_and_read_band_double = write_and_read_band vec
 case_write_and_read_band_complex_float32 :: IO ()
 case_write_and_read_band_complex_float32 = write_and_read_band vec
    where vec = St.generate 10000 fun
-         vec :: St.Vector (GComplex Float)
+         vec :: St.Vector (Complex Float)
          fun i = (fromIntegral i * 1.1) :+ (fromIntegral i * 2.2)
 
 case_write_and_read_band_complex_int16 :: IO ()
 case_write_and_read_band_complex_int16
   = write_and_read_band vec
     where vec = St.generate 10000 fun
-          vec :: St.Vector (GComplex Int16)
+          vec :: St.Vector (Complex Int16)
           fun i = (fromIntegral i) :+ (fromIntegral i)
 
 case_can_write_one_type_and_read_another_with_automatic_conversion :: IO ()
@@ -221,12 +222,12 @@ case_write_and_read_block_int16 = write_and_read_block vec
 case_write_and_read_block_cdouble :: IO ()
 case_write_and_read_block_cdouble = write_and_read_block vec
    where vec = St.generate 100 $ \i -> fromIntegral i :+ fromIntegral (i+i)
-         vec :: St.Vector (GComplex Double)
+         vec :: St.Vector (Complex Double)
 
 case_write_and_read_block_cint16 :: IO ()
 case_write_and_read_block_cint16 = write_and_read_block vec
    where vec = St.generate 100 $ \i -> fromIntegral i :+ fromIntegral (i+i)
-         vec :: St.Vector (GComplex Int16)
+         vec :: St.Vector (Complex Int16)
 
 case_fill_and_read_band_int16 :: IO ()
 case_fill_and_read_band_int16 = assertNotThrowsGDALException $ do

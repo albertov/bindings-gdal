@@ -27,7 +27,6 @@ module OSGeo.GDAL.Internal (
   , RWBand
   , ROBand
   , Band
-  , GComplex (..)
 
   , setQuietErrorHandler
   , unDataset
@@ -80,6 +79,7 @@ import Control.Exception (bracket, throw, Exception(..), SomeException)
 import Control.Monad (liftM, foldM)
 
 import Data.Int (Int16, Int32)
+import Data.Complex (Complex(..))
 import Data.Maybe (isJust)
 import Data.Typeable (Typeable, typeOf)
 import Data.Word (Word8, Word16, Word32)
@@ -466,38 +466,6 @@ foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
 
 
 
-data GComplex a = (:+) !a !a deriving (Eq, Typeable)
-infix 6 :+
-instance Show a => Show (GComplex a) where
-  show (r :+ i) = show r ++ " :+ " ++ show i
-
-instance Storable a => Storable (GComplex a) where
-  sizeOf _ = sizeOf (undefined :: a) * 2
-  alignment _ = alignment (undefined :: a)
- 
-  {-# SPECIALIZE INLINE peek ::
-      Ptr (GComplex Double) -> IO (GComplex Double) #-}
-  {-# SPECIALIZE INLINE peek ::
-      Ptr (GComplex Float) -> IO (GComplex Float) #-}
-  {-# SPECIALIZE INLINE peek ::
-      Ptr (GComplex Int16) -> IO (GComplex Int16) #-}
-  {-# SPECIALIZE INLINE peek ::
-      Ptr (GComplex Int32) -> IO (GComplex Int32) #-}
-  peek p = (:+) <$> peekElemOff (castPtr p) 0 <*> peekElemOff (castPtr p) 1
-
-  {-# SPECIALIZE INLINE
-      poke :: Ptr (GComplex Float) -> GComplex Float -> IO () #-}
-  {-# SPECIALIZE INLINE
-      poke :: Ptr (GComplex Double) -> GComplex Double -> IO () #-}
-  {-# SPECIALIZE INLINE
-      poke :: Ptr (GComplex Int16) -> GComplex Int16 -> IO () #-}
-  {-# SPECIALIZE INLINE
-      poke :: Ptr (GComplex Int32) -> GComplex Int32 -> IO () #-}
-  poke p (r :+ i)
-    = pokeElemOff (castPtr p) 0 r >> pokeElemOff (castPtr p) 1 i
-
-
-
 readBand' :: HasDatatype a
   => (Band s b a)
   -> Int -> Int
@@ -641,10 +609,10 @@ instance HasDatatype Int16  where datatype _ = GDT_Int16
 instance HasDatatype Int32  where datatype _ = GDT_Int32
 instance HasDatatype Float  where datatype _ = GDT_Float32
 instance HasDatatype Double where datatype _ = GDT_Float64
-instance HasDatatype (GComplex Int16) where datatype _ = GDT_CInt16
-instance HasDatatype (GComplex Int32) where datatype _ = GDT_CInt32
-instance HasDatatype (GComplex Float) where datatype _ = GDT_CFloat32
-instance HasDatatype (GComplex Double) where datatype _ = GDT_CFloat64
+instance HasDatatype (Complex Int16) where datatype _ = GDT_CInt16
+instance HasDatatype (Complex Int32) where datatype _ = GDT_CInt32
+instance HasDatatype (Complex Float) where datatype _ = GDT_CFloat32
+instance HasDatatype (Complex Double) where datatype _ = GDT_CFloat64
 
 isValidDatatype :: forall s a t v.  Typeable v
   => Band s a t -> v -> Bool
@@ -658,8 +626,8 @@ isValidDatatype b v
       GDT_Int32    -> vt == typeOf (undefined :: Vector Int32)
       GDT_Float32  -> vt == typeOf (undefined :: Vector Float)
       GDT_Float64  -> vt == typeOf (undefined :: Vector Double)
-      GDT_CInt16   -> vt == typeOf (undefined :: Vector (GComplex Int16))
-      GDT_CInt32   -> vt == typeOf (undefined :: Vector (GComplex Int32))
-      GDT_CFloat32 -> vt == typeOf (undefined :: Vector (GComplex Float))
-      GDT_CFloat64 -> vt == typeOf (undefined :: Vector (GComplex Double))
+      GDT_CInt16   -> vt == typeOf (undefined :: Vector (Complex Int16))
+      GDT_CInt32   -> vt == typeOf (undefined :: Vector (Complex Int32))
+      GDT_CFloat32 -> vt == typeOf (undefined :: Vector (Complex Float))
+      GDT_CFloat64 -> vt == typeOf (undefined :: Vector (Complex Double))
       _            -> False
