@@ -20,24 +20,24 @@ import OSGeo.Util (fromEnumC)
 {# enum GDALResampleAlg as ResampleAlg {upcaseFirstLetter} deriving (Eq,Read,Show) #}
 
 foreign import ccall unsafe "gdalwarper.h GDALReprojectImage" c_reprojectImage
-  :: Ptr (Dataset t a) -- ^Source dataset
-  -> CString           -- ^Source proj (WKT)
-  -> Ptr (RWDataset a) -- ^Dest dataset
-  -> CString           -- ^Dest proj (WKT)
-  -> CInt              -- ^Resample alg
-  -> CDouble           -- ^Memory limit
-  -> CDouble           -- ^Max error
-  -> Ptr ()            -- ^Progress func (unused)
-  -> Ptr ()            -- ^Progress arg (unused)
-  -> Ptr ()            -- ^warp options (unused)
+  :: Ptr (Dataset s t a) -- ^Source dataset
+  -> CString             -- ^Source proj (WKT)
+  -> Ptr (RWDataset s a) -- ^Dest dataset
+  -> CString             -- ^Dest proj (WKT)
+  -> CInt                -- ^Resample alg
+  -> CDouble             -- ^Memory limit
+  -> CDouble             -- ^Max error
+  -> Ptr ()              -- ^Progress func (unused)
+  -> Ptr ()              -- ^Progress arg (unused)
+  -> Ptr ()              -- ^warp options (unused)
   -> IO CInt
 
 
 reprojectImage
   :: GDALType a
-  => Dataset t a
+  => Dataset s t a
   -> Maybe SpatialReference
-  -> RWDataset a
+  -> RWDataset s a
   -> Maybe SpatialReference
   -> ResampleAlg
   -> Int
