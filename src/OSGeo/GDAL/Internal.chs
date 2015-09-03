@@ -9,6 +9,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ExistentialQuantification #-}
 
 module OSGeo.GDAL.Internal (
     GDALType
@@ -79,7 +81,7 @@ import Data.Int (Int16, Int32)
 import Data.Complex (Complex(..))
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy(..))
-import Data.Typeable (Typeable, typeOf)
+import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
 import Foreign.C.String (withCString, CString, peekCString)
@@ -172,9 +174,12 @@ instance Show Datatype where
 
 {#pointer GDALDatasetH as Dataset foreign newtype nocode#}
 
-data ReadOnly
-data ReadWrite
-newtype Dataset a t = Dataset (ForeignPtr (Dataset a t), Mutex)
+data DatasetMode = ReadOnly | ReadWrite
+
+type ReadOnly  = 'ReadOnly
+type ReadWrite = 'ReadWrite
+
+newtype Dataset (t::DatasetMode) a = Dataset (ForeignPtr (Dataset t a), Mutex)
 
 unDataset :: Dataset a t -> ForeignPtr (Dataset a t)
 unDataset (Dataset (d, _)) = d
@@ -186,7 +191,7 @@ withDataset :: (Dataset a t) -> (Ptr (Dataset a t) -> IO b) -> IO b
 withDataset (Dataset (fptr,_)) = withForeignPtr fptr
 
 {#pointer GDALRasterBandH as Band newtype nocode#}
-newtype (Band s a t) = Band (Ptr (Band s a t))
+newtype (Band s (t::DatasetMode) a) = Band (Ptr (Band s t a))
 
 unBand :: Band s a t -> Ptr (Band s a t)
 unBand (Band b) = b
@@ -263,18 +268,30 @@ openReadWrite p = withCString p $ \p' ->
 checkType :: forall t a. GDALType a => Dataset t a -> IO (Dataset t a)
 checkType ds
   | datasetBandCount ds > 0 = withBand ds 1 $ \b ->
-                                if isValidDatatype b (Proxy :: Proxy a)
-                                  then return ds
-                                  else throw InvalidType
+      if datatype (Proxy :: Proxy a) == bandDatatype b
+        then return ds
+        else throw InvalidType
   | otherwise = return ds
+
+{-
+data SomeDataset t = forall a. GDALType a => SomeDataset (Dataset t a)
+
+openAnyReadOnly :: FilePath -> IO (SomeDataset ReadOnly)
+openAnyReadOnly p = withCString p $ \p' ->
+  open_ p' (fromEnumC GA_ReadOnly) >>= (fmap SomeDataset . newDatasetHandle)
+
+openAnyReadWrite :: FilePath -> IO (SomeDataset ReadWrite)
+openAnyReadWrite p = withCString p $ \p' ->
+  open_ p' (fromEnumC GA_Update) >>= (fmap SomeDataset . newDatasetHandle)
+-}
 
 foreign import ccall safe "gdal.h GDALOpen" open_
    :: CString -> CInt -> IO (Ptr (Dataset a t))
 
 
-createCopy' ::
-  Driver -> String -> (Dataset a t) -> Bool -> DriverOptions
-  -> ProgressFun -> IO (RWDataset t)
+createCopy' :: GDALType a
+  => Driver -> String -> (Dataset t a) -> Bool -> DriverOptions
+  -> ProgressFun -> IO (RWDataset a)
 createCopy' driver path dataset strict options progressFun = do
   d <- driverByName driver
   withCString path $ \p ->
@@ -286,9 +303,9 @@ createCopy' driver path dataset strict options progressFun = do
             >>= newDatasetHandle
 
 
-createCopy ::
-  Driver -> FilePath -> (Dataset a t) -> Bool -> DriverOptions
-  -> IO (RWDataset t)
+createCopy :: GDALType a
+  => Driver -> FilePath -> (Dataset t a) -> Bool -> DriverOptions
+  -> IO (RWDataset a)
 createCopy driver path dataset strict options = do
   createCopy' driver path dataset strict options (\_ _ _ -> return 1)
 
@@ -317,7 +334,7 @@ foreign import ccall "wrapper"
   wrapProgressFun :: ProgressFun -> IO (FunPtr ProgressFun)
 
 
-newDatasetHandle :: Ptr (Dataset a t) -> IO (Dataset a t)
+newDatasetHandle :: GDALType a => Ptr (Dataset t a) -> IO (Dataset t a)
 newDatasetHandle p =
     if p==nullPtr
         then throw NullDatasetHandle
@@ -583,8 +600,8 @@ foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
 
 
 
-class (Storable a, Typeable a) => GDALType a where
-    datatype :: Proxy a -> Datatype
+class Storable a => GDALType a where
+  datatype :: Proxy a -> Datatype
 
 instance GDALType Word8  where datatype _ = GDT_Byte
 instance GDALType Word16 where datatype _ = GDT_UInt16
@@ -597,21 +614,3 @@ instance GDALType (Complex Int16) where datatype _ = GDT_CInt16
 instance GDALType (Complex Int32) where datatype _ = GDT_CInt32
 instance GDALType (Complex Float) where datatype _ = GDT_CFloat32
 instance GDALType (Complex Double) where datatype _ = GDT_CFloat64
-
-isValidDatatype :: forall s a t v.  Typeable v
-  => Band s a t -> Proxy v -> Bool
-isValidDatatype b v
-  = let vt = typeOf v
-    in case bandDatatype b of
-      GDT_Byte     -> vt == typeOf (Proxy :: Proxy Word8)
-      GDT_UInt16   -> vt == typeOf (Proxy :: Proxy Word16)
-      GDT_UInt32   -> vt == typeOf (Proxy :: Proxy Word32)
-      GDT_Int16    -> vt == typeOf (Proxy :: Proxy Int16)
-      GDT_Int32    -> vt == typeOf (Proxy :: Proxy Int32)
-      GDT_Float32  -> vt == typeOf (Proxy :: Proxy Float)
-      GDT_Float64  -> vt == typeOf (Proxy :: Proxy Double)
-      GDT_CInt16   -> vt == typeOf (Proxy :: Proxy (Complex Int16))
-      GDT_CInt32   -> vt == typeOf (Proxy :: Proxy (Complex Int32))
-      GDT_CFloat32 -> vt == typeOf (Proxy :: Proxy (Complex Float))
-      GDT_CFloat64 -> vt == typeOf (Proxy :: Proxy (Complex Double))
-      _            -> False
