@@ -9,7 +9,7 @@ import Foreign.C.String (CString, withCString)
 import Foreign.C.Types (CDouble(..), CInt(..))
 import Foreign.Ptr (Ptr, nullPtr)
 import OSGeo.OSR (SpatialReference, toWkt)
-import OSGeo.GDAL.Internal ( Dataset, RWDataset, HasDatatype, withDataset
+import OSGeo.GDAL.Internal ( Dataset, RWDataset, GDALType, withDataset
                            , throwIfError)
 import OSGeo.Util (fromEnumC)
 
@@ -19,23 +19,24 @@ import OSGeo.Util (fromEnumC)
 {# enum GDALResampleAlg as ResampleAlg {upcaseFirstLetter} deriving (Eq,Read,Show) #}
 
 foreign import ccall unsafe "gdalwarper.h GDALReprojectImage" c_reprojectImage
-  :: Ptr (Dataset a t)   -- ^Source dataset
-  -> CString             -- ^Source proj (WKT)
-  -> Ptr (Dataset a1 t1) -- ^Dest dataset
-  -> CString             -- ^Dest proj (WKT)
-  -> CInt                -- ^Resample alg
-  -> CDouble             -- ^Memory limit
-  -> CDouble             -- ^Max error
-  -> Ptr ()              -- ^Progress func (unused)
-  -> Ptr ()              -- ^Progress arg (unused)
-  -> Ptr ()              -- ^warp options (unused)
+  :: Ptr (Dataset t a) -- ^Source dataset
+  -> CString           -- ^Source proj (WKT)
+  -> Ptr (RWDataset a) -- ^Dest dataset
+  -> CString           -- ^Dest proj (WKT)
+  -> CInt              -- ^Resample alg
+  -> CDouble           -- ^Memory limit
+  -> CDouble           -- ^Max error
+  -> Ptr ()            -- ^Progress func (unused)
+  -> Ptr ()            -- ^Progress arg (unused)
+  -> Ptr ()            -- ^warp options (unused)
   -> IO CInt
 
 
-reprojectImage :: (HasDatatype a, HasDatatype a1)
+reprojectImage
+  :: GDALType a
   => Dataset t a
   -> Maybe SpatialReference
-  -> RWDataset a1
+  -> RWDataset a
   -> Maybe SpatialReference
   -> ResampleAlg
   -> Int
@@ -56,4 +57,3 @@ reprojectImage srcDs srcSr dstDs dstSr alg memLimit maxError
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
 withMaybeSRAsCString Nothing f = f nullPtr
 withMaybeSRAsCString (Just srs) f = withCString (toWkt srs) f
-

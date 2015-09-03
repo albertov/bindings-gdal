@@ -11,12 +11,11 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module OSGeo.GDAL.Internal (
-    HasDatatype
+    GDALType
   , Datatype (..)
-  , GDALException
+  , GDALException (..)
   , isGDALException
   , Geotransform (..)
-  , IOVector
   , DriverOptions
   , Driver (..)
   , Dataset
@@ -62,10 +61,8 @@ module OSGeo.GDAL.Internal (
   , bandNodataValue
   , setBandNodataValue
   , readBand
-  , readBand'
   , readBandBlock
   , writeBand
-  , writeBand'
   , writeBandBlock
   , fillBand
 
@@ -81,6 +78,7 @@ import Control.Monad (liftM, foldM)
 import Data.Int (Int16, Int32)
 import Data.Complex (Complex(..))
 import Data.Maybe (isJust)
+import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable, typeOf)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
@@ -109,7 +107,13 @@ $(let names = fmap (words . map toUpper) $
                 readProcess "gdal-config" ["--formats"] ""
   in createEnum "Driver" names)
 
-data GDALException = GDALException Error String
+data GDALException = Unknown !Error !String
+                   | InvalidType
+                   | InvalidRasterSize !Int !Int
+                   | InvalidBlockSize
+                   | DriverLoadError
+                   | NullDatasetHandle
+                   | InvalidBand !Int
      deriving (Show, Typeable)
 
 instance Exception GDALException
@@ -140,7 +144,7 @@ throwIfError msg act = do
     e <- liftM toEnumC act
     case e of
       CE_None -> return ()
-      e'      -> throw $ GDALException e' msg
+      e'      -> throw $ Unknown e' msg
 
 {# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
 instance Show Datatype where
@@ -204,20 +208,20 @@ driverByName :: Driver -> IO DriverH
 driverByName s = do
     driver@(DriverH ptr) <- c_driverByName (show s)
     if ptr==nullPtr
-        then throw $ GDALException CE_Failure "failed to load driver"
+        then throw DriverLoadError
         else return driver
 
 type DriverOptions = [(String,String)]
 
 create
-  :: forall t. HasDatatype t
+  :: forall t. GDALType t
   => Driver -> FilePath -> Int -> Int -> Int -> DriverOptions
   -> IO (Dataset ReadWrite t)
 create drv path nx ny bands options = do
-    create' drv path nx ny bands (datatype (undefined :: t)) options
+    create' drv path nx ny bands (datatype (Proxy :: Proxy t)) options
 
 create'
-  :: forall t. HasDatatype t
+  :: forall t. GDALType t
   => Driver -> String -> Int -> Int -> Int -> Datatype -> DriverOptions
   -> IO (Dataset ReadWrite t)
 create' drv path nx ny bands dtype options = withCString path $ \path' -> do
@@ -248,13 +252,21 @@ foreign import ccall safe "gdal.h GDALCreate" c_create
   -> Ptr CString
   -> IO (Ptr (RWDataset t))
 
-openReadOnly :: FilePath -> IO (RODataset t)
-openReadOnly p = withCString p openIt
-  where openIt p' = open_ p' (fromEnumC GA_ReadOnly) >>= newDatasetHandle
+openReadOnly :: GDALType a => FilePath -> IO (RODataset a)
+openReadOnly p = withCString p $ \p' ->
+  open_ p' (fromEnumC GA_ReadOnly) >>= newDatasetHandle >>= checkType
 
-openReadWrite :: FilePath -> IO (RWDataset t)
-openReadWrite p = withCString p openIt
-  where openIt p' = open_ p' (fromEnumC GA_Update) >>= newDatasetHandle
+openReadWrite :: GDALType a => FilePath -> IO (RWDataset a)
+openReadWrite p = withCString p $ \p' ->
+  open_ p' (fromEnumC GA_Update) >>= newDatasetHandle >>= checkType
+
+checkType :: forall t a. GDALType a => Dataset t a -> IO (Dataset t a)
+checkType ds
+  | datasetBandCount ds > 0 = withBand ds 1 $ \b ->
+                                if isValidDatatype b (Proxy :: Proxy a)
+                                  then return ds
+                                  else throw InvalidType
+  | otherwise = return ds
 
 foreign import ccall safe "gdal.h GDALOpen" open_
    :: CString -> CInt -> IO (Ptr (Dataset a t))
@@ -308,7 +320,7 @@ foreign import ccall "wrapper"
 newDatasetHandle :: Ptr (Dataset a t) -> IO (Dataset a t)
 newDatasetHandle p =
     if p==nullPtr
-        then throw $ GDALException CE_Failure "Could not create dataset"
+        then throw NullDatasetHandle
         else do fp <- newForeignPtr closeDataset p
                 mutex <- newMutex
                 return $ Dataset (fp, mutex)
@@ -317,7 +329,7 @@ foreign import ccall "gdal.h &GDALClose"
   closeDataset :: FunPtr (Ptr (Dataset a t) -> IO ())
 
 createMem
-  :: HasDatatype t
+  :: GDALType t
   => Int -> Int -> Int -> DriverOptions -> IO (Dataset ReadWrite t)
 createMem = create MEM ""
 
@@ -388,8 +400,9 @@ setDatasetGeotransform ds gt = withDataset ds $ \dPtr -> do
 foreign import ccall unsafe "gdal.h GDALSetGeoTransform" setGeoTransform
   :: Ptr (Dataset a t) -> Ptr CDouble -> IO CInt
 
-datasetBandCount :: Dataset a t -> IO (Int)
-datasetBandCount d = liftM fromIntegral $ withDataset d bandCount_
+datasetBandCount :: Dataset a t -> Int
+datasetBandCount d
+  = unsafePerformIO $ liftM fromIntegral $ withDataset d bandCount_
 
 foreign import ccall unsafe "gdal.h GDALGetRasterCount" bandCount_
   :: Ptr (Dataset a t) -> IO CInt
@@ -398,8 +411,7 @@ withBand :: Dataset a t -> Int -> (forall s. Band s a t -> IO b) -> IO b
 withBand ds band f = withDataset ds $ \dPtr -> do
     rBand@(Band p) <- getRasterBand dPtr (fromIntegral band)
     if p == nullPtr
-        then throw $
-            GDALException CE_Failure ("could not get band #" ++ show band)
+        then throw (InvalidBand band)
         else f rBand
 
 foreign import ccall unsafe "gdal.h GDALGetRasterBand" getRasterBand
@@ -464,19 +476,8 @@ foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
     :: (RWBand s t) -> CDouble -> CDouble -> IO CInt
 
 
-
-
-readBand' :: HasDatatype a
-  => (Band s b a)
-  -> Int -> Int
-  -> Int -> Int
-  -> Int -> Int
-  -> Int -> Int
-  -> IO (Vector a)
-readBand' = readBand
-
-readBand :: forall s a b t. HasDatatype a
-  => (Band s b t)
+readBand :: forall s t a. GDALType a
+  => (Band s t a)
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -484,7 +485,7 @@ readBand :: forall s a b t. HasDatatype a
   -> IO (Vector a)
 readBand band xoff yoff sx sy bx by pxs lns = do
     fp <- mallocForeignPtrArray (bx * by)
-    let dtype = fromEnumC (datatype (undefined :: a))
+    let dtype = fromEnumC (datatype (Proxy :: Proxy a))
     withForeignPtr fp $ \ptr -> do
       throwIfError "could not advise read" $
         adviseRead_
@@ -518,18 +519,8 @@ foreign import ccall safe "gdal.h GDALRasterAdviseRead" adviseRead_
     -> Ptr (Ptr CChar) -> IO CInt
 
         
-writeBand' :: forall s a. HasDatatype a
+writeBand :: forall s a. GDALType a
   => (RWBand s a)
-  -> Int -> Int
-  -> Int -> Int
-  -> Int -> Int
-  -> Int -> Int
-  -> Vector a
-  -> IO ()
-writeBand' = writeBand
-
-writeBand :: forall s a t. HasDatatype a
-  => (RWBand s t)
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -540,7 +531,7 @@ writeBand band xoff yoff sx sy bx by pxs lns vec = do
     let nElems    = bx * by
         (fp, len) = unsafeToForeignPtr0 vec
     if nElems /= len
-      then throw $ GDALException CE_Failure "vector of wrong size"
+      then throw $ InvalidRasterSize bx by
       else withForeignPtr fp $ \ptr -> do
         throwIfError "could not write band" $
           rasterIO_
@@ -553,7 +544,7 @@ writeBand band xoff yoff sx sy bx by pxs lns vec = do
             (castPtr ptr)
             (fromIntegral bx)
             (fromIntegral by)
-            (fromEnumC (datatype (undefined :: a)))
+            (fromEnumC (datatype (Proxy :: Proxy a)))
             (fromIntegral pxs)
             (fromIntegral lns)
 
@@ -561,73 +552,66 @@ foreign import ccall safe "gdal.h GDALRasterIO" rasterIO_
   :: (Band s a t) -> CInt -> CInt -> CInt -> CInt -> CInt -> Ptr () -> CInt -> CInt
   -> CInt -> CInt -> CInt -> IO CInt
 
-
-type IOVector a = IO (Vector a)
-
-
 readBandBlock
-  :: forall s a t. HasDatatype t
-  => Band s a t -> Int -> Int -> IOVector t
-readBandBlock b x y
-  = if not $ isValidDatatype b (undefined :: Vector t)
-        then throw $ GDALException CE_Failure "wrong band type"
-        else do
-            f <- mallocForeignPtrArray (bandBlockLen b)
-            withForeignPtr f $ \ptr ->
-              throwIfError "could not read block" $
-                readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
-            return $ unsafeFromForeignPtr0 f (bandBlockLen b)
+  :: forall s t a. GDALType a
+  => Band s t a -> Int -> Int -> IO (Vector a)
+readBandBlock b x y = do
+  f <- mallocForeignPtrArray (bandBlockLen b)
+  withForeignPtr f $ \ptr ->
+    throwIfError "could not read block" $
+      readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
+  return $ unsafeFromForeignPtr0 f (bandBlockLen b)
 
 foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
     :: (Band s a t) -> CInt -> CInt -> Ptr () -> IO CInt
 
-writeBandBlock :: HasDatatype t => RWBand s t -> Int -> Int -> Vector t -> IO ()
+writeBandBlock
+  :: forall s a. GDALType a
+  => RWBand s a -> Int -> Int -> Vector a -> IO ()
 writeBandBlock b x y vec = do
-    let nElems    = bandBlockLen b
-        (fp, len) = unsafeToForeignPtr0 vec
-    if nElems /= len
-       then throw $ GDALException CE_Failure "wrongly sized vector"
-       else if not $ isValidDatatype b vec
-            then throw $ GDALException CE_Failure "wrongly typed vector"
-            else withForeignPtr fp $ \ptr ->
-                 throwIfError "could not write block" $
-                    writeBlock_ b (fromIntegral x) (fromIntegral y)
-                                  (castPtr ptr)
+  let nElems    = bandBlockLen b
+      (fp, len) = unsafeToForeignPtr0 vec
+  if nElems /= len
+    then throw InvalidBlockSize
+    else withForeignPtr fp $ \ptr ->
+         throwIfError "could not write block" $
+            writeBlock_ b (fromIntegral x) (fromIntegral y)
+                          (castPtr ptr)
 
 foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
-   :: (RWBand s t) -> CInt -> CInt -> Ptr () -> IO CInt
+   :: (RWBand s a) -> CInt -> CInt -> Ptr () -> IO CInt
 
 
 
-class (Storable a, Typeable a) => HasDatatype a where
-    datatype :: a -> Datatype
+class (Storable a, Typeable a) => GDALType a where
+    datatype :: Proxy a -> Datatype
 
-instance HasDatatype Word8  where datatype _ = GDT_Byte
-instance HasDatatype Word16 where datatype _ = GDT_UInt16
-instance HasDatatype Word32 where datatype _ = GDT_UInt32
-instance HasDatatype Int16  where datatype _ = GDT_Int16
-instance HasDatatype Int32  where datatype _ = GDT_Int32
-instance HasDatatype Float  where datatype _ = GDT_Float32
-instance HasDatatype Double where datatype _ = GDT_Float64
-instance HasDatatype (Complex Int16) where datatype _ = GDT_CInt16
-instance HasDatatype (Complex Int32) where datatype _ = GDT_CInt32
-instance HasDatatype (Complex Float) where datatype _ = GDT_CFloat32
-instance HasDatatype (Complex Double) where datatype _ = GDT_CFloat64
+instance GDALType Word8  where datatype _ = GDT_Byte
+instance GDALType Word16 where datatype _ = GDT_UInt16
+instance GDALType Word32 where datatype _ = GDT_UInt32
+instance GDALType Int16  where datatype _ = GDT_Int16
+instance GDALType Int32  where datatype _ = GDT_Int32
+instance GDALType Float  where datatype _ = GDT_Float32
+instance GDALType Double where datatype _ = GDT_Float64
+instance GDALType (Complex Int16) where datatype _ = GDT_CInt16
+instance GDALType (Complex Int32) where datatype _ = GDT_CInt32
+instance GDALType (Complex Float) where datatype _ = GDT_CFloat32
+instance GDALType (Complex Double) where datatype _ = GDT_CFloat64
 
 isValidDatatype :: forall s a t v.  Typeable v
-  => Band s a t -> v -> Bool
+  => Band s a t -> Proxy v -> Bool
 isValidDatatype b v
   = let vt = typeOf v
     in case bandDatatype b of
-      GDT_Byte     -> vt == typeOf (undefined :: Vector Word8)
-      GDT_UInt16   -> vt == typeOf (undefined :: Vector Word16)
-      GDT_UInt32   -> vt == typeOf (undefined :: Vector Word32)
-      GDT_Int16    -> vt == typeOf (undefined :: Vector Int16)
-      GDT_Int32    -> vt == typeOf (undefined :: Vector Int32)
-      GDT_Float32  -> vt == typeOf (undefined :: Vector Float)
-      GDT_Float64  -> vt == typeOf (undefined :: Vector Double)
-      GDT_CInt16   -> vt == typeOf (undefined :: Vector (Complex Int16))
-      GDT_CInt32   -> vt == typeOf (undefined :: Vector (Complex Int32))
-      GDT_CFloat32 -> vt == typeOf (undefined :: Vector (Complex Float))
-      GDT_CFloat64 -> vt == typeOf (undefined :: Vector (Complex Double))
+      GDT_Byte     -> vt == typeOf (Proxy :: Proxy Word8)
+      GDT_UInt16   -> vt == typeOf (Proxy :: Proxy Word16)
+      GDT_UInt32   -> vt == typeOf (Proxy :: Proxy Word32)
+      GDT_Int16    -> vt == typeOf (Proxy :: Proxy Int16)
+      GDT_Int32    -> vt == typeOf (Proxy :: Proxy Int32)
+      GDT_Float32  -> vt == typeOf (Proxy :: Proxy Float)
+      GDT_Float64  -> vt == typeOf (Proxy :: Proxy Double)
+      GDT_CInt16   -> vt == typeOf (Proxy :: Proxy (Complex Int16))
+      GDT_CInt32   -> vt == typeOf (Proxy :: Proxy (Complex Int32))
+      GDT_CFloat32 -> vt == typeOf (Proxy :: Proxy (Complex Float))
+      GDT_CFloat64 -> vt == typeOf (Proxy :: Proxy (Complex Double))
       _            -> False
