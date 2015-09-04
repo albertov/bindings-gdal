@@ -44,6 +44,17 @@ case_can_create_and_open_dataset
       _ <- openReadOnly p :: GDAL s (RODataset s Int16)
       return ()
 
+case_can_create_and_open_as_any :: IO ()
+case_can_create_and_open_as_any
+  = withSystemTempDirectory "test." $ \tmpDir ->
+    assertNotThrowsGDALException $ runGDAL $ do
+      let p = joinPath [tmpDir, "test.tif"]
+      ds <- create GTIFF p 100 100 1 [] :: GDAL s (RWDataset s Int16)
+      flushCache ds
+      SomeDataset ds' <- openAnyReadOnly p
+      c <- datasetBandCount ds'
+      liftIO $ assertEqual "unexpected number of bands" 1 c
+
 case_can_create_and_createCopy_dataset :: IO ()
 case_can_create_and_createCopy_dataset
   = withSystemTempDirectory "test." $ \tmpDir ->
@@ -181,8 +192,8 @@ write_and_read_band :: forall a . (Eq a , GDALType a)
 write_and_read_band vec = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem 100 100 1 []
     getBand ds 1 >>= \band -> do
-        writeBand band 0 0 100 100 100 100 0 0 vec
-        vec2 <- readBand band 0 0 100 100 100 100 0 0
+        writeBand band 0 0 100 100 100 100 vec
+        vec2 <- readBand band 0 0 100 100 100 100
         assertEqualVectors vec vec2
 
 write_and_read_block :: forall a. (Eq a, GDALType a)
@@ -220,7 +231,7 @@ case_fill_and_read_band_int16 = assertNotThrowsGDALException $ runGDAL $ do
         ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s Int16)
         getBand ds 1 >>= \band -> do
             fillBand band (fromIntegral value) 0
-            v <- readBand band 0 0 100 100 100 100 0 0
+            v <- readBand band 0 0 100 100 100 100
             liftIO $ assertEqual "length mismatch" 10000 (St.length v)
             let allEqual = St.foldl' f True v
                 f True a = a == value

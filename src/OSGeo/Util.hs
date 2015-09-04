@@ -2,9 +2,6 @@
 module OSGeo.Util (
     fromEnumC
   , toEnumC
-  , Mutex
-  , newMutex
-  , withMutex
   , createEnum
 ) where
 
@@ -18,21 +15,6 @@ fromEnumC = fromIntegral . fromEnum
 
 toEnumC :: Enum a => CInt -> a
 toEnumC = toEnum . fromIntegral
-
-type Mutex = MVar ()
-
-newMutex :: IO Mutex
-newMutex = newMVar ()
-
-
-acquireMutex :: Mutex -> IO ()
-acquireMutex = takeMVar
-
-releaseMutex :: Mutex -> IO ()
-releaseMutex m = putMVar m ()
-
-withMutex :: Mutex -> IO a -> IO a
-withMutex m action = finally (acquireMutex m >> action) (releaseMutex m)
 
 createEnum :: String -> IO [String] -> Q [Dec]
 createEnum name getNames = do
