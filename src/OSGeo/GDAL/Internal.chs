@@ -33,6 +33,9 @@ module OSGeo.GDAL.Internal (
   , RWBand
   , ROBand
   , Band
+  , Value (..)
+  , fromValue
+  , isNoData
 
   , setQuietErrorHandler
 
@@ -61,11 +64,13 @@ module OSGeo.GDAL.Internal (
 
   , bandDatatype
   , bandBlockSize
-  , bandBlockLen
+  , bandBlockCount
   , bandSize
   , bandNodataValue
   , setBandNodataValue
+  , setBandNodataDefault
   , getBand
+  , getMaskBand
   , readBand
   , unsafeLazyReadBand
   , readBandBlock
@@ -87,13 +92,16 @@ import Control.Monad (liftM, foldM)
 import Control.Monad.Trans.Resource (ResourceT, runResourceT, register)
 import Control.Monad.IO.Class (MonadIO(..))
 
+import qualified Data.Bit as Bit
 import Data.Int (Int16, Int32)
-import Data.Complex (Complex(..))
+import Data.Complex (Complex(..), realPart)
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
+import qualified Data.Vector.Unboxed as U
+import Data.Vector.Unboxed.Deriving (derivingUnbox)
 import Data.Coerce (coerce)
 import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
@@ -126,6 +134,57 @@ deriving instance Functor (GDAL s)
 deriving instance Applicative (GDAL s)
 deriving instance Monad (GDAL s)
 deriving instance MonadIO (GDAL s)
+
+class (U.Unbox a, Storable a) => GDALType a where
+  datatype :: Proxy a -> Datatype
+  -- | default nodata value when writing to bands with no datavalue set
+  nodata   :: a
+  -- | how to convert to double for use in setBandNodataValue
+  nodataAsDouble :: a -> Double
+  -- | how to convert from double for use with bandNodataValue
+  nodataFromDouble :: Double -> a
+
+{# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
+
+data Value a = Value !a | NoData deriving (Eq, Show)
+
+instance  Functor Value  where
+    fmap _ NoData       = NoData
+    fmap f (Value a)    = Value (f a)
+
+instance Applicative Value where
+    pure = Value
+
+    Value f <*> m       = fmap f m
+    NoData  <*> _m      = NoData
+
+    Value _m1 *> m2     = m2
+    NoData    *> _m2    = NoData
+
+instance Monad Value  where
+    (Value x) >>= k     = k x
+    NoData    >>= _     = NoData
+
+    (>>) = (*>)
+
+    return              = Value
+    fail _              = NoData
+
+isNoData :: Value a -> Bool
+isNoData NoData = True
+isNoData _      = False
+{-# INLINE isNoData #-}
+
+fromValue :: a -> Value a -> a
+fromValue v NoData    = v
+fromValue _ (Value v) = v
+{-# INLINE fromValue #-}
+
+derivingUnbox "Value"
+    [t| forall a. GDALType a => Value a -> (Bit.Bit, a) |]
+    [| \a -> case a of {NoData->(Bit.fromBool False, nodata); Value a' -> (Bit.fromBool True, a')} |]
+    [| \(m, a) -> if Bit.toBool m then Value a else NoData |]
+
 
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
@@ -172,7 +231,6 @@ throwIfError msg act = do
       CE_None -> return ()
       e'      -> throw $ Unknown e' msg
 
-{# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
 instance Show Datatype where
    show = getDatatypeName
 
@@ -302,8 +360,10 @@ openAnyWithMode m p = do
     GDT_Int32    -> return $ SomeDataset ((coerce ds) :: Dataset s t Int32)
     GDT_Float32  -> return $ SomeDataset ((coerce ds) :: Dataset s t Float)
     GDT_Float64  -> return $ SomeDataset ((coerce ds) :: Dataset s t Double)
+    {-
     GDT_CInt16   -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Int16))
     GDT_CInt32   -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Int32))
+    -}
     GDT_CFloat32 -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Float))
     GDT_CFloat64 -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Double))
     _            -> liftIO (throw InvalidType)
@@ -503,6 +563,13 @@ bandSize band = liftIO $ do
   y <- getBandYSize_ band
   return (fromIntegral x, fromIntegral y)
 
+bandBlockCount :: Band s t a -> GDAL s (Int, Int)
+bandBlockCount b = do
+  (nx,ny) <- bandSize b
+  (bx,by) <- bandBlockSize b
+  return ( ceiling (fromIntegral nx / fromIntegral bx :: Double)
+         , ceiling (fromIntegral ny / fromIntegral by :: Double))
+
 foreign import ccall unsafe "gdal.h GDALGetRasterBandXSize" getBandXSize_
   :: (Band s t a) -> IO CInt
 
@@ -527,6 +594,9 @@ setBandNodataValue b v = liftIO $ throwIfError "could not set nodata" $
 foreign import ccall safe "gdal.h GDALSetRasterNoDataValue" setNodata_
     :: (RWBand s t) -> CDouble -> IO CInt
 
+setBandNodataDefault :: forall s a. GDALType a => (RWBand s a) -> GDAL s ()
+setBandNodataDefault = flip setBandNodataValue (nodataAsDouble (nodata :: a))
+
 
 fillBand :: (RWBand s a) -> Double -> Double -> GDAL s ()
 fillBand b r i = liftIO $ throwIfError "could not fill band" $
@@ -541,7 +611,7 @@ readBand :: forall s t a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> GDAL s (Vector a)
+  -> GDAL s (U.Vector (Value a))
 readBand band xoff yoff sx sy bx by = liftIO $
   readBandIO band xoff yoff sx sy bx by
 
@@ -553,7 +623,7 @@ unsafeLazyReadBand :: forall s a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> GDAL s (Vector a)
+  -> GDAL s (U.Vector (Value a))
 unsafeLazyReadBand band xoff yoff sx sy bx by = liftIO $
   unsafeInterleaveIO $ readBandIO band xoff yoff sx sy bx by
 
@@ -562,14 +632,15 @@ readBandIO :: forall s t a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> IO (Vector a)
-readBandIO band xoff yoff sx sy bx by = do
+  -> IO (U.Vector (Value a))
+readBandIO band xoff yoff sx sy bx by =
+  readMasked band $ \b -> do
     fp <- mallocForeignPtrArray (bx * by)
     let dtype = fromEnumC (datatype (Proxy :: Proxy a))
     withForeignPtr fp $ \ptr -> do
       throwIfError "could not advise read" $
         adviseRead_
-          band
+          b
           (fromIntegral xoff)
           (fromIntegral yoff)
           (fromIntegral sx)
@@ -580,7 +651,7 @@ readBandIO band xoff yoff sx sy bx by = do
           (castPtr nullPtr)
       throwIfError "could not read band" $
         rasterIO_
-          band
+          b
           (fromEnumC GF_Read) 
           (fromIntegral xoff)
           (fromIntegral yoff)
@@ -594,6 +665,18 @@ readBandIO band xoff yoff sx sy bx by = do
           0
     return $ unsafeFromForeignPtr0 fp (bx * by)
 
+readMasked
+  :: GDALType a
+  => Band s t a
+  -> (forall s t a. GDALType a => Band s t a -> IO (Vector a))
+  -> IO (U.Vector (Value a))
+readMasked band reader = do
+  vs <- fmap U.convert (reader band)
+  mask <- c_getMaskBand band
+  ms <- fmap U.convert (reader mask)
+  return $! U.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
+
+
 foreign import ccall safe "gdal.h GDALRasterAdviseRead" adviseRead_
     :: (Band s a t) -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt
     -> Ptr (Ptr CChar) -> IO CInt
@@ -604,11 +687,14 @@ writeBand :: forall s a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> Vector a
+  -> U.Vector (Value a)
   -> GDAL s ()
-writeBand band xoff yoff sx sy bx by vec = liftIO $ do
+writeBand band xoff yoff sx sy bx by uvec = do
+  bNodata <- fmap (maybe nodata nodataFromDouble) (bandNodataValue band)
+  liftIO $ do
     let nElems    = bx * by
         (fp, len) = unsafeToForeignPtr0 vec
+        vec = U.convert (U.map (fromValue bNodata) uvec)
     if nElems /= len
       then throw $ InvalidRasterSize bx by
       else withForeignPtr fp $ \ptr -> do
@@ -633,15 +719,16 @@ foreign import ccall safe "gdal.h GDALRasterIO" rasterIO_
 
 readBandBlock
   :: forall s t a. GDALType a
-  => Band s t a -> Int -> Int -> GDAL s (Vector a)
-readBandBlock b x y = do
-  len <- bandBlockLen b
-  liftIO $ do
+  => Band s t a -> Int -> Int -> GDAL s (U.Vector (Value a))
+readBandBlock band x y = do
+  len <- bandBlockLen band
+  liftIO $ readMasked band $ \b -> do
     f <- mallocForeignPtrArray len
     withForeignPtr f $ \ptr ->
       throwIfError "could not read block" $
         readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
     return $ unsafeFromForeignPtr0 f len
+{-# INLINE readBandBlock #-}
 
 foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
     :: (Band s a t) -> CInt -> CInt -> Ptr () -> IO CInt
@@ -663,19 +750,67 @@ writeBandBlock b x y vec = do
 foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
    :: (RWBand s a) -> CInt -> CInt -> Ptr () -> IO CInt
 
+foreign import ccall safe "gdal.h GDALGetMaskBand" c_getMaskBand
+   :: (Band s t a) -> IO (Band s t Word8)
+
+getMaskBand :: Band s t a -> GDAL s (Band s t Word8)
+getMaskBand = liftIO . c_getMaskBand
 
 
-class Storable a => GDALType a where
-  datatype :: Proxy a -> Datatype
+instance GDALType Word8 where
+  datatype _ = GDT_Byte
+  nodata = maxBound
+  nodataAsDouble = fromIntegral
+  nodataFromDouble = round
 
-instance GDALType Word8  where datatype _ = GDT_Byte
-instance GDALType Word16 where datatype _ = GDT_UInt16
-instance GDALType Word32 where datatype _ = GDT_UInt32
-instance GDALType Int16  where datatype _ = GDT_Int16
-instance GDALType Int32  where datatype _ = GDT_Int32
-instance GDALType Float  where datatype _ = GDT_Float32
-instance GDALType Double where datatype _ = GDT_Float64
+instance GDALType Word16 where
+  datatype _ = GDT_UInt16
+  nodata = maxBound
+  nodataAsDouble = fromIntegral
+  nodataFromDouble = round
+
+instance GDALType Word32 where
+  datatype _ = GDT_UInt32
+  nodata = maxBound
+  nodataAsDouble = fromIntegral
+  nodataFromDouble = round
+
+instance GDALType Int16 where
+  datatype _ = GDT_Int16
+  nodata = minBound
+  nodataAsDouble = fromIntegral
+  nodataFromDouble = round
+
+instance GDALType Int32 where
+  datatype _ = GDT_Int32
+  nodata = minBound
+  nodataAsDouble = fromIntegral
+  nodataFromDouble = round
+
+instance GDALType Float where
+  datatype _ = GDT_Float32
+  nodata = 0/0
+  nodataAsDouble = realToFrac
+  nodataFromDouble = realToFrac
+
+instance GDALType Double where
+  datatype _ = GDT_Float64
+  nodata = 0/0
+  nodataAsDouble = id
+  nodataFromDouble = id
+
+{-
 instance GDALType (Complex Int16) where datatype _ = GDT_CInt16
 instance GDALType (Complex Int32) where datatype _ = GDT_CInt32
-instance GDALType (Complex Float) where datatype _ = GDT_CFloat32
-instance GDALType (Complex Double) where datatype _ = GDT_CFloat64
+-}
+instance GDALType (Complex Float) where
+  datatype _ = GDT_CFloat32
+  nodata = nodata :+ nodata
+  nodataAsDouble = realToFrac . realPart
+  nodataFromDouble d = nodataFromDouble d :+ nodataFromDouble d
+
+instance GDALType (Complex Double) where
+  datatype _ = GDT_CFloat64
+  nodata = nodata :+ nodata
+  nodataAsDouble = realPart
+  nodataFromDouble d = nodataFromDouble d :+ nodataFromDouble d

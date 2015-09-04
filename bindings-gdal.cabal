@@ -29,6 +29,8 @@ library
   other-modules:     OSGeo.Util
   build-depends:     base >=4.5 && < 4.9
                    , vector
+                   , vector-th-unbox
+                   , bitvec
                    , template-haskell
                    , process
                    , resourcet
