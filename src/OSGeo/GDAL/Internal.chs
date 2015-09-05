@@ -10,7 +10,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
@@ -25,7 +24,6 @@ module OSGeo.GDAL.Internal (
   , DriverOptions
   , Driver (..)
   , Dataset
-  , SomeDataset (..)
   , ReadWrite
   , ReadOnly
   , RWDataset
@@ -43,8 +41,6 @@ module OSGeo.GDAL.Internal (
   , flushCache
   , openReadOnly
   , openReadWrite
-  , openAnyReadOnly
-  , openAnyReadWrite
   , createCopy
 
   , datatypeSize
@@ -283,55 +279,23 @@ foreign import ccall safe "gdal.h GDALCreate" c_create
   -> IO (Ptr (RWDataset s a))
 
 openReadOnly :: GDALType a => FilePath -> GDAL s (RODataset s a)
-openReadOnly p = openWithMode GA_ReadOnly p >>= checkType
+openReadOnly p = openWithMode GA_ReadOnly p
 
 openReadWrite :: GDALType a => FilePath -> GDAL s (RWDataset s a)
-openReadWrite p = openWithMode GA_Update p >>= checkType
+openReadWrite p = openWithMode GA_Update p
 
 openWithMode :: Access -> String -> GDAL s (Dataset s t a)
 openWithMode m p =
   liftIO (withCString p $ \p' -> open_ p' (fromEnumC m)) >>= newDatasetHandle
 
-openAnyWithMode :: forall s t. Access -> String -> GDAL s (SomeDataset s t)
-openAnyWithMode m p = do
-  ds <- openWithMode m p
-  dt <- getBand ds 1 >>= bandDatatype
-  case dt of
-    GDT_Byte     -> return $ SomeDataset ((coerce ds) :: Dataset s t Word8)
-    GDT_UInt16   -> return $ SomeDataset ((coerce ds) :: Dataset s t Word16)
-    GDT_UInt32   -> return $ SomeDataset ((coerce ds) :: Dataset s t Word32)
-    GDT_Int16    -> return $ SomeDataset ((coerce ds) :: Dataset s t Int16)
-    GDT_Int32    -> return $ SomeDataset ((coerce ds) :: Dataset s t Int32)
-    GDT_Float32  -> return $ SomeDataset ((coerce ds) :: Dataset s t Float)
-    GDT_Float64  -> return $ SomeDataset ((coerce ds) :: Dataset s t Double)
-    GDT_CInt16   -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Int16))
-    GDT_CInt32   -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Int32))
-    GDT_CFloat32 -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Float))
-    GDT_CFloat64 -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Double))
-    _            -> liftIO (throw InvalidType)
-
 checkType
   :: forall s t a. GDALType a
-  => Dataset s t a -> GDAL s (Dataset s t a)
-checkType ds = do
-  c <- datasetBandCount ds
-  if c > 0
-    then do
-      b <- getBand ds 1
-      dt <- bandDatatype b
-      if datatype (Proxy :: Proxy a) == dt
-        then return ds
-        else liftIO (throw InvalidType)
-    else return ds
-
-data SomeDataset s (t :: DatasetMode)
-  = forall a. GDALType a => SomeDataset (Dataset s t a)
-
-openAnyReadOnly :: forall s. FilePath -> GDAL s (SomeDataset s ReadOnly)
-openAnyReadOnly = openAnyWithMode GA_ReadOnly
-
-openAnyReadWrite :: forall s. FilePath -> GDAL s (SomeDataset s ReadWrite)
-openAnyReadWrite = openAnyWithMode GA_Update
+  => Band s t a -> GDAL s ()
+checkType b = do
+  dt <- bandDatatype b
+  if datatype (Proxy :: Proxy a) == dt
+    then return ()
+    else liftIO (throw InvalidType)
 
 foreign import ccall safe "gdal.h GDALOpen" open_
    :: CString -> CInt -> IO (Ptr (Dataset s t a))
@@ -545,8 +509,8 @@ foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
     :: (RWBand s t) -> CDouble -> CDouble -> IO CInt
 
 
-readBand :: forall s t a. GDALType a
-  => (Band s t a)
+readBand :: forall s t b a. GDALType a
+  => (Band s t b)
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -557,8 +521,8 @@ readBand band xoff yoff sx sy bx by = liftIO $
 -- | Unsafe lazy IO version of readBand.
 --   *must* make sure vectors are evaluated inside the GDAL monad and in the
 --   same thread that called 'runGDAL0
-unsafeLazyReadBand :: forall s a. GDALType a
-  => (ROBand s a)
+unsafeLazyReadBand :: forall s b a. GDALType a
+  => (ROBand s b)
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -566,8 +530,8 @@ unsafeLazyReadBand :: forall s a. GDALType a
 unsafeLazyReadBand band xoff yoff sx sy bx by = liftIO $
   unsafeInterleaveIO $ readBandIO band xoff yoff sx sy bx by
 
-readBandIO :: forall s t a. GDALType a
-  => (Band s t a)
+readBandIO :: forall s t b a. GDALType a
+  => (Band s t b)
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -608,8 +572,8 @@ foreign import ccall safe "gdal.h GDALRasterAdviseRead" adviseRead_
     -> Ptr (Ptr CChar) -> IO CInt
 
         
-writeBand :: forall s a. GDALType a
-  => (RWBand s a)
+writeBand :: forall s b a. GDALType a
+  => (RWBand s b)
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
@@ -644,6 +608,7 @@ readBandBlock
   :: forall s t a. GDALType a
   => Band s t a -> Int -> Int -> GDAL s (Vector a)
 readBandBlock b x y = do
+  checkType b
   len <- bandBlockLen b
   liftIO $ do
     f <- mallocForeignPtrArray len
@@ -659,6 +624,7 @@ writeBandBlock
   :: forall s a. GDALType a
   => RWBand s a -> Int -> Int -> Vector a -> GDAL s ()
 writeBandBlock b x y vec = do
+  checkType b
   nElems <- bandBlockLen b
   liftIO $ do
     let (fp, len) = unsafeToForeignPtr0 vec
