@@ -80,7 +80,9 @@ module OSGeo.GDAL.Internal (
 ) where
 
 import Control.Applicative (liftA2, (<$>), (<*>))
-import Control.Exception (bracket, throw, Exception(..), SomeException)
+import Control.Exception ( bracket, throw, Exception(..), SomeException
+                         , evaluate)
+import Control.DeepSeq (NFData, force)
 import Control.Monad (liftM, foldM)
 import Control.Monad.Trans.Resource (ResourceT, runResourceT, register)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -126,8 +128,10 @@ deriving instance Monad (GDAL s)
 deriving instance MonadIO (GDAL s)
 
 
-runGDAL :: (forall s. GDAL s a) -> IO a
-runGDAL (GDAL a) = registerAllDrivers >> runResourceT a
+runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
+runGDAL (GDAL a) = do
+  registerAllDrivers
+  runResourceT (a >>= liftIO . evaluate . force)
 
 data GDALException = Unknown !Error !String
                    | InvalidType

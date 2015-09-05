@@ -33,6 +33,7 @@ library
                    , process
                    , resourcet
                    , transformers
+                   , deepseq
   ghc-options:       -funbox-strict-fields -Wall
 
 test-suite GDAL
