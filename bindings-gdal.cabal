@@ -21,6 +21,7 @@ library
   hs-source-dirs:    src
   exposed-modules:   OSGeo.GDAL,
                      OSGeo.GDAL.Internal,
+                     OSGeo.GDAL.Types,
                      OSGeo.GDAL.Warper,
                      OSGeo.OGR,
                      OSGeo.OGR.Internal

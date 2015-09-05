@@ -10,14 +10,14 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module OSGeo.GDAL.Internal (
     GDAL
   , runGDAL
-  , GDALType
+  , GDALType (..)
   , Datatype (..)
   , GDALException (..)
   , isGDALException
@@ -34,7 +34,6 @@ module OSGeo.GDAL.Internal (
   , ROBand
   , Band
   , Value (..)
-  , unValue
   , fromValue
   , isNoData
 
@@ -94,7 +93,7 @@ import Control.Monad.Trans.Resource (ResourceT, runResourceT, register)
 import Control.Monad.IO.Class (MonadIO(..))
 
 import Data.Int (Int16, Int32)
-import Data.Complex (Complex(..), realPart)
+import Data.Complex (Complex(..))
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable)
@@ -104,7 +103,7 @@ import qualified Data.Vector.Storable as St
 import Data.Coerce (coerce)
 import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
-import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr, plusPtr)
+import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrArray)
 import Foreign.Marshal.Alloc (alloca)
@@ -116,6 +115,7 @@ import System.Process (readProcess)
 import Data.Char (toUpper)
 
 import OSGeo.Util
+import OSGeo.GDAL.Types
 
 #include "gdal.h"
 #include "cpl_string.h"
@@ -125,77 +125,6 @@ import OSGeo.Util
 $(let names = fmap (words . map toUpper) $
                 readProcess "gdal-config" ["--formats"] ""
   in createEnum "Driver" names)
-
-
-class (Storable a) => GDALType a where
-  datatype :: Proxy a -> Datatype
-  -- | default nodata value when writing to bands with no datavalue set
-  nodata   :: a
-  -- | how to convert to double for use in setBandNodataValue
-  nodataAsDouble :: a -> Double
-  -- | how to convert from double for use with bandNodataValue
-  nodataFromDouble :: Double -> a
-
-{# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
-
-data Value a = Value {-# UNPACK #-} !a  | NoData deriving (Eq, Show)
-
-unValue :: Value a -> a
-unValue (Value a) = a
-unValue NoData = error "called unValue on NoData"
-{-# INLINE unValue #-}
-
-instance  Functor Value  where
-    fmap _ NoData       = NoData
-    fmap f (Value a)    = Value (f a)
-
-instance Applicative Value where
-    pure = Value
-
-    Value f <*> m       = fmap f m
-    NoData  <*> _m      = NoData
-
-    Value _m1 *> m2     = m2
-    NoData    *> _m2    = NoData
-
-instance Monad Value  where
-    (Value x) >>= k     = k x
-    NoData    >>= _     = NoData
-
-    (>>) = (*>)
-
-    return              = Value
-    fail _              = NoData
-
-instance Storable a => Storable (Value a) where
-  sizeOf _ = sizeOf (undefined :: Bool) + sizeOf (undefined :: a)
-  alignment _ = 4
-
-  {-# INLINE peek #-}
-  peek p = do
-            let p1 = (castPtr p::Ptr Bool) `plusPtr` 1
-            t <- peek (castPtr p::Ptr Bool)
-            if t
-              then fmap Value (peekElemOff (castPtr p1 :: Ptr a) 0)
-              else return NoData
-
-  {-# INLINE poke #-}
-  poke p x = case x of
-    NoData -> poke (castPtr p :: Ptr Bool) False
-    Value a -> do
-        poke (castPtr p :: Ptr Bool) True
-        let p1 = (castPtr p :: Ptr Bool) `plusPtr` 1
-        pokeElemOff (castPtr p1) 0 a
-
-isNoData :: Value a -> Bool
-isNoData NoData = True
-isNoData _      = False
-{-# INLINE isNoData #-}
-
-fromValue :: a -> Value a -> a
-fromValue v NoData    = v
-fromValue _ (Value v) = v
-{-# INLINE fromValue #-}
 
 newtype GDAL s a = GDAL (ResourceT IO a)
 
@@ -249,8 +178,6 @@ throwIfError msg act = do
       CE_None -> return ()
       e'      -> throw $ Unknown e' msg
 
-instance Show Datatype where
-   show = getDatatypeName
 
 {# fun pure unsafe GDALGetDataTypeSize as datatypeSize
     { fromEnumC `Datatype' } -> `Int' #}
@@ -258,8 +185,6 @@ instance Show Datatype where
 {# fun pure unsafe GDALDataTypeIsComplex as datatypeIsComplex
     { fromEnumC `Datatype' } -> `Bool' #}
 
-{# fun pure unsafe GDALGetDataTypeName as getDatatypeName
-    { fromEnumC `Datatype' } -> `String' #}
 
 {# fun pure unsafe GDALGetDataTypeByName as datatypeByName
     { `String' } -> `Datatype' toEnumC #}
@@ -691,7 +616,7 @@ readMasked band reader = do
   vs <- reader band
   mask <- c_getMaskBand band
   ms <- reader mask
-  return $! St.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
+  return $! St.zipWith (\v m -> if m/=0 then toValue v else NoData) vs ms
 {-# INLINE readMasked #-}
 
 
@@ -775,70 +700,3 @@ foreign import ccall safe "gdal.h GDALGetMaskBand" c_getMaskBand
 
 getMaskBand :: Band s t a -> GDAL s (Band s t Word8)
 getMaskBand = liftIO . c_getMaskBand
-
-
-instance GDALType Word8 where
-  datatype _ = GDT_Byte
-  nodata = maxBound
-  nodataAsDouble = fromIntegral
-  nodataFromDouble = round
-
-instance GDALType Word16 where
-  datatype _ = GDT_UInt16
-  nodata = maxBound
-  nodataAsDouble = fromIntegral
-  nodataFromDouble = round
-
-instance GDALType Word32 where
-  datatype _ = GDT_UInt32
-  nodata = maxBound
-  nodataAsDouble = fromIntegral
-  nodataFromDouble = round
-
-instance GDALType Int16 where
-  datatype _ = GDT_Int16
-  nodata = minBound
-  nodataAsDouble = fromIntegral
-  nodataFromDouble = round
-
-instance GDALType Int32 where
-  datatype _ = GDT_Int32
-  nodata = minBound
-  nodataAsDouble = fromIntegral
-  nodataFromDouble = round
-
-instance GDALType Float where
-  datatype _ = GDT_Float32
-  nodata = 0/0
-  nodataAsDouble = realToFrac
-  nodataFromDouble = realToFrac
-
-instance GDALType Double where
-  datatype _ = GDT_Float64
-  nodata = 0/0
-  nodataAsDouble = id
-  nodataFromDouble = id
-
-instance GDALType (Complex Int16) where
-  datatype _ = GDT_CInt16
-  nodata = nodata :+ nodata
-  nodataAsDouble = fromIntegral . realPart
-  nodataFromDouble d = nodataFromDouble d :+ nodataFromDouble d
-
-instance GDALType (Complex Int32) where
-  datatype _ = GDT_CInt32
-  nodata = nodata :+ nodata
-  nodataAsDouble = fromIntegral . realPart
-  nodataFromDouble d = nodataFromDouble d :+ nodataFromDouble d
-
-instance GDALType (Complex Float) where
-  datatype _ = GDT_CFloat32
-  nodata = nodata :+ nodata
-  nodataAsDouble = realToFrac . realPart
-  nodataFromDouble d = nodataFromDouble d :+ nodataFromDouble d
-
-instance GDALType (Complex Double) where
-  datatype _ = GDT_CFloat64
-  nodata = nodata :+ nodata
-  nodataAsDouble = realPart
-  nodataFromDouble d = nodataFromDouble d :+ nodataFromDouble d
