@@ -5,16 +5,16 @@ module OSGeo.Util (
   , createEnum
 ) where
 
-import Control.Concurrent (newMVar, takeMVar, putMVar, MVar)
-import Control.Exception (finally)
 import Foreign.C.Types (CInt)
 import Language.Haskell.TH
 
 fromEnumC :: Enum a => a -> CInt
 fromEnumC = fromIntegral . fromEnum
+{-# INLINE fromEnumC #-}
 
 toEnumC :: Enum a => CInt -> a
 toEnumC = toEnum . fromIntegral
+{-# INLINE toEnumC #-}
 
 createEnum :: String -> IO [String] -> Q [Dec]
 createEnum name getNames = do
