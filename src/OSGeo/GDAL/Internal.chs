@@ -610,11 +610,10 @@ readBandIO :: forall s t b a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> IO (Vector (Value a))
-readBandIO band xoff yoff sx sy bx by =
-  readMasked band go
+readBandIO band xoff yoff sx sy bx by = readMasked band read_
   where
-    go :: forall b' a'. GDALType a' => Band s t b' -> IO (Vector a')
-    go b = do
+    read_ :: forall b' a'. GDALType a' => Band s t b' -> IO (Vector a')
+    read_ b = do
       fp <- mallocForeignPtrArray (bx * by)
       let dtype = fromEnumC (datatype (Proxy :: Proxy a'))
       withForeignPtr fp $ \ptr -> do
@@ -651,23 +650,23 @@ readMasked
   => Band s t b
   -> (forall a' b'. GDALType a' => Band s t b' -> IO (Vector a'))
   -> IO (Vector (Value a))
-readMasked band reader
-  | hasFlag MaskPerDataset = useMaskBand
-  | hasFlag MaskNoData     = useNoData
-  | hasFlag MaskAllValid   = useAsIs
-  | otherwise              = useMaskBand
+readMasked band reader = reader band >>= mask
   where
+    mask
+      | hasFlag MaskPerDataset = useMaskBand
+      | hasFlag MaskNoData     = useNoData
+      | hasFlag MaskAllValid   = useAsIs
+      | otherwise              = useMaskBand
     hasFlag f = fromEnumC f .&. c_getMaskFlags band == fromEnumC f
-    useAsIs = fmap (St.map Value) (reader band)
-    useNoData = do
+    useAsIs = return . St.map Value
+    useNoData vs = do
       mNodata <- c_bandNodataValue band
       let toValue = case mNodata of
                       Nothing -> Value
                       Just nd ->
                         \v -> if toNodata v == nd then NoData else Value v
-      fmap (St.map toValue) (reader band)
-    useMaskBand = do
-      vs <- reader band
+      return (St.map toValue vs)
+    useMaskBand vs = do
       mask <- c_getMaskBand band
       ms <- reader mask :: IO (Vector Word8)
       return $ St.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
@@ -773,7 +772,7 @@ instance GDALType Word8 where
   datatype _ = GDT_Byte
   nodata = maxBound
   toNodata = fromIntegral
-  fromNodata = round
+  fromNodata = truncate
   {-# INLINE toNodata #-}
   {-# INLINE fromNodata #-}
 
@@ -781,7 +780,7 @@ instance GDALType Word16 where
   datatype _ = GDT_UInt16
   nodata = maxBound
   toNodata = fromIntegral
-  fromNodata = round
+  fromNodata = truncate
   {-# INLINE toNodata #-}
   {-# INLINE fromNodata #-}
 
@@ -789,7 +788,7 @@ instance GDALType Word32 where
   datatype _ = GDT_UInt32
   nodata = maxBound
   toNodata = fromIntegral
-  fromNodata = round
+  fromNodata = truncate
   {-# INLINE toNodata #-}
   {-# INLINE fromNodata #-}
 
@@ -797,7 +796,7 @@ instance GDALType Int16 where
   datatype _ = GDT_Int16
   nodata = minBound
   toNodata = fromIntegral
-  fromNodata = round
+  fromNodata = truncate
   {-# INLINE toNodata #-}
   {-# INLINE fromNodata #-}
 
@@ -805,7 +804,7 @@ instance GDALType Int32 where
   datatype _ = GDT_Int32
   nodata = minBound
   toNodata = fromIntegral
-  fromNodata = round
+  fromNodata = truncate
   {-# INLINE toNodata #-}
   {-# INLINE fromNodata #-}
 
