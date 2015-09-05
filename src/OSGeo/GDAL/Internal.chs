@@ -34,6 +34,7 @@ module OSGeo.GDAL.Internal (
   , ROBand
   , Band
   , Value (..)
+  , unValue
   , fromValue
   , isNoData
 
@@ -92,20 +93,18 @@ import Control.Monad (liftM, foldM)
 import Control.Monad.Trans.Resource (ResourceT, runResourceT, register)
 import Control.Monad.IO.Class (MonadIO(..))
 
-import qualified Data.Bit as Bit
 import Data.Int (Int16, Int32)
 import Data.Complex (Complex(..), realPart)
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
-import Data.Vector.Storable (Vector, unsafeFromForeignPtr0, unsafeToForeignPtr0)
-import qualified Data.Vector.Unboxed as U
-import Data.Vector.Unboxed.Deriving (derivingUnbox)
+import Data.Vector.Storable (Vector)
+import qualified Data.Vector.Storable as St
 import Data.Coerce (coerce)
 import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
-import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr)
+import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr, plusPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrArray)
 import Foreign.Marshal.Alloc (alloca)
@@ -128,14 +127,7 @@ $(let names = fmap (words . map toUpper) $
   in createEnum "Driver" names)
 
 
-newtype GDAL s a = GDAL (ResourceT IO a)
-
-deriving instance Functor (GDAL s)
-deriving instance Applicative (GDAL s)
-deriving instance Monad (GDAL s)
-deriving instance MonadIO (GDAL s)
-
-class (U.Unbox a, Storable a) => GDALType a where
+class (Storable a) => GDALType a where
   datatype :: Proxy a -> Datatype
   -- | default nodata value when writing to bands with no datavalue set
   nodata   :: a
@@ -146,7 +138,12 @@ class (U.Unbox a, Storable a) => GDALType a where
 
 {# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
 
-data Value a = Value !a | NoData deriving (Eq, Show)
+data Value a = Value {-# UNPACK #-} !a  | NoData deriving (Eq, Show)
+
+unValue :: Value a -> a
+unValue (Value a) = a
+unValue NoData = error "called unValue on NoData"
+{-# INLINE unValue #-}
 
 instance  Functor Value  where
     fmap _ NoData       = NoData
@@ -170,6 +167,26 @@ instance Monad Value  where
     return              = Value
     fail _              = NoData
 
+instance Storable a => Storable (Value a) where
+  sizeOf _ = sizeOf (undefined :: Bool) + sizeOf (undefined :: a)
+  alignment _ = 4
+
+  {-# INLINE peek #-}
+  peek p = do
+            let p1 = (castPtr p::Ptr Bool) `plusPtr` 1
+            t <- peek (castPtr p::Ptr Bool)
+            if t
+              then fmap Value (peekElemOff (castPtr p1 :: Ptr a) 0)
+              else return NoData
+
+  {-# INLINE poke #-}
+  poke p x = case x of
+    NoData -> poke (castPtr p :: Ptr Bool) False
+    Value a -> do
+        poke (castPtr p :: Ptr Bool) True
+        let p1 = (castPtr p :: Ptr Bool) `plusPtr` 1
+        pokeElemOff (castPtr p1) 0 a
+
 isNoData :: Value a -> Bool
 isNoData NoData = True
 isNoData _      = False
@@ -180,17 +197,18 @@ fromValue v NoData    = v
 fromValue _ (Value v) = v
 {-# INLINE fromValue #-}
 
-derivingUnbox "Value"
-    [t| forall a. GDALType a => Value a -> (Bit.Bit, a) |]
-    [| \a -> case a of {NoData->(Bit.fromBool False, nodata); Value a' -> (Bit.fromBool True, a')} |]
-    [| \(m, a) -> if Bit.toBool m then Value a else NoData |]
+newtype GDAL s a = GDAL (ResourceT IO a)
 
-
+deriving instance Functor (GDAL s)
+deriving instance Applicative (GDAL s)
+deriving instance Monad (GDAL s)
+deriving instance MonadIO (GDAL s)
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
 runGDAL (GDAL a) = do
   registerAllDrivers
   runResourceT (a >>= liftIO . evaluate . force)
+
 
 data GDALException = Unknown !Error !String
                    | InvalidType
@@ -360,10 +378,8 @@ openAnyWithMode m p = do
     GDT_Int32    -> return $ SomeDataset ((coerce ds) :: Dataset s t Int32)
     GDT_Float32  -> return $ SomeDataset ((coerce ds) :: Dataset s t Float)
     GDT_Float64  -> return $ SomeDataset ((coerce ds) :: Dataset s t Double)
-    {-
     GDT_CInt16   -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Int16))
     GDT_CInt32   -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Int32))
-    -}
     GDT_CFloat32 -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Float))
     GDT_CFloat64 -> return $ SomeDataset ((coerce ds) :: Dataset s t (Complex Double))
     _            -> liftIO (throw InvalidType)
@@ -611,7 +627,7 @@ readBand :: forall s t a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> GDAL s (U.Vector (Value a))
+  -> GDAL s (Vector (Value a))
 readBand band xoff yoff sx sy bx by = liftIO $
   readBandIO band xoff yoff sx sy bx by
 
@@ -623,7 +639,7 @@ unsafeLazyReadBand :: forall s a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> GDAL s (U.Vector (Value a))
+  -> GDAL s (Vector (Value a))
 unsafeLazyReadBand band xoff yoff sx sy bx by = liftIO $
   unsafeInterleaveIO $ readBandIO band xoff yoff sx sy bx by
 
@@ -632,11 +648,11 @@ readBandIO :: forall s t a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> IO (U.Vector (Value a))
+  -> IO (Vector (Value a))
 readBandIO band xoff yoff sx sy bx by =
-  readMasked band $ \b -> do
+  readMasked band $ \(b :: Band s t a') -> do
     fp <- mallocForeignPtrArray (bx * by)
-    let dtype = fromEnumC (datatype (Proxy :: Proxy a))
+    let dtype = fromEnumC (datatype (Proxy :: Proxy a'))
     withForeignPtr fp $ \ptr -> do
       throwIfError "could not advise read" $
         adviseRead_
@@ -663,18 +679,20 @@ readBandIO band xoff yoff sx sy bx by =
           dtype
           0
           0
-    return $ unsafeFromForeignPtr0 fp (bx * by)
+    return $ St.unsafeFromForeignPtr0 fp (bx * by)
+{-# INLINE readBandIO #-}
 
 readMasked
   :: GDALType a
   => Band s t a
-  -> (forall s t a. GDALType a => Band s t a -> IO (Vector a))
-  -> IO (U.Vector (Value a))
+  -> (forall a'. GDALType a' => Band s t a' -> IO (Vector a'))
+  -> IO (Vector (Value a))
 readMasked band reader = do
-  vs <- fmap U.convert (reader band)
+  vs <- reader band
   mask <- c_getMaskBand band
-  ms <- fmap U.convert (reader mask)
-  return $! U.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
+  ms <- reader mask
+  return $! St.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
+{-# INLINE readMasked #-}
 
 
 foreign import ccall safe "gdal.h GDALRasterAdviseRead" adviseRead_
@@ -687,14 +705,14 @@ writeBand :: forall s a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> Int -> Int
-  -> U.Vector (Value a)
+  -> Vector (Value a)
   -> GDAL s ()
 writeBand band xoff yoff sx sy bx by uvec = do
   bNodata <- fmap (maybe nodata nodataFromDouble) (bandNodataValue band)
   liftIO $ do
     let nElems    = bx * by
-        (fp, len) = unsafeToForeignPtr0 vec
-        vec = U.convert (U.map (fromValue bNodata) uvec)
+        (fp, len) = St.unsafeToForeignPtr0 vec
+        vec = St.map (fromValue bNodata) uvec
     if nElems /= len
       then throw $ InvalidRasterSize bx by
       else withForeignPtr fp $ \ptr -> do
@@ -719,7 +737,7 @@ foreign import ccall safe "gdal.h GDALRasterIO" rasterIO_
 
 readBandBlock
   :: forall s t a. GDALType a
-  => Band s t a -> Int -> Int -> GDAL s (U.Vector (Value a))
+  => Band s t a -> Int -> Int -> GDAL s (Vector (Value a))
 readBandBlock band x y = do
   len <- bandBlockLen band
   liftIO $ readMasked band $ \b -> do
@@ -727,7 +745,7 @@ readBandBlock band x y = do
     withForeignPtr f $ \ptr ->
       throwIfError "could not read block" $
         readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
-    return $ unsafeFromForeignPtr0 f len
+    return $ St.unsafeFromForeignPtr0 f len
 {-# INLINE readBandBlock #-}
 
 foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
@@ -735,11 +753,13 @@ foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
 
 writeBandBlock
   :: forall s a. GDALType a
-  => RWBand s a -> Int -> Int -> Vector a -> GDAL s ()
-writeBandBlock b x y vec = do
+  => RWBand s a -> Int -> Int -> Vector (Value a) -> GDAL s ()
+writeBandBlock b x y uvec = do
   nElems <- bandBlockLen b
+  bNodata <- fmap (maybe nodata nodataFromDouble) (bandNodataValue b)
   liftIO $ do
-    let (fp, len) = unsafeToForeignPtr0 vec
+    let (fp, len) = St.unsafeToForeignPtr0 vec
+        vec = St.map (fromValue bNodata) uvec
     if nElems /= len
       then throw InvalidBlockSize
       else withForeignPtr fp $ \ptr ->
@@ -799,10 +819,18 @@ instance GDALType Double where
   nodataAsDouble = id
   nodataFromDouble = id
 
-{-
-instance GDALType (Complex Int16) where datatype _ = GDT_CInt16
-instance GDALType (Complex Int32) where datatype _ = GDT_CInt32
--}
+instance GDALType (Complex Int16) where
+  datatype _ = GDT_CInt16
+  nodata = nodata :+ nodata
+  nodataAsDouble = fromIntegral . realPart
+  nodataFromDouble d = nodataFromDouble d :+ nodataFromDouble d
+
+instance GDALType (Complex Int32) where
+  datatype _ = GDT_CInt32
+  nodata = nodata :+ nodata
+  nodataAsDouble = fromIntegral . realPart
+  nodataFromDouble d = nodataFromDouble d :+ nodataFromDouble d
+
 instance GDALType (Complex Float) where
   datatype _ = GDT_CFloat32
   nodata = nodata :+ nodata
