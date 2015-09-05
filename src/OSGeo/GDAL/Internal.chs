@@ -64,8 +64,10 @@ module OSGeo.GDAL.Internal (
   , bandBlockLen
   , bandSize
   , bandNodataValue
+  , bandNodataPredicate
   , setBandNodataValue
   , getBand
+  , getMaskBand
   , readBand
   , unsafeLazyReadBand
   , readBandBlock
@@ -88,7 +90,7 @@ import Control.Monad.Trans.Resource (ResourceT, runResourceT, register)
 import Control.Monad.IO.Class (MonadIO(..))
 
 import Data.Int (Int16, Int32)
-import Data.Complex (Complex(..))
+import Data.Complex (Complex(..), realPart)
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable)
@@ -510,19 +512,26 @@ foreign import ccall unsafe "gdal.h GDALGetRasterBandYSize" getBandYSize_
   :: (Band s t a) -> IO CInt
 
 
-bandNodataValue :: (Band s t a) -> GDAL s (Maybe Double)
+bandNodataValue :: GDALType a => (Band s t a) -> GDAL s (Maybe a)
 bandNodataValue b = liftIO $ alloca $ \p -> do
-   value <- liftM realToFrac $ getNodata_ b p
+   value <- liftM fromNodata $ getNodata_ b p
    hasNodata <- liftM toBool $ peek p
    return (if hasNodata then Just value else Nothing)
+
+bandNodataPredicate :: GDALType a => (Band s t a) -> GDAL s (a -> Bool)
+bandNodataPredicate b = liftIO $ alloca $ \p -> do
+  nd <- getNodata_ b p
+  hasNodata <- liftM toBool $ peek p
+  return (if hasNodata then (==nd) . toNodata else const False)
+{-# INLINE bandNodataPredicate #-}
    
 foreign import ccall unsafe "gdal.h GDALGetRasterNoDataValue" getNodata_
    :: (Band s t a) -> Ptr CInt -> IO CDouble
    
 
-setBandNodataValue :: (RWBand s a) -> Double -> GDAL s ()
+setBandNodataValue :: GDALType a => (RWBand s a) -> a -> GDAL s ()
 setBandNodataValue b v = liftIO $ throwIfError "could not set nodata" $
-                            setNodata_ b (realToFrac v)
+                            setNodata_ b (toNodata v)
 
 foreign import ccall safe "gdal.h GDALSetRasterNoDataValue" setNodata_
     :: (RWBand s t) -> CDouble -> IO CInt
@@ -663,19 +672,102 @@ writeBandBlock b x y vec = do
 foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
    :: (RWBand s a) -> CInt -> CInt -> Ptr () -> IO CInt
 
+foreign import ccall safe "gdal.h GDALGetMaskBand" c_getMaskBand
+   :: (Band s t a) -> IO (Band s t Word8)
+
+getMaskBand :: Band s t a -> GDAL s (Band s t Word8)
+getMaskBand = liftIO . c_getMaskBand
 
 
 class Storable a => GDALType a where
-  datatype :: Proxy a -> Datatype
+  datatype   :: Proxy a -> Datatype
+  toNodata   :: a -> CDouble
+  fromNodata :: CDouble -> a
 
-instance GDALType Word8  where datatype _ = GDT_Byte
-instance GDALType Word16 where datatype _ = GDT_UInt16
-instance GDALType Word32 where datatype _ = GDT_UInt32
-instance GDALType Int16  where datatype _ = GDT_Int16
-instance GDALType Int32  where datatype _ = GDT_Int32
-instance GDALType Float  where datatype _ = GDT_Float32
-instance GDALType Double where datatype _ = GDT_Float64
-instance GDALType (Complex Int16) where datatype _ = GDT_CInt16
-instance GDALType (Complex Int32) where datatype _ = GDT_CInt32
-instance GDALType (Complex Float) where datatype _ = GDT_CFloat32
-instance GDALType (Complex Double) where datatype _ = GDT_CFloat64
+instance GDALType Word8 where
+  datatype _ = GDT_Byte
+  toNodata = fromIntegral
+  fromNodata = round
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType Word16 where
+  datatype _ = GDT_UInt16
+  toNodata = fromIntegral
+  fromNodata = round
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType Word32 where
+  datatype _ = GDT_UInt32
+  toNodata = fromIntegral
+  fromNodata = round
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType Int16 where
+  datatype _ = GDT_Int16
+  toNodata = fromIntegral
+  fromNodata = round
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType Int32 where
+  datatype _ = GDT_Int32
+  toNodata = fromIntegral
+  fromNodata = round
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType Float where
+  datatype _ = GDT_Float32
+  toNodata = realToFrac
+  fromNodata = realToFrac
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType Double where
+  datatype _ = GDT_Float64
+  toNodata = realToFrac
+  fromNodata = realToFrac
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType (Complex Int16) where
+  datatype _ = GDT_CInt16
+  toNodata = fromIntegral . realPart
+  fromNodata d = fromNodata d :+ fromNodata d
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType (Complex Int32) where
+  datatype _ = GDT_CInt32
+  toNodata = fromIntegral . realPart
+  fromNodata d = fromNodata d :+ fromNodata d
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType (Complex Float) where
+  datatype _ = GDT_CFloat32
+  toNodata = realToFrac . realPart
+  fromNodata d = fromNodata d :+ fromNodata d
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
+
+instance GDALType (Complex Double) where
+  datatype _ = GDT_CFloat64
+  toNodata = realToFrac . realPart
+  fromNodata d = fromNodata d :+ fromNodata d
+  {-# INLINE datatype #-}
+  {-# INLINE toNodata #-}
+  {-# INLINE fromNodata #-}
