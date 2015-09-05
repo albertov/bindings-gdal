@@ -70,7 +70,6 @@ module OSGeo.GDAL.Internal (
   , bandNodataValue
   , setBandNodataValue
   , getBand
-  , getMaskBand
   , readBand
   , unsafeLazyReadBand
   , readBandBlock
@@ -93,6 +92,7 @@ import Control.Monad.Trans.Resource (ResourceT, runResourceT, register)
 import Control.Monad.IO.Class (MonadIO(..))
 
 import Data.Int (Int16, Int32)
+import Data.Bits ((.&.))
 import Data.Complex (Complex(..), realPart)
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy(..))
@@ -116,6 +116,7 @@ import Data.Char (toUpper)
 
 import OSGeo.Util
 
+
 #include "gdal.h"
 #include "cpl_string.h"
 #include "cpl_error.h"
@@ -137,7 +138,7 @@ class (Storable a) => GDALType a where
 
 {# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
 
-data Value a = Value {-# UNPACK #-} !a  | NoData deriving (Eq, Show)
+data Value a = Value !a  | NoData deriving (Eq, Show)
 
 unValue :: Value a -> a
 unValue (Value a) = a
@@ -650,52 +651,71 @@ readBandIO :: forall s t a. GDALType a
   -> Int -> Int
   -> Int -> Int
   -> IO (Vector (Value a))
-readBandIO band xoff yoff sx sy bx by = do
-  toValue <- getToValue band
-  fp <- mallocForeignPtrArray (bx * by)
-  let dtype = fromEnumC (datatype (Proxy :: Proxy a))
-  withForeignPtr fp $ \ptr -> do
-    throwIfError "could not advise read" $
-      adviseRead_
-        band
-        (fromIntegral xoff)
-        (fromIntegral yoff)
-        (fromIntegral sx)
-        (fromIntegral sy)
-        (fromIntegral bx)
-        (fromIntegral by)
-        dtype
-        (castPtr nullPtr)
-    throwIfError "could not read band" $
-      rasterIO_
-        band
-        (fromEnumC GF_Read) 
-        (fromIntegral xoff)
-        (fromIntegral yoff)
-        (fromIntegral sx)
-        (fromIntegral sy)
-        (castPtr ptr)
-        (fromIntegral bx)
-        (fromIntegral by)
-        dtype
-        0
-        0
-  return $ St.map toValue $ St.unsafeFromForeignPtr0 fp (bx * by)
+readBandIO band xoff yoff sx sy bx by =
+  readMasked band $ \(b :: Band s t a') -> do
+    fp <- mallocForeignPtrArray (bx * by)
+    let dtype = fromEnumC (datatype (Proxy :: Proxy a'))
+    withForeignPtr fp $ \ptr -> do
+      throwIfError "could not advise read" $
+        adviseRead_
+          b
+          (fromIntegral xoff)
+          (fromIntegral yoff)
+          (fromIntegral sx)
+          (fromIntegral sy)
+          (fromIntegral bx)
+          (fromIntegral by)
+          dtype
+          (castPtr nullPtr)
+      throwIfError "could not read band" $
+        rasterIO_
+          b
+          (fromEnumC GF_Read) 
+          (fromIntegral xoff)
+          (fromIntegral yoff)
+          (fromIntegral sx)
+          (fromIntegral sy)
+          (castPtr ptr)
+          (fromIntegral bx)
+          (fromIntegral by)
+          dtype
+          0
+          0
+    return $ St.unsafeFromForeignPtr0 fp (bx * by)
 {-# INLINE readBandIO #-}
 
-getToValue band = do
-  mNodata <- c_bandNodataValue band
-  return $ case mNodata of
-                  Nothing -> Value
-                  Just nd -> \v -> if toNodata v == nd then NoData else Value v
-{-# INLINE getToValue #-}
-
+readMasked
+  :: GDALType a
+  => Band s t a
+  -> (forall a'. GDALType a' => Band s t a' -> IO (Vector a'))
+  -> IO (Vector (Value a))
+readMasked band reader
+  | hasFlag MaskPerDataset = useMaskBand
+  | hasFlag MaskNoData     = useNoData
+  | hasFlag MaskAllValid   = useAsIs
+  | otherwise              = useMaskBand
+  where
+    hasFlag f = fromEnumC f .&. c_getMaskFlags band == fromEnumC f
+    useAsIs = fmap (St.map Value) (reader band)
+    useNoData = do
+      mNodata <- c_bandNodataValue band
+      let toValue = case mNodata of
+                      Nothing -> Value
+                      Just nd ->
+                        \v -> if toNodata v == nd then NoData else Value v
+      fmap (St.map toValue) (reader band)
+    useMaskBand = do
+      vs <- reader band
+      mask <- c_getMaskBand band
+      ms <- reader mask
+      return $ St.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
+{-# INLINE readMasked #-}
 
 foreign import ccall safe "gdal.h GDALRasterAdviseRead" adviseRead_
     :: (Band s a t) -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt
     -> Ptr (Ptr CChar) -> IO CInt
 
-        
+
 writeBand :: forall s a. GDALType a
   => (RWBand s a)
   -> Int -> Int
@@ -726,6 +746,7 @@ writeBand band xoff yoff sx sy bx by uvec = do
             (fromEnumC (datatype (Proxy :: Proxy a)))
             0
             0
+{-# INLINE writeBand #-}
 
 foreign import ccall safe "gdal.h GDALRasterIO" rasterIO_
   :: (Band s a t) -> CInt -> CInt -> CInt -> CInt -> CInt -> Ptr () -> CInt -> CInt
@@ -736,13 +757,12 @@ readBandBlock
   => Band s t a -> Int -> Int -> GDAL s (Vector (Value a))
 readBandBlock band x y = do
   len <- bandBlockLen band
-  liftIO $ do
-    toValue <- getToValue band
+  liftIO $ readMasked band $ \b -> do
     f <- mallocForeignPtrArray len
     withForeignPtr f $ \ptr ->
       throwIfError "could not read block" $
-        readBlock_ band (fromIntegral x) (fromIntegral y) (castPtr ptr)
-    return $ St.map toValue $ St.unsafeFromForeignPtr0 f len
+        readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
+    return $ St.unsafeFromForeignPtr0 f len
 {-# INLINE readBandBlock #-}
 
 foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
@@ -763,6 +783,7 @@ writeBandBlock b x y uvec = do
            throwIfError "could not write block" $
               writeBlock_ b (fromIntegral x) (fromIntegral y)
                             (castPtr ptr)
+{-# INLINE writeBandBlock #-}
 
 foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
    :: (RWBand s a) -> CInt -> CInt -> Ptr () -> IO CInt
@@ -770,8 +791,19 @@ foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
 foreign import ccall safe "gdal.h GDALGetMaskBand" c_getMaskBand
    :: (Band s t a) -> IO (Band s t Word8)
 
-getMaskBand :: Band s t a -> GDAL s (Band s t Word8)
-getMaskBand = liftIO . c_getMaskBand
+#c
+enum MaskFlag {
+     MaskAllValid = GMF_ALL_VALID,
+     MaskPerDataset = GMF_PER_DATASET,
+     MaskAlpha = GMF_ALPHA,
+     MaskNoData = GMF_NODATA
+};
+#endc
+
+{# enum MaskFlag  {} deriving (Eq, Bounded, Show) #}
+
+foreign import ccall unsafe "gdal.h GDALGetMaskFlags" c_getMaskFlags
+   :: (Band s t a) -> CInt
 
 
 instance GDALType Word8 where
