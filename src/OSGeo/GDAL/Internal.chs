@@ -4,6 +4,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
@@ -66,7 +67,10 @@ module OSGeo.GDAL.Internal (
   , getBand
   , readBand
   , unsafeLazyReadBand
+  , unsafeLazyReadBandBlock
   , readBandBlock
+  , unsafeLazyReadBandBlockRef
+  , readBandBlockRef
   , writeBand
   , writeBandBlock
   , fillBand
@@ -81,7 +85,7 @@ import Control.Applicative (liftA2, (<$>), (<*>))
 import Control.Exception ( bracket, throw, Exception(..), SomeException
                          , evaluate)
 import Control.DeepSeq (NFData, force)
-import Control.Monad (liftM, foldM)
+import Control.Monad (foldM)
 import Control.Monad.Trans.Resource (ResourceT, runResourceT, register)
 import Control.Monad.IO.Class (MonadIO(..))
 
@@ -98,7 +102,8 @@ import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr, plusPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrArray)
+import Foreign.ForeignPtr ( withForeignPtr, mallocForeignPtrArray
+                          , newForeignPtrEnv)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray)
 import Foreign.Marshal.Utils (toBool, fromBool)
@@ -232,7 +237,7 @@ setErrorHandler h = c_setErrorHandler h >>= (\_->return ())
 
 throwIfError :: String -> IO CInt -> IO ()
 throwIfError msg act = do
-    e <- liftM toEnumC act
+    e <- fmap toEnumC act
     case e of
       CE_None -> return ()
       e'      -> throw $ Unknown e' msg
@@ -467,12 +472,12 @@ datasetGeotransform :: Dataset s t a -> GDAL s Geotransform
 datasetGeotransform d = unsafeWithDatasetIO d $ \dPtr ->
   allocaArray 6 $ \a -> do
     throwIfError "could not get geotransform" $ getGeoTransform dPtr a
-    Geotransform <$> liftM realToFrac (peekElemOff a 0)
-                 <*> liftM realToFrac (peekElemOff a 1)
-                 <*> liftM realToFrac (peekElemOff a 2)
-                 <*> liftM realToFrac (peekElemOff a 3)
-                 <*> liftM realToFrac (peekElemOff a 4)
-                 <*> liftM realToFrac (peekElemOff a 5)
+    Geotransform <$> fmap realToFrac (peekElemOff a 0)
+                 <*> fmap realToFrac (peekElemOff a 1)
+                 <*> fmap realToFrac (peekElemOff a 2)
+                 <*> fmap realToFrac (peekElemOff a 3)
+                 <*> fmap realToFrac (peekElemOff a 4)
+                 <*> fmap realToFrac (peekElemOff a 5)
 
 foreign import ccall unsafe "gdal.h GDALGetGeoTransform" getGeoTransform
   :: Ptr (Dataset s t a) -> Ptr CDouble -> IO CInt
@@ -520,7 +525,7 @@ foreign import ccall unsafe "gdal.h GDALGetRasterDataType" getDatatype_
 bandBlockSize :: (Band s t a) -> GDAL s (Int,Int)
 bandBlockSize band = liftIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    getBlockSize_ band xPtr yPtr
-   liftA2 (,) (liftM fromIntegral $ peek xPtr) (liftM fromIntegral $ peek yPtr)
+   liftA2 (,) (fmap fromIntegral $ peek xPtr) (fmap fromIntegral $ peek yPtr)
 
 foreign import ccall unsafe "gdal.h GDALGetBlockSize" getBlockSize_
     :: (Band s a t) -> Ptr CInt -> Ptr CInt -> IO ()
@@ -551,14 +556,14 @@ foreign import ccall unsafe "gdal.h GDALGetRasterBandYSize" getBandYSize_
 
 bandNodataValue :: GDALType a => (Band s t a) -> GDAL s (Maybe a)
 bandNodataValue b = liftIO $ alloca $ \p -> do
-   value <- liftM fromNodata $ getNodata_ b p
-   hasNodata <- liftM toBool $ peek p
+   value <- fmap fromNodata $ getNodata_ b p
+   hasNodata <- fmap toBool $ peek p
    return (if hasNodata then Just value else Nothing)
 
 c_bandNodataValue :: (Band s t a) -> IO (Maybe CDouble)
 c_bandNodataValue b = alloca $ \p -> do
    value <- getNodata_ b p
-   hasNodata <- liftM toBool $ peek p
+   hasNodata <- fmap toBool $ peek p
    return (if hasNodata then Just value else Nothing)
 {-# INLINE c_bandNodataValue #-}
    
@@ -718,13 +723,29 @@ readBandBlock
 readBandBlock band x y = do
   checkType band
   len <- bandBlockLen band
-  liftIO $ readMasked band $ \b -> do
+  liftIO $ readBandBlockIO band len x y
+{-# INLINE readBandBlock #-}
+
+unsafeLazyReadBandBlock
+  :: forall s a. GDALType a
+  => ROBand s a -> Int -> Int -> GDAL s (Vector (Value a))
+unsafeLazyReadBandBlock band x y = do
+  len <- bandBlockLen band
+  liftIO $ unsafeInterleaveIO $ readBandBlockIO band len x y
+{-# INLINE unsafeLazyReadBandBlock #-}
+
+
+readBandBlockIO
+  :: forall s t a. GDALType a
+  => Band s t a -> Int -> Int -> Int -> IO (Vector (Value a))
+readBandBlockIO band len x y = do
+  readMasked band $ \b -> do
     f <- mallocForeignPtrArray len
     withForeignPtr f $ \ptr ->
       throwIfError "could not read block" $
         readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
     return $ St.unsafeFromForeignPtr0 f len
-{-# INLINE readBandBlock #-}
+{-# INLINE readBandBlockIO #-}
 
 foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
     :: (Band s a t) -> CInt -> CInt -> Ptr () -> IO CInt
@@ -752,6 +773,49 @@ foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
 
 foreign import ccall safe "gdal.h GDALGetMaskBand" c_getMaskBand
    :: (Band s t a) -> IO (Band s t Word8)
+
+
+readBandBlockRef
+  :: forall s a. GDALType a
+  => ROBand s a -> Int -> Int -> GDAL s (Vector (Value a))
+readBandBlockRef band x y = do
+  checkType band
+  len <- bandBlockLen band
+  liftIO $ readBandBlockRefIO band len x y
+{-# INLINE readBandBlockRef #-}
+
+unsafeLazyReadBandBlockRef
+  :: forall s a. GDALType a
+  => ROBand s a -> Int -> Int -> GDAL s (Vector (Value a))
+unsafeLazyReadBandBlockRef band x y = do
+  len <- bandBlockLen band
+  liftIO $ unsafeInterleaveIO $ readBandBlockRefIO band len x y
+{-# INLINE unsafeLazyReadBandBlockRef #-}
+
+
+readBandBlockRefIO
+  :: forall s a. GDALType a 
+  => ROBand s a -> Int -> Int -> Int -> IO (Vector (Value a))
+readBandBlockRefIO band len x y = readMasked band read_
+  where
+    read_ :: forall b' a'. GDALType a' => ROBand s b' -> IO (Vector a')
+    read_ band = do
+      block <- bandGetLockedBlock band (fromIntegral x) (fromIntegral y)
+      dataPtr <- blockDataRef block
+      fp <- newForeignPtrEnv blockDropLock block dataPtr
+      return $ St.unsafeFromForeignPtr0 fp len
+{-# INLINE readBandBlockRefIO #-}
+
+data Block
+
+foreign import ccall unsafe "cbits.h &GDALRasterBlockDropLock" blockDropLock
+   :: FunPtr (Ptr Block -> Ptr a -> IO ())
+
+foreign import ccall safe "cbits.h GDALRasterBandGetLockedBlock" bandGetLockedBlock
+   :: ROBand s a -> CInt -> CInt -> IO (Ptr Block)
+
+foreign import ccall unsafe "cbits.h GDALRasterBlockDataRef" blockDataRef
+   :: Ptr Block -> IO (Ptr a)
 
 #c
 enum MaskFlag {

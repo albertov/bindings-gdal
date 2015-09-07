@@ -36,6 +36,9 @@ library
                    , transformers
                    , deepseq
   ghc-options:       -funbox-strict-fields -Wall
+  c-sources:       cbits.cpp
+  include-dirs:    .
+
 
 test-suite GDAL
   type:            exitcode-stdio-1.0
