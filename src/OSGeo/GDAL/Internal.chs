@@ -667,8 +667,7 @@ readMasked band reader = reader band >>= mask
                         \v -> if toNodata v == nd then NoData else Value v
       return (St.map toValue vs)
     useMaskBand vs = do
-      mask <- c_getMaskBand band
-      ms <- reader mask :: IO (Vector Word8)
+      ms <- c_getMaskBand band >>= reader :: IO (Vector Word8)
       return $ St.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
 {-# INLINE readMasked #-}
 
