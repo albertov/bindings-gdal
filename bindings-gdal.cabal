@@ -28,8 +28,7 @@ library
                      OSGeo.OSR.Internal
   other-modules:     OSGeo.Util
   build-depends:     base >=4.5 && < 4.9
-                   , vector
-                   , vector-th-unbox
+                   , vector >= 0.11
                    , template-haskell
                    , process
                    , resourcet

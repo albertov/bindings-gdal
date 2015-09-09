@@ -8,7 +8,7 @@ import Data.Complex (Complex(..))
 import Data.Int
 import Data.Word
 import Data.Maybe (fromJust, isJust, isNothing)
-import qualified Data.Vector.Storable as St
+import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Generic as G
 
 import System.IO
@@ -154,44 +154,44 @@ case_can_get_rasterband_datatype = assertNotThrowsGDALException $ runGDAL $ do
 
 case_write_and_read_band_word8 :: IO ()
 case_write_and_read_band_word8 = write_and_read_band vec
-   where vec = St.generate 10000 (Value . fromIntegral) :: St.Vector (Value Word8)
+   where vec = U.generate 10000 (Value . fromIntegral) :: U.Vector (Value Word8)
 
 case_write_and_read_band_word16 :: IO ()
 case_write_and_read_band_word16 = write_and_read_band vec
-   where vec = St.generate 10000 (Value . fromIntegral) :: St.Vector (Value Word16)
+   where vec = U.generate 10000 (Value . fromIntegral) :: U.Vector (Value Word16)
 
 case_write_and_read_band_word32 :: IO ()
 case_write_and_read_band_word32 = write_and_read_band vec
-   where vec = St.generate 10000 (Value . fromIntegral) :: St.Vector (Value Word32)
+   where vec = U.generate 10000 (Value . fromIntegral) :: U.Vector (Value Word32)
 
 case_write_and_read_band_int16 :: IO ()
 case_write_and_read_band_int16 = write_and_read_band vec
-   where vec = St.generate 10000 (Value . fromIntegral) :: St.Vector (Value Int16)
+   where vec = U.generate 10000 (Value . fromIntegral) :: U.Vector (Value Int16)
 
 case_write_and_read_band_int32 :: IO ()
 case_write_and_read_band_int32 = write_and_read_band vec
-   where vec = St.generate 10000 (Value . fromIntegral) :: St.Vector (Value Int32)
+   where vec = U.generate 10000 (Value . fromIntegral) :: U.Vector (Value Int32)
 
 case_write_and_read_band_float :: IO ()
 case_write_and_read_band_float = write_and_read_band vec
-   where vec = St.generate 10000 $ \i -> Value (1.1 * fromIntegral i)
-         vec :: St.Vector (Value Float)
+   where vec = U.generate 10000 $ \i -> Value (1.1 * fromIntegral i)
+         vec :: U.Vector (Value Float)
 
 case_write_and_read_band_double :: IO ()
 case_write_and_read_band_double = write_and_read_band vec
-   where vec = St.generate 10000 $ \i -> Value (1.1 * fromIntegral i)
-         vec :: St.Vector (Value Double)
+   where vec = U.generate 10000 $ \i -> Value (1.1 * fromIntegral i)
+         vec :: U.Vector (Value Double)
 
 case_write_and_read_band_complex_float32 :: IO ()
 case_write_and_read_band_complex_float32 = write_and_read_band vec
-   where vec = St.generate 10000 fun
-         vec :: St.Vector (Value (Complex Float))
+   where vec = U.generate 10000 fun
+         vec :: U.Vector (Value (Complex Float))
          fun i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
 
 case_write_and_read_band_complex_double :: IO ()
 case_write_and_read_band_complex_double = write_and_read_band vec
-   where vec = St.generate 10000 fun
-         vec :: St.Vector (Value (Complex Double))
+   where vec = U.generate 10000 fun
+         vec :: U.Vector (Value (Complex Double))
          fun i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
 
 
@@ -202,23 +202,23 @@ case_can_write_one_type_and_read_another_with_automatic_conversion
       getBand ds 1 >>= \band -> do
           len <- bandBlockLen band
           (x,y) <- bandBlockSize band
-          let vec = St.generate len (Value . fromIntegral)
+          let vec = U.generate len (Value . fromIntegral)
           writeBandBlock band 0 0 vec
           vec2 <- readBand band 0 0 x y x y
-          assertEqualVectors vec (St.map (fmap round) (vec2 :: St.Vector (Value Double)))
+          assertEqualVectors vec (U.map (fmap round) (vec2 :: U.Vector (Value Double)))
 
 case_can_write_and_read_with_automatic_conversion :: IO ()
 case_can_write_and_read_with_automatic_conversion
   = assertNotThrowsGDALException $ runGDAL $ do
       ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s Int16)
-      let vec   = St.generate 10000 (Value . fromIntegral) :: St.Vector (Value Double)
+      let vec   = U.generate 10000 (Value . fromIntegral) :: U.Vector (Value Double)
       getBand ds 1 >>= \band -> do
           writeBand band 0 0 100 100 100 100 vec
           vec2 <- readBand band 0 0 100 100 100 100
           assertEqualVectors vec vec2
 
 write_and_read_band :: forall a . (Eq a , GDALType a)
-  => St.Vector (Value a) -> IO ()
+  => U.Vector (Value a) -> IO ()
 write_and_read_band vec = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s a)
     getBand ds 1 >>= \band -> do
@@ -227,9 +227,9 @@ write_and_read_band vec = assertNotThrowsGDALException $ runGDAL $ do
         assertEqualVectors vec vec2
 
 write_and_read_block :: forall a. (Eq a, GDALType a)
-  => St.Vector (Value a) -> IO ()
+  => U.Vector (Value a) -> IO ()
 write_and_read_block vec = assertNotThrowsGDALException $ runGDAL $ do
-    ds <- createMem (St.length vec) 1 1 []
+    ds <- createMem (U.length vec) 1 1 []
     getBand ds 1 >>= \band -> do
         writeBandBlock band 0 0 vec
         vec2 <- readBandBlock band 0 0
@@ -237,29 +237,29 @@ write_and_read_block vec = assertNotThrowsGDALException $ runGDAL $ do
 
 case_write_and_read_block_double :: IO ()
 case_write_and_read_block_double = write_and_read_block vec
-   where vec = St.generate 100 $ \i -> Value (1.1 * fromIntegral i)
-         vec :: St.Vector (Value Double)
+   where vec = U.generate 100 $ \i -> Value (1.1 * fromIntegral i)
+         vec :: U.Vector (Value Double)
 
 case_write_and_read_block_int16 :: IO ()
 case_write_and_read_block_int16 = write_and_read_block vec
-   where vec = St.generate 100 (Value . fromIntegral)
-         vec :: St.Vector (Value Int16)
+   where vec = U.generate 100 (Value . fromIntegral)
+         vec :: U.Vector (Value Int16)
 
 case_write_and_read_block_cdouble :: IO ()
 case_write_and_read_block_cdouble = write_and_read_block vec
-   where vec = St.generate 100 $
+   where vec = U.generate 100 $
                  \i -> Value (fromIntegral i :+ fromIntegral (i+i))
-         vec :: St.Vector (Value (Complex Double))
+         vec :: U.Vector (Value (Complex Double))
 
 case_write_and_read_block_cint16 :: IO ()
 case_write_and_read_block_cint16 = write_and_read_block vec
-   where vec = St.generate 100 $ \i -> Value (fromIntegral i :+ fromIntegral (i+i))
-         vec :: St.Vector (Value (Complex Int16))
+   where vec = U.generate 100 $ \i -> Value (fromIntegral i :+ fromIntegral (i+i))
+         vec :: U.Vector (Value (Complex Int16))
 
 case_write_and_read_block_cint32 :: IO ()
 case_write_and_read_block_cint32 = write_and_read_block vec
-   where vec = St.generate 100 $ \i -> Value (fromIntegral i :+ fromIntegral (i+i))
-         vec :: St.Vector (Value (Complex Int32))
+   where vec = U.generate 100 $ \i -> Value (fromIntegral i :+ fromIntegral (i+i))
+         vec :: U.Vector (Value (Complex Int32))
 
 case_fill_and_read_band_int16 :: IO ()
 case_fill_and_read_band_int16 = assertNotThrowsGDALException $ runGDAL $ do
@@ -282,7 +282,7 @@ case_readBandBlock_throws_on_bad_type = assertThrowsGDALException $
       flushCache ds
       ds2 <- openReadOnly p
       getBand ds2 1 >>= \band -> do
-        (_ :: St.Vector (Value Word8)) <- readBandBlock band 0 0
+        (_ :: U.Vector (Value Word8)) <- readBandBlock band 0 0
         return ()
 
 case_writeBandBlock_fails_when_writing_bad_type :: IO ()
@@ -294,7 +294,7 @@ case_writeBandBlock_fails_when_writing_bad_type = assertThrowsGDALException $
       ds2 <- openReadWrite p
       getBand ds2 1 >>= \band -> do
          len <- bandBlockLen band
-         let v = St.replicate len (Value 0) :: St.Vector (Value Word8)
+         let v = U.replicate len (Value 0) :: U.Vector (Value Word8)
          writeBandBlock band 0 0 v
 
 --
