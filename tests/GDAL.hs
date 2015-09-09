@@ -59,13 +59,12 @@ case_can_create_and_createCopy_dataset
 case_can_get_band_count :: IO ()
 case_can_get_band_count = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem 10 10 5 [] :: GDAL s (RWDataset s Int16)
-    c <- datasetBandCount ds
-    liftIO $ assertEqual "unexpected number of bands" 5 c
+    liftIO $ assertEqual "unexpected number of bands" 5 (datasetBandCount ds)
 
 case_can_get_existing_raster_band :: IO ()
 case_can_get_existing_raster_band = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int16)
-    _ <- getBand ds 1
+    _ <- getBand 1 ds
     return ()
 
 case_dataset_is_created_with_correct_datatype :: IO ()
@@ -74,29 +73,27 @@ case_dataset_is_created_with_correct_datatype
     let assertType t b = do dt <- bandDatatype b
                             liftIO $ assertEqual "unexpected datatype" t dt
     ds <- createMem 10 10 1 [] :: GDAL s (RWDataset s Word8)
-    getBand ds 1 >>= assertType GDT_Byte
+    getBand 1 ds >>= assertType GDT_Byte
     ds1 <- createMem 10 10 1 [] :: GDAL s (RWDataset s Word16)
-    getBand ds1 1 >>= (assertType GDT_UInt16)
+    getBand 1 ds1 >>= (assertType GDT_UInt16)
     ds2 <- createMem 10 10 1 [] :: GDAL s (RWDataset s Word32)
-    getBand ds2 1 >>= (assertType GDT_UInt32)
+    getBand 1 ds2 >>= (assertType GDT_UInt32)
     ds3 <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int16)
-    getBand ds3 1 >>= (assertType GDT_Int16)
+    getBand 1 ds3 >>= (assertType GDT_Int16)
     ds4 <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int32)
-    getBand ds4 1 >>= (assertType GDT_Int32)
+    getBand 1 ds4 >>= (assertType GDT_Int32)
     ds5 <- createMem 10 10 1 [] :: GDAL s (RWDataset s Float)
-    getBand ds5 1 >>= (assertType GDT_Float32)
+    getBand 1 ds5 >>= (assertType GDT_Float32)
     ds6 <- createMem 10 10 1 [] :: GDAL s (RWDataset s Double)
-    getBand ds6 1 >>= (assertType GDT_Float64)
-    {-
+    getBand 1 ds6 >>= (assertType GDT_Float64)
     ds7 <- createMem 10 10 1 [] :: GDAL s (RWDataset s (Complex Int16))
-    getBand ds7 1 >>= (assertType GDT_CInt16)
+    getBand 1 ds7 >>= (assertType GDT_CInt16)
     ds8 <- createMem 10 10 1 [] :: GDAL s (RWDataset s (Complex Int32))
-    getBand ds8 1 >>= (assertType GDT_CInt32)
-    -}
+    getBand 1 ds8 >>= (assertType GDT_CInt32)
     ds9 <- createMem 10 10 1 [] :: GDAL s (RWDataset s (Complex Float))
-    getBand ds9 1 >>= (assertType GDT_CFloat32)
+    getBand 1 ds9 >>= (assertType GDT_CFloat32)
     ds10 <- createMem 10 10 1 [] :: GDAL s (RWDataset s (Complex Double))
-    getBand ds10 1 >>= (assertType GDT_CFloat64)
+    getBand 1 ds10 >>= (assertType GDT_CFloat64)
 
 case_can_set_and_get_geotransform :: IO ()
 case_can_set_and_get_geotransform = assertNotThrowsGDALException $ runGDAL $ do
@@ -117,7 +114,7 @@ case_can_set_and_get_projection = assertNotThrowsGDALException $ runGDAL $ do
 case_can_set_and_get_nodata_value :: IO ()
 case_can_set_and_get_nodata_value = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int16)
-    getBand ds 1 >>= \b -> do
+    getBand 1 ds >>= \b -> do
         nodata <- bandNodataValue b
         liftIO $ assertBool "has unexpected nodata" (isNothing nodata)
         setBandNodataValue b (-1)
@@ -128,28 +125,26 @@ case_can_set_and_get_nodata_value = assertNotThrowsGDALException $ runGDAL $ do
 case_can_get_bandBlockSize :: IO ()
 case_can_get_bandBlockSize = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int16)
-    b <- getBand ds 1
-    sz <- bandBlockSize b
-    liftIO $ assertEqual "unexpected block size" (10, 1) sz
+    b <- getBand 1 ds
+    liftIO $ assertEqual "unexpected block size" (10, 1) (bandBlockSize b)
 
 case_can_get_bandSize :: IO ()
 case_can_get_bandSize = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int16)
-    b <- getBand ds 1
-    sz <- bandSize b
-    liftIO $ assertEqual "unexpected band size" (10, 10) sz
+    b <- getBand 1 ds
+    liftIO $ assertEqual "unexpected band size" (10, 10) (bandSize b)
 
 case_cannot_get_nonexisting_raster_band :: IO ()
 case_cannot_get_nonexisting_raster_band = assertThrowsGDALException $
   runGDAL $ do
     ds <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int16)
-    _ <- getBand ds 2
+    _ <- getBand 2 ds
     return ()
 
 case_can_get_rasterband_datatype :: IO ()
 case_can_get_rasterband_datatype = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int16)
-    getBand ds 1 >>= \band -> do
+    getBand 1 ds >>= \band -> do
       dt <- bandDatatype band
       liftIO $ assertEqual "datatype mismatch" GDT_Int16 dt
 
@@ -200,10 +195,10 @@ case_can_write_one_type_and_read_another_with_automatic_conversion :: IO ()
 case_can_write_one_type_and_read_another_with_automatic_conversion
   = assertNotThrowsGDALException $ runGDAL $ do
       ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s Int16)
-      getBand ds 1 >>= \band -> do
-          len <- bandBlockLen band
-          (x,y) <- bandBlockSize band
-          let vec = U.generate len (Value . fromIntegral)
+      getBand 1 ds >>= \band -> do
+          let len   = bandBlockLen band
+              (x,y) = bandBlockSize band
+              vec   = U.generate len (Value . fromIntegral)
           writeBandBlock band 0 0 vec
           vec2 <- readBand band 0 0 x y x y
           assertEqualVectors vec (U.map (fmap round) (vec2 :: U.Vector (Value Double)))
@@ -213,7 +208,7 @@ case_can_write_and_read_with_automatic_conversion
   = assertNotThrowsGDALException $ runGDAL $ do
       ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s Int16)
       let vec   = U.generate 10000 (Value . fromIntegral) :: U.Vector (Value Double)
-      getBand ds 1 >>= \band -> do
+      getBand 1 ds >>= \band -> do
           writeBand band 0 0 100 100 100 100 vec
           vec2 <- readBand band 0 0 100 100 100 100
           assertEqualVectors vec vec2
@@ -222,7 +217,7 @@ write_and_read_band :: forall a . (Eq a , GDALType a)
   => U.Vector (Value a) -> IO ()
 write_and_read_band vec = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s a)
-    getBand ds 1 >>= \band -> do
+    getBand 1 ds >>= \band -> do
         writeBand band 0 0 100 100 100 100 vec
         vec2 <- readBand band 0 0 100 100 100 100
         assertEqualVectors vec vec2
@@ -231,7 +226,7 @@ write_and_read_block :: forall a. (Eq a, GDALType a)
   => U.Vector (Value a) -> IO ()
 write_and_read_block vec = assertNotThrowsGDALException $ runGDAL $ do
     ds <- createMem (U.length vec) 1 1 []
-    getBand ds 1 >>= \band -> do
+    getBand 1 ds >>= \band -> do
         writeBandBlock band 0 0 vec
         vec2 <- readBandBlock band 0 0
         assertEqualVectors vec vec2
@@ -266,7 +261,7 @@ case_fill_and_read_band_int16 :: IO ()
 case_fill_and_read_band_int16 = assertNotThrowsGDALException $ runGDAL $ do
     forM_ ([-10..10] :: [Int16]) $ \value -> do
         ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s Int16)
-        getBand ds 1 >>= \band -> do
+        getBand 1 ds >>= \band -> do
             fillBand band (fromIntegral value) 0
             v <- readBand band 0 0 100 100 100 100
             liftIO $ assertEqual "length mismatch" 10000 (G.length v)
@@ -282,7 +277,7 @@ case_readBandBlock_throws_on_bad_type = assertThrowsGDALException $
       ds <- create GTIFF p 100 100 1 [] :: GDAL s (RWDataset s Int16)
       flushCache ds
       ds2 <- openReadOnly p
-      getBand ds2 1 >>= \band -> do
+      getBand 1 ds2 >>= \band -> do
         (_ :: U.Vector (Value Word8)) <- readBandBlock band 0 0
         return ()
 
@@ -293,10 +288,10 @@ case_writeBandBlock_fails_when_writing_bad_type = assertThrowsGDALException $
       ds <- create GTIFF p 100 100 1 [] :: GDAL s (RWDataset s Int16)
       flushCache ds
       ds2 <- openReadWrite p
-      getBand ds2 1 >>= \band -> do
-         len <- bandBlockLen band
-         let v = U.replicate len (Value 0) :: U.Vector (Value Word8)
-         writeBandBlock band 0 0 v
+      getBand 1 ds2 >>= \band ->
+         let v   = U.replicate len (Value 0) :: U.Vector (Value Word8)
+             len = bandBlockLen band
+         in writeBandBlock band 0 0 v
 
 check_foldl :: DriverOptions -> IO ()
 check_foldl options = assertNotThrowsGDALException $
@@ -307,7 +302,7 @@ check_foldl options = assertNotThrowsGDALException $
       ds <- create GTIFF p nx ny 1 options :: GDAL s (RWDataset s Double)
       let vec = U.generate (nx*ny) $ Value . fromIntegral
           vec :: U.Vector (Value Double)
-      band <- getBand ds 1
+      band <- getBand 1 ds
       writeBand band 0 0 nx ny nx ny vec
       flushCache ds
       value <- GDAL.foldl' (liftA2 (+)) (Value 0) band
