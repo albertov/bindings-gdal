@@ -72,8 +72,11 @@ module OSGeo.GDAL.Internal (
   , writeBand
   , writeBandBlock
   , fillBand
+
   , foldl'
   , foldlM'
+  , ifoldl'
+  , ifoldlM'
 
   -- Internal Util
   , throwIfError
@@ -674,10 +677,22 @@ foldl'
 foldl' f = foldlM' (\acc -> return . f acc)
 {-# INLINE foldl' #-}
 
+ifoldl'
+  :: forall s t a b. GDALType a
+  => (b -> Int -> Int -> Value a -> b) -> b -> Band s t a -> GDAL s b
+ifoldl' f = ifoldlM' (\acc x y -> return . f acc x y)
+{-# INLINE ifoldl' #-}
+
 foldlM'
   :: forall s t a b. GDALType a
-  => (b -> Value a -> IO b) -> b -> Band s t a  -> GDAL s b
-foldlM' f initialAcc b = liftIO $ do
+  => (b -> Value a -> IO b) -> b -> Band s t a -> GDAL s b
+foldlM' f = ifoldlM' (\acc _ _ -> f acc)
+{-# INLINE foldlM' #-}
+
+ifoldlM'
+  :: forall s t a b. GDALType a
+  => (b -> Int -> Int -> Value a -> IO b) -> b -> Band s t a  -> GDAL s b
+ifoldlM' f initialAcc b = liftIO $ do
   mNodata <- c_bandNodataValue b
   fp <- mallocForeignPtrArray (sx*sy)
   withForeignPtr fp $ \ptr -> do
@@ -685,7 +700,6 @@ foldlM' f initialAcc b = liftIO $ do
                     Nothing -> Value
                     Just nd ->
                       \v -> if toNodata v == nd then NoData else Value v
-        applyTo i j acc = f acc . toValue =<< peekElemOff ptr (j*sx+i)
         goB !iB !jB !acc
           | iB < nx   = do
               throwIfError "could not read block" $
@@ -694,6 +708,9 @@ foldlM' f initialAcc b = liftIO $ do
           | jB+1 < ny = goB 0 (jB+1) acc
           | otherwise = return acc
           where
+            applyTo i j acc = f acc x y . toValue =<< peekElemOff ptr (j*sx+i)
+              where x = iB*sx+i
+                    y = jB*sy+j
             stopx
               | mx /= 0 && iB==nx-1 = mx
               | otherwise           = sx
@@ -711,7 +728,7 @@ foldlM' f initialAcc b = liftIO $ do
     (nx,ny) = bandBlockCount b
     (sx,sy) = bandBlockSize b
     (bx,by) = bandSize b
-{-# INLINE foldlM' #-}
+{-# INLINE ifoldlM' #-}
 
 writeBandBlock
   :: forall s a. GDALType a
