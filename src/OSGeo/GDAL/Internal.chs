@@ -70,6 +70,8 @@ module OSGeo.GDAL.Internal (
   , writeBand
   , writeBandBlock
   , fillBand
+  , foldl'
+  , foldlM'
 
   -- Internal Util
   , throwIfError
@@ -726,7 +728,56 @@ readBandBlock band x y = do
 {-# INLINE readBandBlock #-}
 
 foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
-    :: (Band s a t) -> CInt -> CInt -> Ptr () -> IO CInt
+    :: (Band s t a) -> CInt -> CInt -> Ptr a -> IO CInt
+
+foldl'
+  :: forall s a b. GDALType a
+  => ROBand s a  -> (b -> Value a -> b) -> b -> GDAL s b
+foldl' b f = foldlM' b (\acc -> return . f acc)
+{-# INLINE foldl' #-}
+
+foldlM'
+  :: forall s a b. GDALType a
+  => ROBand s a  -> (b -> Value a -> IO b) -> b -> GDAL s b
+foldlM' b f initialAcc = do
+  (nx,ny) <- bandBlockCount b
+  (sx,sy) <- bandBlockSize b
+  (bx,by) <- bandSize b
+  liftIO $ do
+    mNodata <- c_bandNodataValue b
+    fp <- mallocForeignPtrArray (sx*sy)
+    withForeignPtr fp $ \ptr -> do
+      let toValue = case mNodata of
+                      Nothing -> Value
+                      Just nd ->
+                        \v -> if toNodata v == nd then NoData else Value v
+          applyTo i j acc = f acc . toValue =<< peekElemOff ptr (j*sx+i)
+          go1 !ox !oy !i !j !acc
+            | x == bx   = if j+1 < sy
+                            then go1 ox oy 0 (j+1) acc
+                            else return acc
+            | y == by   = return acc
+            | i<sx      = applyTo i j acc >>= go1 ox oy (i+1) j
+            | j+1<sy    = go1 ox oy 0 (j+1) acc
+            | otherwise = return acc
+            where x = ox+i 
+                  y = oy+j
+          go !i !j !acc
+            | i<sx      = applyTo i j acc >>= go (i+1) j
+            | j+1<sy    = go 0 (j+1) acc
+            | otherwise = return acc
+          goB !iB !jB !acc
+            | iB<nx     = do
+                throwIfError "could not read block" $
+                  readBlock_ b (fromIntegral iB) (fromIntegral jB) ptr
+                acc' <- if (sx/=bx && iB==nx-1) || (sy/=by && jB==ny-1)
+                          then go1 (iB*sx) (jB*sy) 0 0 acc
+                          else go 0 0 acc
+                goB (iB+1) jB acc'
+            | jB+1<ny   = goB 0 (jB+1) acc
+            | otherwise = return acc
+      goB 0 0 initialAcc
+{-# INLINE foldlM' #-}
 
 writeBandBlock
   :: forall s a. GDALType a
@@ -742,12 +793,11 @@ writeBandBlock b x y uvec = do
       then throw InvalidBlockSize
       else withForeignPtr fp $ \ptr ->
            throwIfError "could not write block" $
-              writeBlock_ b (fromIntegral x) (fromIntegral y)
-                            (castPtr ptr)
+              writeBlock_ b (fromIntegral x) (fromIntegral y) ptr
 {-# INLINE writeBandBlock #-}
 
 foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
-   :: (RWBand s a) -> CInt -> CInt -> Ptr () -> IO CInt
+   :: (RWBand s a) -> CInt -> CInt -> Ptr a -> IO CInt
 
 foreign import ccall safe "gdal.h GDALGetMaskBand" c_getMaskBand
    :: (Band s t a) -> IO (Band s t Word8)
