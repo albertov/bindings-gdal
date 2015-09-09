@@ -683,18 +683,20 @@ foreign import ccall safe "gdal.h GDALReadBlock" readBlock_
     :: (Band s t a) -> CInt -> CInt -> Ptr a -> IO CInt
 
 foldl'
-  :: forall s a b. GDALType a
-  => ROBand s a  -> (b -> Value a -> b) -> b -> GDAL s b
-foldl' b f = foldlM' b (\acc -> return . f acc)
+  :: forall s t a b. GDALType a
+  => (b -> Value a -> b) -> b -> Band s t a -> GDAL s b
+foldl' f = foldlM' (\acc -> return . f acc)
 {-# INLINE foldl' #-}
 
 foldlM'
-  :: forall s a b. GDALType a
-  => ROBand s a  -> (b -> Value a -> IO b) -> b -> GDAL s b
-foldlM' b f initialAcc = do
+  :: forall s t a b. GDALType a
+  => (b -> Value a -> IO b) -> b -> Band s t a  -> GDAL s b
+foldlM' f initialAcc b = do
   (nx,ny) <- bandBlockCount b
   (sx,sy) <- bandBlockSize b
   (bx,by) <- bandSize b
+  let mx = bx `mod` sx
+      my = by `mod` sy
   liftIO $ do
     mNodata <- c_bandNodataValue b
     fp <- mallocForeignPtrArray (sx*sy)
@@ -704,30 +706,24 @@ foldlM' b f initialAcc = do
                       Just nd ->
                         \v -> if toNodata v == nd then NoData else Value v
           applyTo i j acc = f acc . toValue =<< peekElemOff ptr (j*sx+i)
-          go1 !ox !oy !i !j !acc
-            | x == bx   = if j+1 < sy
-                            then go1 ox oy 0 (j+1) acc
-                            else return acc
-            | y == by   = return acc
-            | i<sx      = applyTo i j acc >>= go1 ox oy (i+1) j
-            | j+1<sy    = go1 ox oy 0 (j+1) acc
-            | otherwise = return acc
-            where x = ox+i 
-                  y = oy+j
-          go !i !j !acc
-            | i<sx      = applyTo i j acc >>= go (i+1) j
-            | j+1<sy    = go 0 (j+1) acc
-            | otherwise = return acc
           goB !iB !jB !acc
-            | iB<nx     = do
+            | iB < nx   = do
                 throwIfError "could not read block" $
                   readBlock_ b (fromIntegral iB) (fromIntegral jB) ptr
-                acc' <- if (sx/=bx && iB==nx-1) || (sy/=by && jB==ny-1)
-                          then go1 (iB*sx) (jB*sy) 0 0 acc
-                          else go 0 0 acc
-                goB (iB+1) jB acc'
-            | jB+1<ny   = goB 0 (jB+1) acc
+                go 0 0 acc >>= goB (iB+1) jB
+            | jB+1 < ny = goB 0 (jB+1) acc
             | otherwise = return acc
+            where
+              stopx
+                | mx /= 0 && iB==nx-1 = mx
+                | otherwise           = sx
+              stopy
+                | my /= 0 && jB==ny-1 = my
+                | otherwise           = sy
+              go !i !j !acc'
+                | i   < stopx = applyTo i j acc' >>= go (i+1) j
+                | j+1 < stopy = go 0 (j+1) acc'
+                | otherwise   = return acc'
       goB 0 0 initialAcc
 {-# INLINE foldlM' #-}
 

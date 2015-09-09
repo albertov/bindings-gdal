@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell, ScopedTypeVariables, FlexibleContexts #-}
 
+import Control.Applicative (liftA2)
 import Control.Monad (forM_, guard)
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (SomeException, tryJust, try)
@@ -19,7 +20,7 @@ import Test.Framework.TH
 import Test.Framework.Providers.HUnit
 import Test.HUnit
 
-import OSGeo.GDAL.Internal
+import OSGeo.GDAL.Internal as GDAL
 
 main :: IO ()
 main = setQuietErrorHandler >> registerAllDrivers >> $(defaultMainGenerator)
@@ -297,6 +298,27 @@ case_writeBandBlock_fails_when_writing_bad_type = assertThrowsGDALException $
          let v = U.replicate len (Value 0) :: U.Vector (Value Word8)
          writeBandBlock band 0 0 v
 
+check_foldl :: DriverOptions -> IO ()
+check_foldl options = assertNotThrowsGDALException $
+    withSystemTempDirectory "test." $ \tmpDir -> runGDAL $ do
+      let p = joinPath [tmpDir, "test.tif"]
+          nx = 300
+          ny = 305
+      ds <- create GTIFF p nx ny 1 options :: GDAL s (RWDataset s Double)
+      let vec = U.generate (nx*ny) $ Value . fromIntegral
+          vec :: U.Vector (Value Double)
+      band <- getBand ds 1
+      writeBand band 0 0 nx ny nx ny vec
+      flushCache ds
+      value <- GDAL.foldl' (liftA2 (+)) (Value 0) band
+      let expected = U.foldl' (liftA2 (+)) (Value 0) vec
+      liftIO $ assertEqual "fold value is not equal " expected value
+
+case_foldl_works_on_tiled_band :: IO ()
+case_foldl_works_on_tiled_band = check_foldl [("TILED", "YES")]
+
+case_foldl_works_on_non_tiled_band :: IO ()
+case_foldl_works_on_non_tiled_band = check_foldl []
 --
 -- Utils
 --
