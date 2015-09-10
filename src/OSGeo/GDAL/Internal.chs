@@ -155,9 +155,7 @@ deriving instance Monad (GDAL s)
 deriving instance MonadIO (GDAL s)
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
-runGDAL (GDAL a) = do
-  registerAllDrivers
-  runResourceT (a >>= liftIO . evaluate . force)
+runGDAL (GDAL a) = runResourceT (a >>= liftIO . evaluate . force)
 
 gdalForkIO :: GDAL s () -> GDAL s ThreadId
 gdalForkIO (GDAL a) = GDAL (resourceForkIO a)
@@ -905,25 +903,26 @@ instance Monad Value  where
     return              = Value
     fail _              = NoData
 
+type FlagType = Word8
+
 instance Storable a => Storable (Value a) where
-  sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: Word8)
+  sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: FlagType)
   alignment _ = alignment (undefined :: a)
-
+  peek p = let pm = castPtr p :: Ptr FlagType
+               pv = pm `plusPtr` sizeOf (undefined :: FlagType)
+           in do t <- peek pm
+                 if t/=0
+                   then fmap Value (peek (castPtr pv))
+                   else return NoData
+  poke p x = let pm = castPtr p :: Ptr FlagType
+                 pv = pm `plusPtr` sizeOf (undefined :: FlagType)
+             in case x of
+                  NoData  -> poke pm 0
+                  Value a -> poke pm 1 >> poke (castPtr pv) a
+  {-# INLINE sizeOf #-}
+  {-# INLINE alignment #-}
   {-# INLINE peek #-}
-  peek p = do
-            let p1 = (castPtr p::Ptr Word8) `plusPtr` 1
-            t <- peek (castPtr p::Ptr Word8)
-            if t/=0
-              then fmap Value (peekElemOff (castPtr p1 :: Ptr a) 0)
-              else return NoData
-
   {-# INLINE poke #-}
-  poke p x = case x of
-    NoData -> poke (castPtr p :: Ptr Word8) 0
-    Value a -> do
-        poke (castPtr p :: Ptr Word8) 1
-        let p1 = (castPtr p :: Ptr Word8) `plusPtr` 1
-        pokeElemOff (castPtr p1) 0 a
 
 isNoData :: Value a -> Bool
 isNoData NoData = True
