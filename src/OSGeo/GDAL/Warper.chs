@@ -11,7 +11,7 @@ import Foreign.C.Types (CDouble(..), CInt(..))
 import Foreign.Ptr (Ptr, nullPtr)
 import OSGeo.OSR (SpatialReference, toWkt)
 import OSGeo.GDAL.Internal ( GDAL, Dataset, RWDataset, GDALType
-                           , unDataset, throwIfError)
+                           , withLockedDatasetPtr, throwIfError)
 import OSGeo.Util (fromEnumC)
 
 #include "gdal.h"
@@ -48,8 +48,11 @@ reprojectImage srcDs srcSr dstDs dstSr alg memLimit maxError
   | maxError < 0 = error "reprojectImage: maxError < 0"
   | otherwise
   = liftIO $ throwIfError "reprojectImage: GDALReprojectImage retuned error" $
-      withMaybeSRAsCString srcSr $ \sSr -> withMaybeSRAsCString dstSr $ \dSr ->
-       c_reprojectImage (unDataset srcDs) sSr (unDataset dstDs) dSr
+      withLockedDatasetPtr srcDs $ \srcDsPtr ->
+      withLockedDatasetPtr dstDs $ \dstDsPtr ->
+      withMaybeSRAsCString srcSr $ \sSr ->
+      withMaybeSRAsCString dstSr $ \dSr ->
+       c_reprojectImage srcDsPtr sSr dstDsPtr dSr
                         (fromEnumC alg) (fromIntegral memLimit)
                         (fromIntegral maxError) nullPtr nullPtr nullPtr
 
