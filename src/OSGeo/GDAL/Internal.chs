@@ -16,6 +16,7 @@
 module OSGeo.GDAL.Internal (
     GDAL
   , runGDAL
+  , gdalForkIO
   , GDALType
   , Datatype (..)
   , GDALException (..)
@@ -87,11 +88,13 @@ module OSGeo.GDAL.Internal (
 ) where
 
 import Control.Applicative ((<$>), (<*>))
+import Control.Concurrent (ThreadId)
 import Control.Exception ( bracket, throw, Exception(..), SomeException
                          , evaluate)
 import Control.DeepSeq (NFData, force)
 import Control.Monad (liftM, liftM2, foldM)
-import Control.Monad.Trans.Resource (ResourceT, runResourceT, register)
+import Control.Monad.Trans.Resource (
+  ResourceT, runResourceT, register, resourceForkIO)
 import Control.Monad.IO.Class (MonadIO(..))
 
 import Data.Int (Int16, Int32)
@@ -156,6 +159,8 @@ runGDAL (GDAL a) = do
   registerAllDrivers
   runResourceT (a >>= liftIO . evaluate . force)
 
+gdalForkIO :: GDAL s () -> GDAL s ThreadId
+gdalForkIO (GDAL a) = GDAL (resourceForkIO a)
 
 data GDALException = GDALException !Error !String
                    | InvalidType
