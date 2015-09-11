@@ -99,7 +99,7 @@ import Control.Exception ( bracket, Exception(..), SomeException
                          , evaluate, throw)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Control.DeepSeq (NFData, force)
-import Control.Monad (liftM, liftM2, foldM, forM, when, replicateM)
+import Control.Monad (liftM, liftM2, foldM, forM, when)
 import Control.Monad.Trans.Resource (
   ResourceT, runResourceT, register, resourceForkIO)
 import Control.Monad.Catch (MonadThrow(..), MonadCatch, MonadMask, finally)
@@ -181,7 +181,7 @@ runGDAL (GDAL a) = do
         []   -> return ()
         m:ms -> do
            putMVar children ms
-           takeMVar m
+           _ <- takeMVar m
            waitForChildren children
 
 gdalForkIO :: GDAL s () -> GDAL s ThreadId
@@ -508,8 +508,8 @@ data Geotransform
     , gtXDelta :: !Double
     , gtXRot   :: !Double
     , gtYOff   :: !Double
-    , gtYDelta :: !Double
     , gtYRot   :: !Double
+    , gtYDelta :: !Double
   } deriving (Eq, Show)
 
 instance Storable Geotransform where
