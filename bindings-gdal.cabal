@@ -32,7 +32,9 @@ library
                    , template-haskell
                    , process
                    , resourcet
+                   , exceptions
                    , transformers
+                   , mtl
                    , deepseq
                    , data-default
   ghc-options:       -funbox-strict-fields -Wall

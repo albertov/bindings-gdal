@@ -54,7 +54,7 @@ instance Default WarpOptions where
   def = unsafePerformIO $ bracket c_createWarpOptions c_destroyWarpOptions peek
 
 instance Storable WarpOptions where
-  alignment _ = alignment (undefined :: CDouble)
+  alignment _ = {#alignof GDALWarpOptions#}
   sizeOf _    = {#sizeof GDALWarpOptions#}
   peek p = do
     nBands <- fmap fromIntegral ({#get GDALWarpOptions.nBandCount #} p)
@@ -69,7 +69,7 @@ instance Storable WarpOptions where
 
   poke p WarpOptions{..} = do
     {#set GDALWarpOptions.eResampleAlg #} p (fromEnumC woResampleAlg)
-    oListPtr <-toOptionListPtr woWarpOptions
+    oListPtr <- toOptionListPtr woWarpOptions
     {#set GDALWarpOptions.papszWarpOptions #} p oListPtr
     {#set GDALWarpOptions.dfWarpMemoryLimit #} p (realToFrac woMemoryLimit)
     {#set GDALWarpOptions.eWorkingDataType #} p (fromEnumC woWorkingDatatype)
@@ -90,7 +90,7 @@ reprojectImage
 reprojectImage srcDs srcSr dstDs dstSr alg maxError options
   | maxError < 0 = error "reprojectImage: maxError < 0"
   | otherwise
-  = liftIO $ throwIfError "reprojectImage: GDALReprojectImage retuned error" $
+  = liftIO $ throwIfError_ "reprojectImage" $
       withLockedDatasetPtr srcDs $ \srcDsPtr ->
       withLockedDatasetPtr dstDs $ \dstDsPtr ->
       withMaybeSRAsCString srcSr $ \sSr ->
@@ -126,18 +126,15 @@ autoCreateWarpedVRT
   -> Int
   -> Maybe WarpOptions
   -> GDAL s (RODataset s a)
-autoCreateWarpedVRT srcDs srcSr dstSr alg maxError options
-  | maxError < 0 = liftIO $ throw $
-                    GDALException CE_Failure "autoCreateWarpedVRT: maxError < 0"
-  | otherwise = do
-    newDsPtr <- liftIO $
-      withLockedDatasetPtr srcDs $ \srcDsPtr ->
-      withMaybeSRAsCString srcSr $ \sSr ->
-      withMaybeSRAsCString dstSr $ \dSr ->
-      withWarpOptionsPtr options $ \opts ->
-        c_autoCreateWarpedVRT srcDsPtr sSr dSr (fromEnumC alg)
-                              (fromIntegral maxError) opts
-    newDerivedDatasetHandle srcDs newDsPtr
+autoCreateWarpedVRT srcDs srcSr dstSr alg maxError options = do
+  newDsPtr <- liftIO $
+    withLockedDatasetPtr srcDs $ \srcDsPtr ->
+    withMaybeSRAsCString srcSr $ \sSr ->
+    withMaybeSRAsCString dstSr $ \dSr ->
+    withWarpOptionsPtr options $ \opts ->
+      c_autoCreateWarpedVRT srcDsPtr sSr dSr (fromEnumC alg)
+                            (fromIntegral maxError) opts
+  newDerivedDatasetHandle srcDs newDsPtr
 
 
 
@@ -173,19 +170,12 @@ createWarpedVRT srcDs nPixels nLines gt options = do
         {#set GDALWarpOptions.hSrcDS #} opts (castPtr dsPtr)
         c_createWarpedVRT dsPtr (fromIntegral nPixels) (fromIntegral nLines)
                           gtPtr opts
-      throwIfError "could not initialize warpedVRT" $ do
-        err <- c_initializeWarpedCRT ptr opts
-        when (toEnumC err /= CE_None) $ do
-          c_dereferenceDataset dsPtr
-          {#set GDALWarpOptions.hSrcDS #} opts nullPtr
-          c_initializeWarpedCRT ptr opts
-          c_closeDataset ptr
-        return err
+      throwIfError_ "initializeWarpedVRT" (c_initializeWarpedVRT ptr opts)
       return ptr
   newDerivedDatasetHandle srcDs newDsPtr
 
-foreign import ccall safe "gdalwarper.h GDALInitializeWarpedVRT" c_initializeWarpedCRT
-  :: Ptr (RODataset s a) -- ^Source dataset
+foreign import ccall safe "gdalwarper.h GDALInitializeWarpedVRT" c_initializeWarpedVRT
+  :: Ptr (RODataset s a)
   -> Ptr WarpOptions
   -> IO CInt
 

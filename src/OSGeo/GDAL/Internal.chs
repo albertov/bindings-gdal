@@ -12,6 +12,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module OSGeo.GDAL.Internal (
     GDAL
@@ -20,7 +21,7 @@ module OSGeo.GDAL.Internal (
   , GDALType
   , Datatype (..)
   , GDALException (..)
-  , ErrorCode (..)
+  , ErrorType (..)
   , isGDALException
   , Geotransform (..)
   , OptionList
@@ -36,11 +37,9 @@ module OSGeo.GDAL.Internal (
   , Value (..)
   , fromValue
   , isNoData
-
-  , setQuietErrorHandler
-
   , registerAllDrivers
   , destroyDriverManager
+  , setQuietErrorHandler
   , create
   , createMem
   , flushCache
@@ -82,6 +81,7 @@ module OSGeo.GDAL.Internal (
 
   -- Internal Util
   , throwIfError
+  , throwIfError_
   , unDataset
   , unBand
   , withLockedDatasetPtr
@@ -90,19 +90,21 @@ module OSGeo.GDAL.Internal (
   , newDerivedDatasetHandle
   , toOptionListPtr
   , fromOptionListPtr
-  , c_closeDataset
-  , c_dereferenceDataset
 ) where
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Concurrent (ThreadId)
-import Control.Exception ( bracket, throw, Exception(..), SomeException
-                         , evaluate)
+import Control.Concurrent (ThreadId, runInBoundThread, rtsSupportsBoundThreads)
+import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar, newEmptyMVar)
+import Control.Exception ( bracket, Exception(..), SomeException
+                         , evaluate, throw)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Control.DeepSeq (NFData, force)
-import Control.Monad (liftM, liftM2, foldM, forM, when)
+import Control.Monad (liftM, liftM2, foldM, forM, when, replicateM)
 import Control.Monad.Trans.Resource (
   ResourceT, runResourceT, register, resourceForkIO)
+import Control.Monad.Catch (MonadThrow(..), MonadCatch, MonadMask, finally)
 import Control.Monad.IO.Class (MonadIO(..))
+import Control.Monad.Reader (ReaderT, runReaderT, ask)
 
 import Data.Int (Int16, Int32)
 import Data.Bits ((.&.))
@@ -128,6 +130,8 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcess)
 import Data.Char (toUpper)
 
+import GHC.Generics (Generic)
+
 import OSGeo.Util
 
 
@@ -150,37 +154,60 @@ class (Storable a) => GDALType a where
   -- | how to convert from double for use with bandNodataValue
   fromNodata :: CDouble -> a
 
-{# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
+{# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq,Generic) #}
 
 
-newtype GDAL s a = GDAL (ResourceT IO a)
+newtype GDAL s a = GDAL (ResourceT (ReaderT (MVar [MVar ()]) IO) a)
 
 deriving instance Functor (GDAL s)
 deriving instance Applicative (GDAL s)
 deriving instance Monad (GDAL s)
 deriving instance MonadIO (GDAL s)
+deriving instance MonadThrow (GDAL s)
+deriving instance MonadCatch (GDAL s)
+deriving instance MonadMask (GDAL s)
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
-runGDAL (GDAL a) = runResourceT (a >>= liftIO . evaluate . force)
+runGDAL (GDAL a) = do
+  children <- newMVar []
+  finally (runReaderT (runResourceT a >>= liftIO . evaluate . force) children)
+          (waitForChildren children)
+
+waitForChildren children = do
+  cs <- takeMVar children
+  case cs of
+    []   -> return ()
+    m:ms -> do
+       putMVar children ms
+       takeMVar m
+       waitForChildren children
 
 gdalForkIO :: GDAL s () -> GDAL s ThreadId
-gdalForkIO (GDAL a) = GDAL (resourceForkIO a)
+gdalForkIO (GDAL a) = GDAL $ do
+  children <- ask
+  mvar <- liftIO $ do
+    childs <- takeMVar children
+    mvar <- newEmptyMVar
+    putMVar children (mvar:childs)
+    return mvar
+  resourceForkIO (finally a (liftIO (putMVar mvar ())))
 
-data GDALException = GDALException !ErrorCode !String
-                   | InvalidType
+
+data GDALException = GDALException !ErrorType !Int !String
+                   | InvalidType !Datatype
                    | InvalidRasterSize !Int !Int
-                   | InvalidBlockSize
-                   | DriverLoadError
-                   | NullDatasetHandle
-                   | InvalidBand !Int
-     deriving (Show, Typeable)
+                   | InvalidBlockSize !Int
+     deriving (Show, Generic, Typeable)
 
+instance NFData ErrorType
+instance NFData Datatype
+instance NFData GDALException
 instance Exception GDALException
 
 isGDALException :: SomeException -> Bool
 isGDALException e = isJust (fromException e :: Maybe GDALException)
 
-{# enum CPLErr as ErrorCode {upcaseFirstLetter} deriving (Eq,Show) #}
+{# enum CPLErr as ErrorType {upcaseFirstLetter} deriving (Eq,Show,Generic) #}
 
 
 type ErrorHandler = CInt -> CInt -> CString -> IO ()
@@ -189,21 +216,40 @@ foreign import ccall "cpl_error.h &CPLQuietErrorHandler"
   c_quietErrorHandler :: FunPtr ErrorHandler
 
 foreign import ccall "cpl_error.h CPLSetErrorHandler"
-  c_setErrorHandler :: FunPtr ErrorHandler -> IO (FunPtr ErrorHandler)
+  setErrorHandler :: FunPtr ErrorHandler -> IO (FunPtr ErrorHandler)
 
-setQuietErrorHandler :: IO ()
+setQuietErrorHandler :: IO (FunPtr ErrorHandler)
 setQuietErrorHandler = setErrorHandler c_quietErrorHandler
 
-setErrorHandler :: FunPtr ErrorHandler -> IO ()
-setErrorHandler h = c_setErrorHandler h >>= (\_->return ())
+foreign import ccall "cpl_error.h CPLPushErrorHandler"
+  c_pushErrorHandler :: FunPtr ErrorHandler -> IO ()
 
+foreign import ccall "cpl_error.h CPLPopErrorHandler"
+  c_popErrorHandler :: IO ()
 
-throwIfError :: String -> IO CInt -> IO ()
-throwIfError msg act = do
-    e <- liftM toEnumC act
-    case e of
-      CE_None -> return ()
-      e'      -> throw $ GDALException e' msg
+foreign import ccall safe "wrapper"
+  mkErrorHandler :: ErrorHandler -> IO (FunPtr ErrorHandler)
+
+throwIfError_ :: String -> IO a -> IO ()
+throwIfError_ prefix act = throwIfError prefix act >> return ()
+
+throwIfError :: String -> IO a -> IO a
+throwIfError prefix act = do
+    ref <- newIORef Nothing
+    handler <- mkErrorHandler $ \err errno cmsg -> do
+      msg <- peekCString cmsg
+      writeIORef ref $ Just $
+        GDALException (toEnumC err) (fromIntegral errno) (prefix ++ ": " ++ msg)
+    ret <- runBounded $ do
+      c_pushErrorHandler handler
+      ret <- act
+      c_popErrorHandler
+      return ret
+    readIORef ref >>= maybe (return ret) throw
+  where
+    runBounded 
+      | rtsSupportsBoundThreads = runInBoundThread
+      | otherwise               = id
 
 instance Show Datatype where
    show = getDatatypeName
@@ -275,11 +321,8 @@ type RWBand s = Band s ReadWrite
     { `String' } -> `DriverH' id #}
 
 driverByName :: Driver -> GDAL s DriverH
-driverByName s = GDAL $ liftIO $ do
-    driver@(DriverH ptr) <- c_driverByName (show s)
-    if ptr==nullPtr
-        then throw DriverLoadError
-        else return driver
+driverByName s = GDAL $ liftIO $
+  throwIfError "driverByName" (c_driverByName (show s))
 
 type OptionList = [(String,String)]
 
@@ -335,16 +378,18 @@ openReadWrite p = openWithMode GA_Update p
 
 openWithMode :: Access -> String -> GDAL s (Dataset s t a)
 openWithMode m p =
-  liftIO (withCString p $ \p' -> open_ p' (fromEnumC m)) >>= newDatasetHandle
+  (liftIO $ withCString p $ \p' -> throwIfError "open" (open_ p' (fromEnumC m)))
+  >>= newDatasetHandle
 
 checkType
   :: forall s t a. GDALType a
   => Band s t a -> GDAL s ()
 checkType b = do
   dt <- bandDatatype b
-  if datatype (Proxy :: Proxy a) == dt
+  let rt = datatype (Proxy :: Proxy a)
+  if rt == dt
     then return ()
-    else liftIO (throw InvalidType)
+    else throwM (InvalidType rt)
 
 foreign import ccall safe "gdal.h GDALOpen" open_
    :: CString -> CInt -> IO (Ptr (Dataset s t a))
@@ -395,27 +440,21 @@ foreign import ccall "wrapper"
 
 
 newDatasetHandle :: Ptr (Dataset s t a) -> GDAL s (Dataset s t a)
-newDatasetHandle p = GDAL $
-    if p==nullPtr
-        then liftIO $ throw NullDatasetHandle
-        else do _ <- register (safeCloseDataset p)
-                m <- liftIO newMutex
-                return $ Dataset (m,p)
+newDatasetHandle p = GDAL $ do
+  _ <- register (safeCloseDataset p)
+  m <- liftIO newMutex
+  return $ Dataset (m,p)
 
 newDerivedDatasetHandle
   :: Dataset s t a -> Ptr (Dataset s t b) -> GDAL s (Dataset s t b)
-newDerivedDatasetHandle (Dataset (m,_)) p = GDAL $
-    if p==nullPtr
-        then liftIO $ throw NullDatasetHandle
-        else do _ <- register (safeCloseDataset p)
-                return $ Dataset (m,p)
+newDerivedDatasetHandle (Dataset (m,_)) p = GDAL $ do
+  _ <- register (safeCloseDataset p)
+  return $ Dataset (m,p)
 
 safeCloseDataset :: Ptr (Dataset s t a) -> IO ()
 safeCloseDataset p = do
   count <- c_dereferenceDataset p
-  when (count < 1) $ do
-    c_referenceDataset p
-    c_closeDataset p
+  when (count < 1) $ (c_referenceDataset p >> c_closeDataset p)
 
 foreign import ccall "gdal.h GDALReferenceDataset"
   c_referenceDataset :: Ptr (Dataset s t a) -> IO CInt
@@ -457,7 +496,7 @@ foreign import ccall unsafe "gdal.h GDALGetProjectionRef" getProjection_
 
 setDatasetProjection :: (RWDataset s a) -> String -> GDAL s ()
 setDatasetProjection d p = liftIO $
-  throwIfError "setDatasetProjection: could not set projection" $
+  throwIfError_ "setDatasetProjection" $
     withLockedDatasetPtr d $ withCString p . setProjection' 
 
 foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
@@ -497,7 +536,7 @@ instance Storable Geotransform where
 
 datasetGeotransform :: Dataset s t a -> GDAL s Geotransform
 datasetGeotransform d = liftIO $ alloca $ \p -> do
-  throwIfError "could not get geotransform" (getGeoTransform (unDataset d) p)
+  throwIfError_ "datasetGeotransform" (getGeoTransform (unDataset d) p)
   peek (castPtr p)
 
 foreign import ccall unsafe "gdal.h GDALGetGeoTransform" getGeoTransform
@@ -505,7 +544,7 @@ foreign import ccall unsafe "gdal.h GDALGetGeoTransform" getGeoTransform
 
 setDatasetGeotransform :: (RWDataset s a) -> Geotransform -> GDAL s ()
 setDatasetGeotransform ds gt = liftIO $
-  throwIfError "could not set geotransform" $
+  throwIfError_ "setDatasetGeotransform" $
     withLockedDatasetPtr ds $ \dsPtr ->
       alloca $ \p -> (poke p gt >> setGeoTransform dsPtr (castPtr p))
 
@@ -521,10 +560,8 @@ foreign import ccall unsafe "gdal.h GDALGetRasterCount" bandCount_
 
 getBand :: Int -> Dataset s t a -> GDAL s (Band s t a)
 getBand band (Dataset (m,dp)) = liftIO $ do
-    p <- c_getRasterBand dp (fromIntegral band)
-    if p == nullPtr
-        then throw (InvalidBand band)
-        else return (Band (m,p))
+  p <- throwIfError "getBand" (c_getRasterBand dp (fromIntegral band))
+  return (Band (m,p))
 
 foreign import ccall unsafe "gdal.h GDALGetRasterBand" c_getRasterBand
   :: Ptr (Dataset s t a) -> CInt -> IO (Ptr (Band s t a))
@@ -583,14 +620,14 @@ foreign import ccall unsafe "gdal.h GDALGetRasterNoDataValue" getNodata_
 
 setBandNodataValue :: GDALType a => (RWBand s a) -> a -> GDAL s ()
 setBandNodataValue b v
-  = liftIO $ throwIfError "could not set nodata" $
+  = liftIO $ throwIfError_ "setBandNodataValue" $
       setNodata_ (unBand b) (toNodata v)
 
 foreign import ccall safe "gdal.h GDALSetRasterNoDataValue" setNodata_
     :: Ptr (RWBand s t) -> CDouble -> IO CInt
 
 fillBand :: (RWBand s a) -> Double -> Double -> GDAL s ()
-fillBand b r i = liftIO $ throwIfError "could not fill band" $
+fillBand b r i = liftIO $ throwIfError_ "fillBand" $
     fillRaster_ (unBand b) (realToFrac r) (realToFrac i)
 
 foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
@@ -630,8 +667,8 @@ readBandIO band xoff yoff sx sy bx by = readMasked band read_
       fp <- mallocForeignPtrArray (bx * by)
       let dtype = fromEnumC (datatype (Proxy :: Proxy a'))
       withForeignPtr fp $ \ptr -> do
-        throwIfError "could not advise read" $
-          adviseRead_
+        throwIfError_ "readBandIO" $ do
+          e <- adviseRead_
             b
             (fromIntegral xoff)
             (fromIntegral yoff)
@@ -641,20 +678,21 @@ readBandIO band xoff yoff sx sy bx by = readMasked band read_
             (fromIntegral by)
             dtype
             (castPtr nullPtr)
-        throwIfError "could not read band" $
-          rasterIO_
-            b
-            (fromEnumC GF_Read) 
-            (fromIntegral xoff)
-            (fromIntegral yoff)
-            (fromIntegral sx)
-            (fromIntegral sy)
-            (castPtr ptr)
-            (fromIntegral bx)
-            (fromIntegral by)
-            dtype
-            0
-            0
+          if (toEnumC e == CE_None)
+            then rasterIO_
+              b
+              (fromEnumC GF_Read) 
+              (fromIntegral xoff)
+              (fromIntegral yoff)
+              (fromIntegral sx)
+              (fromIntegral sy)
+              (castPtr ptr)
+              (fromIntegral bx)
+              (fromIntegral by)
+              dtype
+              0
+              0
+            else return e
       return $ St.unsafeFromForeignPtr0 fp (bx * by)
 {-# INLINE readBandIO #-}
 
@@ -706,7 +744,7 @@ writeBand band xoff yoff sx sy bx by (V_Value uvec) = liftIO $
     if nElems /= len
       then throw $ InvalidRasterSize bx by
       else withForeignPtr fp $ \ptr -> do
-        throwIfError "could not write band" $
+        throwIfError_ "writeBand" $
           rasterIO_
             bPtr
             (fromEnumC GF_Write) 
@@ -734,7 +772,7 @@ readBandBlock band x y = do
   liftIO $ readMasked band $ \b -> do
     f <- mallocForeignPtrArray len
     withForeignPtr f $ \ptr ->
-      throwIfError "could not read block" $
+      throwIfError_ "readBandBlock" $
         readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
     return $ St.unsafeFromForeignPtr0 f len
   where len = bandBlockLen band
@@ -775,7 +813,7 @@ ifoldlM' f initialAcc band = liftIO $ do
         goB !iB !jB !acc
           | iB < nx   = do
               withLockedBandPtr band $ \b ->
-                throwIfError "could not read block" $
+                throwIfError_ "ifoldlM'" $
                   readBlock_ b (fromIntegral iB) (fromIntegral jB) ptr
               go 0 0 acc >>= goB (iB+1) jB
           | jB+1 < ny = goB 0 (jB+1) acc
@@ -814,9 +852,9 @@ writeBandBlock band x y (V_Value uvec) = do
         vec       = St.map (fromValue bNodata) uvec
         nElems    = bandBlockLen band
     if nElems /= len
-      then throw InvalidBlockSize
+      then throw (InvalidBlockSize len)
       else withForeignPtr fp $ \ptr ->
-           throwIfError "could not write block" $
+           throwIfError_ "writeBandBlock" $
               writeBlock_ b (fromIntegral x) (fromIntegral y) ptr
 {-# INLINE writeBandBlock #-}
 
@@ -826,16 +864,11 @@ foreign import ccall safe "gdal.h GDALWriteBlock" writeBlock_
 foreign import ccall safe "gdal.h GDALGetMaskBand" c_getMaskBand
    :: Ptr (Band s t a) -> IO (Ptr (Band s t Word8))
 
-#c
-enum MaskFlag {
-     MaskAllValid = GMF_ALL_VALID,
-     MaskPerDataset = GMF_PER_DATASET,
-     MaskAlpha = GMF_ALPHA,
-     MaskNoData = GMF_NODATA
-};
-#endc
-
-{# enum MaskFlag  {} deriving (Eq, Bounded, Show) #}
+{#enum define MaskFlag { GMF_ALL_VALID   as MaskAllValid
+                       , GMF_PER_DATASET as MaskPerDataset
+                       , GMF_ALPHA       as MaskAlpha
+                       , GMF_NODATA      as MaskNoData
+                       } deriving (Eq,Bounded,Show) #}
 
 foreign import ccall unsafe "gdal.h GDALGetMaskFlags" c_getMaskFlags
    :: Ptr (Band s t a) -> IO CInt
