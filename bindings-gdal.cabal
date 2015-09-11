@@ -54,6 +54,6 @@ test-suite GDAL
                    vector,
                    bindings-gdal,
                    transformers
-  ghc-options:     -Wall -rtsopts
+  ghc-options:     -Wall -rtsopts -threaded -with-rtsopts=-N
   hs-source-dirs:  tests
   main-is:         GDAL.hs

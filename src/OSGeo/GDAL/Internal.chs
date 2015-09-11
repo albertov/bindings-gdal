@@ -170,17 +170,19 @@ deriving instance MonadMask (GDAL s)
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
 runGDAL (GDAL a) = do
   children <- newMVar []
-  finally (runReaderT (runResourceT a >>= liftIO . evaluate . force) children)
-          (waitForChildren children)
+  runReaderT (runResourceT (finally (a >>= liftIO . evaluate . force)
+                                    (liftIO (waitForChildren children))))
+             children
 
-waitForChildren children = do
-  cs <- takeMVar children
-  case cs of
-    []   -> return ()
-    m:ms -> do
-       putMVar children ms
-       takeMVar m
-       waitForChildren children
+  where
+    waitForChildren children = do
+      cs <- takeMVar children
+      case cs of
+        []   -> return ()
+        m:ms -> do
+           putMVar children ms
+           takeMVar m
+           waitForChildren children
 
 gdalForkIO :: GDAL s () -> GDAL s ThreadId
 gdalForkIO (GDAL a) = GDAL $ do
@@ -240,11 +242,8 @@ throwIfError prefix act = do
       msg <- peekCString cmsg
       writeIORef ref $ Just $
         GDALException (toEnumC err) (fromIntegral errno) (prefix ++ ": " ++ msg)
-    ret <- runBounded $ do
-      c_pushErrorHandler handler
-      ret <- act
-      c_popErrorHandler
-      return ret
+    ret <- runBounded $
+      bracket (c_pushErrorHandler handler) (const c_popErrorHandler) (const act)
     readIORef ref >>= maybe (return ret) throw
   where
     runBounded 
@@ -563,7 +562,7 @@ getBand band (Dataset (m,dp)) = liftIO $ do
   p <- throwIfError "getBand" (c_getRasterBand dp (fromIntegral band))
   return (Band (m,p))
 
-foreign import ccall unsafe "gdal.h GDALGetRasterBand" c_getRasterBand
+foreign import ccall safe "gdal.h GDALGetRasterBand" c_getRasterBand
   :: Ptr (Dataset s t a) -> CInt -> IO (Ptr (Band s t a))
 
 
