@@ -34,6 +34,7 @@ library
                    , resourcet
                    , transformers
                    , deepseq
+                   , data-default
   ghc-options:       -funbox-strict-fields -Wall
 
 test-suite GDAL

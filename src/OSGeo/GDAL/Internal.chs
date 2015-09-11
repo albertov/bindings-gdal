@@ -20,9 +20,10 @@ module OSGeo.GDAL.Internal (
   , GDALType
   , Datatype (..)
   , GDALException (..)
+  , ErrorCode (..)
   , isGDALException
   , Geotransform (..)
-  , DriverOptions
+  , OptionList
   , Driver (..)
   , Dataset
   , ReadWrite
@@ -85,6 +86,12 @@ module OSGeo.GDAL.Internal (
   , unBand
   , withLockedDatasetPtr
   , withLockedBandPtr
+  , withOptionList
+  , newDerivedDatasetHandle
+  , toOptionListPtr
+  , fromOptionListPtr
+  , c_closeDataset
+  , c_dereferenceDataset
 ) where
 
 import Control.Applicative ((<$>), (<*>))
@@ -92,7 +99,7 @@ import Control.Concurrent (ThreadId)
 import Control.Exception ( bracket, throw, Exception(..), SomeException
                          , evaluate)
 import Control.DeepSeq (NFData, force)
-import Control.Monad (liftM, liftM2, foldM)
+import Control.Monad (liftM, liftM2, foldM, forM, when)
 import Control.Monad.Trans.Resource (
   ResourceT, runResourceT, register, resourceForkIO)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -115,7 +122,6 @@ import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr, plusPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrArray)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (allocaArray)
 import Foreign.Marshal.Utils (toBool, fromBool)
 
 import System.IO.Unsafe (unsafePerformIO)
@@ -160,7 +166,7 @@ runGDAL (GDAL a) = runResourceT (a >>= liftIO . evaluate . force)
 gdalForkIO :: GDAL s () -> GDAL s ThreadId
 gdalForkIO (GDAL a) = GDAL (resourceForkIO a)
 
-data GDALException = GDALException !Error !String
+data GDALException = GDALException !ErrorCode !String
                    | InvalidType
                    | InvalidRasterSize !Int !Int
                    | InvalidBlockSize
@@ -174,7 +180,7 @@ instance Exception GDALException
 isGDALException :: SomeException -> Bool
 isGDALException e = isJust (fromException e :: Maybe GDALException)
 
-{# enum CPLErr as Error {upcaseFirstLetter} deriving (Eq,Show) #}
+{# enum CPLErr as ErrorCode {upcaseFirstLetter} deriving (Eq,Show) #}
 
 
 type ErrorHandler = CInt -> CInt -> CString -> IO ()
@@ -275,11 +281,11 @@ driverByName s = GDAL $ liftIO $ do
         then throw DriverLoadError
         else return driver
 
-type DriverOptions = [(String,String)]
+type OptionList = [(String,String)]
 
 create
   :: forall s a. GDALType a
-  => Driver -> String -> Int -> Int -> Int -> DriverOptions
+  => Driver -> String -> Int -> Int -> Int -> OptionList
   -> GDAL s (Dataset s ReadWrite a)
 create drv path nx ny bands options = do
   d <- driverByName drv
@@ -292,14 +298,24 @@ create drv path nx ny bands options = do
         c_create d path' nx' ny' bands' dtype' opts
   newDatasetHandle ptr
 
-withOptionList ::
-  [(String, String)] -> (Ptr CString -> IO c) -> IO c
-withOptionList opts = bracket (toOptionList opts) freeOptionList
-  where toOptionList = foldM folder nullPtr
-        folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
-                           {#call unsafe CSLSetNameValue as ^#} acc k' v'
-        freeOptionList = {#call unsafe CSLDestroy as ^#} . castPtr
+withOptionList :: OptionList -> (Ptr CString -> IO c) -> IO c
+withOptionList opts = bracket (toOptionListPtr opts) freeOptionList
+  where freeOptionList = {#call unsafe CSLDestroy as ^#} . castPtr
 
+toOptionListPtr :: OptionList -> IO (Ptr CString)
+toOptionListPtr = foldM folder nullPtr
+  where
+    folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
+                       {#call unsafe CSLSetNameValue as ^#} acc k' v'
+
+fromOptionListPtr :: Ptr CString -> IO OptionList
+fromOptionListPtr ptr = do
+  n <- {#call unsafe CSLCount as ^#} ptr
+  forM [0..n-1] $ \ix -> do
+    s <- {#call unsafe CSLGetField as ^#} ptr ix >>= peekCString
+    return $ break (/='=') s
+    
+  
 
 foreign import ccall safe "gdal.h GDALCreate" c_create
   :: DriverH
@@ -335,7 +351,7 @@ foreign import ccall safe "gdal.h GDALOpen" open_
 
 
 createCopy' :: GDALType a
-  => Driver -> String -> (Dataset s t a) -> Bool -> DriverOptions
+  => Driver -> String -> (Dataset s t a) -> Bool -> OptionList
   -> ProgressFun -> GDAL s (RWDataset s a)
 createCopy' driver path ds strict options progressFun = do
   d <- driverByName driver
@@ -348,7 +364,7 @@ createCopy' driver path ds strict options progressFun = do
   newDatasetHandle ptr
 
 createCopy :: GDALType a
-  => Driver -> FilePath -> (Dataset s t a) -> Bool -> DriverOptions
+  => Driver -> FilePath -> (Dataset s t a) -> Bool -> OptionList
   -> GDAL s (RWDataset s a)
 createCopy driver path dataset strict options = do
   createCopy' driver path dataset strict options (\_ _ _ -> return 1)
@@ -382,16 +398,37 @@ newDatasetHandle :: Ptr (Dataset s t a) -> GDAL s (Dataset s t a)
 newDatasetHandle p = GDAL $
     if p==nullPtr
         then liftIO $ throw NullDatasetHandle
-        else do _ <- register (c_closeDataset p)
+        else do _ <- register (safeCloseDataset p)
                 m <- liftIO newMutex
                 return $ Dataset (m,p)
+
+newDerivedDatasetHandle
+  :: Dataset s t a -> Ptr (Dataset s t b) -> GDAL s (Dataset s t b)
+newDerivedDatasetHandle (Dataset (m,_)) p = GDAL $
+    if p==nullPtr
+        then liftIO $ throw NullDatasetHandle
+        else do _ <- register (safeCloseDataset p)
+                return $ Dataset (m,p)
+
+safeCloseDataset :: Ptr (Dataset s t a) -> IO ()
+safeCloseDataset p = do
+  count <- c_dereferenceDataset p
+  when (count < 1) $ do
+    c_referenceDataset p
+    c_closeDataset p
+
+foreign import ccall "gdal.h GDALReferenceDataset"
+  c_referenceDataset :: Ptr (Dataset s t a) -> IO CInt
+
+foreign import ccall "gdal.h GDALDereferenceDataset"
+  c_dereferenceDataset :: Ptr (Dataset s t a) -> IO CInt
 
 foreign import ccall "gdal.h GDALClose"
   c_closeDataset :: Ptr (Dataset s t a) -> IO ()
 
 createMem
   :: GDALType a
-  => Int -> Int -> Int -> DriverOptions -> GDAL s (Dataset s ReadWrite a)
+  => Int -> Int -> Int -> OptionList -> GDAL s (Dataset s ReadWrite a)
 createMem = create MEM ""
 
 flushCache :: forall s a. RWDataset s a -> GDAL s ()
@@ -427,33 +464,50 @@ foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
   :: Ptr (Dataset s t a) -> Ptr CChar -> IO CInt
 
 
-data Geotransform = Geotransform !Double !Double !Double !Double !Double !Double
-    deriving (Eq, Show)
+data Geotransform
+  = Geotransform {
+      gtXOff   :: !Double
+    , gtXDelta :: !Double
+    , gtXRot   :: !Double
+    , gtYOff   :: !Double
+    , gtYDelta :: !Double
+    , gtYRot   :: !Double
+  } deriving (Eq, Show)
+
+instance Storable Geotransform where
+  sizeOf _     = sizeOf (undefined :: CDouble) * 6
+  alignment _  = alignment (undefined :: CDouble)
+  poke pGt (Geotransform g0 g1 g2 g3 g4 g5) = do
+    let p = castPtr pGt :: Ptr CDouble
+    pokeElemOff p 0 (realToFrac g0)
+    pokeElemOff p 1 (realToFrac g1)
+    pokeElemOff p 2 (realToFrac g2)
+    pokeElemOff p 3 (realToFrac g3)
+    pokeElemOff p 4 (realToFrac g4)
+    pokeElemOff p 5 (realToFrac g5)
+  peek pGt = do
+    let p = castPtr pGt :: Ptr CDouble
+    Geotransform <$> liftM realToFrac (peekElemOff p 0)
+                 <*> liftM realToFrac (peekElemOff p 1)
+                 <*> liftM realToFrac (peekElemOff p 2)
+                 <*> liftM realToFrac (peekElemOff p 3)
+                 <*> liftM realToFrac (peekElemOff p 4)
+                 <*> liftM realToFrac (peekElemOff p 5)
+            
 
 datasetGeotransform :: Dataset s t a -> GDAL s Geotransform
-datasetGeotransform d = liftIO $ allocaArray 6 $ \a -> do
-  throwIfError "could not get geotransform" $ getGeoTransform (unDataset d) a
-  Geotransform <$> liftM realToFrac (peekElemOff a 0)
-               <*> liftM realToFrac (peekElemOff a 1)
-               <*> liftM realToFrac (peekElemOff a 2)
-               <*> liftM realToFrac (peekElemOff a 3)
-               <*> liftM realToFrac (peekElemOff a 4)
-               <*> liftM realToFrac (peekElemOff a 5)
+datasetGeotransform d = liftIO $ alloca $ \p -> do
+  throwIfError "could not get geotransform" (getGeoTransform (unDataset d) p)
+  peek (castPtr p)
 
 foreign import ccall unsafe "gdal.h GDALGetGeoTransform" getGeoTransform
   :: Ptr (Dataset s t a) -> Ptr CDouble -> IO CInt
 
 setDatasetGeotransform :: (RWDataset s a) -> Geotransform -> GDAL s ()
-setDatasetGeotransform ds (Geotransform g0 g1 g2 g3 g4 g5) = liftIO $
-  withLockedDatasetPtr ds $ \dsPtr ->
-  allocaArray 6 $ \a -> do
-    pokeElemOff a 0 (realToFrac g0)
-    pokeElemOff a 1 (realToFrac g1)
-    pokeElemOff a 2 (realToFrac g2)
-    pokeElemOff a 3 (realToFrac g3)
-    pokeElemOff a 4 (realToFrac g4)
-    pokeElemOff a 5 (realToFrac g5)
-    throwIfError "could not set geotransform" $ setGeoTransform dsPtr a
+setDatasetGeotransform ds gt = liftIO $
+  throwIfError "could not set geotransform" $
+    withLockedDatasetPtr ds $ \dsPtr ->
+      alloca $ \p -> (poke p gt >> setGeoTransform dsPtr (castPtr p))
 
 
 foreign import ccall unsafe "gdal.h GDALSetGeoTransform" setGeoTransform

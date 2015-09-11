@@ -293,7 +293,7 @@ case_writeBandBlock_fails_when_writing_bad_type = assertThrowsGDALException $
              len = bandBlockLen band
          in writeBandBlock band 0 0 v
 
-check_foldl :: DriverOptions -> IO ()
+check_foldl :: OptionList -> IO ()
 check_foldl options = assertNotThrowsGDALException $
     withSystemTempDirectory "test." $ \tmpDir -> runGDAL $ do
       let p = joinPath [tmpDir, "test.tif"]
