@@ -36,6 +36,7 @@ module OSGeo.GDAL.Internal (
   , Band
   , Value (..)
   , fromValue
+  , unValue
   , isNoData
   , registerAllDrivers
   , destroyDriverManager
@@ -965,7 +966,7 @@ instance GDALType (Complex Double) where
 -- Value
 --
 
-data Value a = Value !a  | NoData deriving (Eq, Show)
+data Value a = Value {unValue :: !a} | NoData deriving (Eq, Show)
 
 instance  Functor Value  where
     fmap _ NoData       = NoData
