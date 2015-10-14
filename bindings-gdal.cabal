@@ -48,7 +48,8 @@ test-suite spec
   type:             exitcode-stdio-1.0
   build-depends:    base
                   , filepath
-                  , hspec >= 2.17.0
+                  , hspec
+                  , hspec-core >= 2.1.7
                   , bindings-gdal
                   , vector
                   , temporary
