@@ -9,7 +9,6 @@ addons:
     - libgdal1-dev
 
 env:
-  - ARGS="--resolver lts-0"
   - ARGS="--resolver lts-1"
   - ARGS="--resolver lts-2"
   - ARGS="--resolver lts-3"
