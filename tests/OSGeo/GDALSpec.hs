@@ -215,6 +215,7 @@ spec = beforeAll_ (setQuietErrorHandler >> registerAllDrivers) $ do
   it_can_write_and_read_block
     ((Value . (*1.1) . fromIntegral) :: Int -> Value Double)
 
+#ifdef STORABLE_COMPLEX
   it_can_write_and_read_band
     ((\i -> Value ((fromIntegral i  :+ fromIntegral (i + i))))
       :: Int -> Value (Complex Int16))
@@ -242,6 +243,7 @@ spec = beforeAll_ (setQuietErrorHandler >> registerAllDrivers) $ do
   it_can_write_and_read_block
     ((\i -> Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2)))
       :: Int -> Value (Complex Double))
+#endif
 
 
 

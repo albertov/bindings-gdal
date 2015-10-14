@@ -9,7 +9,7 @@ addons:
     - libgdal1-dev
 
 env:
-  - ARGS="--resolver lts-1"
+  - ARGS="--resolver lts-1 --stack-yaml=stack.lts-1.yaml"
   - ARGS="--resolver lts-2"
   - ARGS="--resolver lts-3"
   - ARGS="--resolver nightly"
