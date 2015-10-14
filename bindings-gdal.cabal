@@ -20,8 +20,8 @@ library
   build-tools:       c2hs
   hs-source-dirs:    src
   exposed-modules:   OSGeo.GDAL,
-                     OSGeo.GDAL.Types,
                      OSGeo.GDAL.Internal,
+                     OSGeo.GDAL.Internal.Types,
                      OSGeo.GDAL.Warper,
                      OSGeo.OGR,
                      OSGeo.OGR.Internal

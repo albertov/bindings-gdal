@@ -90,19 +90,14 @@ module OSGeo.GDAL.Internal (
   , fromOptionListPtr
 ) where
 
-import Control.Applicative ((<$>), (<*>))
-import Control.Concurrent (ThreadId, runInBoundThread, rtsSupportsBoundThreads)
-import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar, newEmptyMVar)
-import Control.Exception ( bracket, Exception(..), SomeException
-                         , evaluate, throw)
+import Control.Applicative (Applicative, (<$>), (<*>))
+import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
+import Control.Exception (Exception(..), SomeException, bracket, throw)
 import Data.IORef (newIORef, readIORef, writeIORef)
-import Control.DeepSeq (NFData, force)
+import Control.DeepSeq (NFData)
 import Control.Monad (liftM, liftM2, foldM, forM, when)
-import Control.Monad.Trans.Resource (
-  ResourceT, runResourceT, register, resourceForkIO)
-import Control.Monad.Catch (MonadThrow(..), MonadCatch, MonadMask, finally)
+import Control.Monad.Catch (MonadThrow(throwM))
 import Control.Monad.IO.Class (MonadIO(..))
-import Control.Monad.Reader (ReaderT, runReaderT, ask)
 
 import Data.Int (Int16, Int32)
 import Data.Bits ((.&.))
@@ -113,10 +108,9 @@ import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Storable as St
-import qualified Data.Vector.Unboxed.Base as U
 import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
-import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr, plusPtr)
+import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrArray)
 import Foreign.Marshal.Alloc (alloca)
@@ -128,7 +122,7 @@ import Data.Char (toUpper)
 
 import GHC.Generics (Generic)
 
-import OSGeo.GDAL.Types
+import OSGeo.GDAL.Internal.Types
 import OSGeo.Util
 
 
@@ -152,45 +146,6 @@ class (Storable a) => GDALType a where
   fromNodata :: CDouble -> a
 
 {# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq,Generic) #}
-
-
-newtype GDAL s a = GDAL (ResourceT (ReaderT (MVar [MVar ()]) IO) a)
-
-deriving instance Functor (GDAL s)
-deriving instance Applicative (GDAL s)
-deriving instance Monad (GDAL s)
-deriving instance MonadIO (GDAL s)
-deriving instance MonadThrow (GDAL s)
-deriving instance MonadCatch (GDAL s)
-deriving instance MonadMask (GDAL s)
-
-runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
-runGDAL (GDAL a) = do
-  children <- newMVar []
-  runReaderT (runResourceT (finally (a >>= liftIO . evaluate . force)
-                                    (liftIO (waitForChildren children))))
-             children
-
-  where
-    waitForChildren children = do
-      cs <- takeMVar children
-      case cs of
-        []   -> return ()
-        m:ms -> do
-           putMVar children ms
-           _ <- takeMVar m
-           waitForChildren children
-
-gdalForkIO :: GDAL s () -> GDAL s ThreadId
-gdalForkIO (GDAL a) = GDAL $ do
-  children <- ask
-  mvar <- liftIO $ do
-    childs <- takeMVar children
-    mvar <- newEmptyMVar
-    putMVar children (mvar:childs)
-    return mvar
-  resourceForkIO (finally a (liftIO (putMVar mvar ())))
-
 
 data GDALException = GDALException !ErrorType !Int !String
                    | InvalidType !Datatype
@@ -317,7 +272,7 @@ type RWBand s = Band s ReadWrite
     { `String' } -> `DriverH' id #}
 
 driverByName :: Driver -> GDAL s DriverH
-driverByName s = GDAL $ liftIO $
+driverByName s = liftIO $
   throwIfError "driverByName" (c_driverByName (show s))
 
 type OptionList = [(String,String)]
@@ -434,15 +389,15 @@ foreign import ccall "wrapper"
 
 
 newDatasetHandle :: Ptr (Dataset s t a) -> GDAL s (Dataset s t a)
-newDatasetHandle p = GDAL $ do
-  _ <- register (safeCloseDataset p)
+newDatasetHandle p = do
+  registerFinalizer (safeCloseDataset p)
   m <- liftIO newMutex
   return $ Dataset (m,p)
 
 newDerivedDatasetHandle
   :: Dataset s t a -> Ptr (Dataset s t b) -> GDAL s (Dataset s t b)
-newDerivedDatasetHandle (Dataset (m,_)) p = GDAL $ do
-  _ <- register (safeCloseDataset p)
+newDerivedDatasetHandle (Dataset (m,_)) p = do
+  registerFinalizer (safeCloseDataset p)
   return $ Dataset (m,p)
 
 safeCloseDataset :: Ptr (Dataset s t a) -> IO ()

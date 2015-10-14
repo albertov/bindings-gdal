@@ -2,17 +2,38 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-module OSGeo.GDAL.Types (
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
+
+module OSGeo.GDAL.Internal.Types (
     Value(..)
   , uToStValue
   , stToUValue
   , isNoData
   , fromValue
+
+  , GDAL
+  , runGDAL
+  , gdalForkIO
+  , registerFinalizer
 ) where
 
 import Control.Applicative
-import Control.DeepSeq (NFData(rnf))
-import Control.Monad (liftM)
+import Control.Concurrent (ThreadId)
+import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar, newEmptyMVar)
+import Control.Exception (evaluate)
+import Control.DeepSeq (NFData(rnf), force)
+import Control.Monad (liftM, void)
+import Control.Monad.Trans.Resource (
+    ResourceT
+  , runResourceT
+  , register
+  , resourceForkIO
+  )
+import Control.Monad.Catch (MonadThrow(..), MonadCatch, MonadMask, finally)
+import Control.Monad.IO.Class (MonadIO(..))
+import Control.Monad.Reader (ReaderT, runReaderT, ask)
 
 import Data.Coerce (coerce)
 import Data.Word (Word8)
@@ -129,3 +150,47 @@ instance Storable a => G.Vector U.Vector (Value a) where
   {-# INLINE basicLength #-}
   {-# INLINE basicUnsafeSlice #-}
   {-# INLINE basicUnsafeIndexM #-}
+
+
+
+
+newtype GDAL s a = GDAL (ResourceT (ReaderT (MVar [MVar ()]) IO) a)
+
+deriving instance Functor (GDAL s)
+deriving instance Applicative (GDAL s)
+deriving instance Monad (GDAL s)
+deriving instance MonadIO (GDAL s)
+deriving instance MonadThrow (GDAL s)
+deriving instance MonadCatch (GDAL s)
+deriving instance MonadMask (GDAL s)
+
+runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
+runGDAL (GDAL a) = do
+  children <- newMVar []
+  runReaderT (runResourceT (finally (a >>= liftIO . evaluate . force)
+                                    (liftIO (waitForChildren children))))
+             children
+
+  where
+    waitForChildren children = do
+      cs <- takeMVar children
+      case cs of
+        []   -> return ()
+        m:ms -> do
+           putMVar children ms
+           _ <- takeMVar m
+           waitForChildren children
+
+gdalForkIO :: GDAL s () -> GDAL s ThreadId
+gdalForkIO (GDAL a) = GDAL $ do
+  children <- ask
+  mvar <- liftIO $ do
+    childs <- takeMVar children
+    mvar <- newEmptyMVar
+    putMVar children (mvar:childs)
+    return mvar
+  resourceForkIO (finally a (liftIO (putMVar mvar ())))
+
+
+registerFinalizer :: IO () -> GDAL s ()
+registerFinalizer = GDAL . void . register
