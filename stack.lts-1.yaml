@@ -2,6 +2,6 @@ resolver: lts-1.15
 packages:
 - '.'
 extra-deps:
-  - hspec-2.17.0
+  - hspec-core-2.17.0
 flags: {}
 
