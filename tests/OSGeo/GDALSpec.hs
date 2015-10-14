@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module OSGeo.GDALSpec (main, spec) where
 
@@ -88,6 +89,7 @@ spec = beforeAll_ (setQuietErrorHandler >> registerAllDrivers) $ do
     ds6 <- createMem 10 10 1 [] :: GDAL s (RWDataset s Double)
     getBand 1 ds6 `shouldHaveType` GDT_Float64
 
+#ifdef STORABLE_COMPLEX
     ds7 <- createMem 10 10 1 [] :: GDAL s (RWDataset s (Complex Int16))
     getBand 1 ds7 `shouldHaveType` GDT_CInt16
 
@@ -99,6 +101,7 @@ spec = beforeAll_ (setQuietErrorHandler >> registerAllDrivers) $ do
 
     ds10 <- createMem 10 10 1 [] :: GDAL s (RWDataset s (Complex Double))
     getBand 1 ds10 `shouldHaveType` GDT_CFloat64
+#endif
 
   it "can set and get geotransform" $ do
     ds <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int16)

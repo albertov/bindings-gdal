@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -879,6 +880,7 @@ instance GDALType Double where
   {-# INLINE toNodata #-}
   {-# INLINE fromNodata #-}
 
+#ifdef STORABLE_COMPLEX
 instance GDALType (Complex Int16) where
   datatype _ = GDT_CInt16
   nodata = nodata :+ nodata
@@ -910,3 +912,4 @@ instance GDALType (Complex Double) where
   fromNodata d = fromNodata d :+ fromNodata d
   {-# INLINE toNodata #-}
   {-# INLINE fromNodata #-}
+#endif
