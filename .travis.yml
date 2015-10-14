@@ -20,7 +20,7 @@ before_install:
 - export PATH=$HOME/.local/bin:$PATH
 - travis_retry curl -L https://github.com/commercialhaskell/stack/releases/download/v0.1.5.0/stack-0.1.5.0-x86_64-linux.tar.gz | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
 
-script: stack $ARGS --no-terminal --install-ghc test --haddock --stack-yaml=stack-travis.yaml
+script: stack $ARGS --no-terminal --install-ghc test --haddock
 
 cache:
   directories:
