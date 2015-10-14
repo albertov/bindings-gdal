@@ -1,8 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveDataTypeable #-}
@@ -36,7 +34,6 @@ module OSGeo.GDAL.Internal (
   , Band
   , Value (..)
   , fromValue
-  , unValue
   , isNoData
   , registerAllDrivers
   , destroyDriverManager
@@ -116,8 +113,6 @@ import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Storable as St
-import qualified Data.Vector.Generic.Mutable as M
-import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Unboxed.Base as U
 import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
@@ -133,6 +128,7 @@ import Data.Char (toUpper)
 
 import GHC.Generics (Generic)
 
+import OSGeo.GDAL.Types
 import OSGeo.Util
 
 
@@ -384,12 +380,10 @@ openWithMode m p =
 checkType
   :: forall s t a. GDALType a
   => Band s t a -> GDAL s ()
-checkType b = do
-  dt <- bandDatatype b
-  let rt = datatype (Proxy :: Proxy a)
-  if rt == dt
-    then return ()
-    else throwM (InvalidType rt)
+checkType b
+  | rt == bandDatatype b = return ()
+  | otherwise            = throwM (InvalidType rt)
+  where rt = datatype (Proxy :: Proxy a) 
 
 foreign import ccall safe "gdal.h GDALOpen" open_
    :: CString -> CInt -> IO (Ptr (Dataset s t a))
@@ -567,11 +561,11 @@ foreign import ccall safe "gdal.h GDALGetRasterBand" c_getRasterBand
   :: Ptr (Dataset s t a) -> CInt -> IO (Ptr (Band s t a))
 
 
-bandDatatype :: (Band s t a) -> GDAL s Datatype
-bandDatatype = fmap toEnumC . liftIO . getDatatype_ . unBand
+bandDatatype :: Band s t a -> Datatype
+bandDatatype = toEnumC . c_getRasterDataType . unBand
 
-foreign import ccall unsafe "gdal.h GDALGetRasterDataType" getDatatype_
-  :: Ptr (Band s a t) -> IO CInt
+foreign import ccall unsafe "gdal.h GDALGetRasterDataType" c_getRasterDataType
+  :: Ptr (Band s a t) -> CInt
 
 
 bandBlockSize :: (Band s t a) -> (Int,Int)
@@ -703,7 +697,7 @@ readMasked
   -> IO (Vector (Value a))
 readMasked band reader = withLockedBandPtr band $ \bPtr -> do
   flags <- c_getMaskFlags bPtr
-  reader bPtr >>= fmap V_Value . mask flags bPtr
+  reader bPtr >>= fmap stToUValue . mask flags bPtr
   where
     mask fs
       | hasFlag fs MaskPerDataset = useMaskBand
@@ -735,12 +729,12 @@ writeBand :: forall s b a. GDALType a
   -> Int -> Int
   -> Vector (Value a)
   -> GDAL s ()
-writeBand band xoff yoff sx sy bx by (V_Value uvec) = liftIO $
+writeBand band xoff yoff sx sy bx by uvec = liftIO $
   withLockedBandPtr band $ \bPtr -> do
     bNodata <- fmap (maybe nodata fromNodata) (c_bandNodataValue bPtr)
     let nElems    = bx * by
         (fp, len) = St.unsafeToForeignPtr0 vec
-        vec       = St.map (fromValue bNodata) uvec
+        vec       = St.map (fromValue bNodata) (uToStValue uvec)
     if nElems /= len
       then throw $ InvalidRasterSize bx by
       else withForeignPtr fp $ \ptr -> do
@@ -844,12 +838,12 @@ ifoldlM' f initialAcc band = liftIO $ do
 writeBandBlock
   :: forall s a. GDALType a
   => RWBand s a -> Int -> Int -> Vector (Value a) -> GDAL s ()
-writeBandBlock band x y (V_Value uvec) = do
+writeBandBlock band x y uvec = do
   checkType band
   liftIO $ withLockedBandPtr band $ \b -> do
     bNodata <- fmap (maybe nodata fromNodata) (c_bandNodataValue b)
     let (fp, len) = St.unsafeToForeignPtr0 vec
-        vec       = St.map (fromValue bNodata) uvec
+        vec       = St.map (fromValue bNodata) (uToStValue uvec)
         nElems    = bandBlockLen band
     if nElems /= len
       then throw (InvalidBlockSize len)
@@ -961,94 +955,3 @@ instance GDALType (Complex Double) where
   fromNodata d = fromNodata d :+ fromNodata d
   {-# INLINE toNodata #-}
   {-# INLINE fromNodata #-}
-
---
--- Value
---
-
-data Value a = Value {unValue :: !a} | NoData deriving (Eq, Show)
-
-instance  Functor Value  where
-    fmap _ NoData       = NoData
-    fmap f (Value a)    = Value (f a)
-
-instance Applicative Value where
-    pure = Value
-
-    Value f <*> m       = fmap f m
-    NoData  <*> _m      = NoData
-
-    Value _m1 *> m2     = m2
-    NoData    *> _m2    = NoData
-
-instance Monad Value  where
-    (Value x) >>= k     = k x
-    NoData    >>= _     = NoData
-
-    (>>) = (*>)
-
-    return              = Value
-    fail _              = NoData
-
-type FlagType = Word8
-
-instance Storable a => Storable (Value a) where
-  sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: FlagType)
-  alignment _ = alignment (undefined :: a)
-  peek p = let pm = castPtr p :: Ptr FlagType
-               pv = pm `plusPtr` sizeOf (undefined :: FlagType)
-           in do t <- peek pm
-                 if t/=0
-                   then fmap Value (peek (castPtr pv))
-                   else return NoData
-  poke p x = let pm = castPtr p :: Ptr FlagType
-                 pv = pm `plusPtr` sizeOf (undefined :: FlagType)
-             in case x of
-                  NoData  -> poke pm 0
-                  Value a -> poke pm 1 >> poke (castPtr pv) a
-  {-# INLINE sizeOf #-}
-  {-# INLINE alignment #-}
-  {-# INLINE peek #-}
-  {-# INLINE poke #-}
-
-isNoData :: Value a -> Bool
-isNoData NoData = True
-isNoData _      = False
-{-# INLINE isNoData #-}
-
-fromValue :: a -> Value a -> a
-fromValue v NoData    = v
-fromValue _ (Value v) = v
-{-# INLINE fromValue #-}
-
-newtype instance U.Vector    (Value a) =  V_Value (St.Vector (Value a))
-newtype instance U.MVector s (Value a) = MV_Value (St.MVector s (Value a))
-instance Storable a => U.Unbox (Value a)
-
-instance Storable a => M.MVector U.MVector (Value a) where
-  basicLength (MV_Value v ) = M.basicLength v
-  basicUnsafeSlice m n (MV_Value v) = MV_Value (M.basicUnsafeSlice m n v)
-  basicOverlaps (MV_Value v) (MV_Value u) = M.basicOverlaps v u
-  basicUnsafeNew = liftM MV_Value . M.basicUnsafeNew
-  basicUnsafeRead (MV_Value v) i = M.basicUnsafeRead v i
-  basicUnsafeWrite (MV_Value v) i x = M.basicUnsafeWrite v i x
-  basicInitialize (MV_Value v) = M.basicInitialize v
-  {-# INLINE basicLength #-}
-  {-# INLINE basicUnsafeSlice #-}
-  {-# INLINE basicOverlaps #-}
-  {-# INLINE basicUnsafeNew #-}
-  {-# INLINE basicUnsafeRead #-}
-  {-# INLINE basicUnsafeWrite #-}
-  {-# INLINE basicInitialize #-}
-
-instance Storable a => G.Vector U.Vector (Value a) where
-  basicUnsafeFreeze (MV_Value v)   = liftM  V_Value (G.basicUnsafeFreeze v)
-  basicUnsafeThaw   ( V_Value v)   = liftM MV_Value (G.basicUnsafeThaw   v)
-  basicLength       ( V_Value v)   = G.basicLength v
-  basicUnsafeSlice m n (V_Value v) = V_Value (G.basicUnsafeSlice m n v)
-  basicUnsafeIndexM (V_Value v) i  = G.basicUnsafeIndexM v i
-  {-# INLINE basicUnsafeFreeze #-}
-  {-# INLINE basicUnsafeThaw #-}
-  {-# INLINE basicLength #-}
-  {-# INLINE basicUnsafeSlice #-}
-  {-# INLINE basicUnsafeIndexM #-}
