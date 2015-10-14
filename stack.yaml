@@ -1,5 +1,6 @@
 resolver: lts-3.9
 packages:
 - '.'
-extra-deps: []
+extra-deps:
+  - hspec-2.17.0
 flags: {}
