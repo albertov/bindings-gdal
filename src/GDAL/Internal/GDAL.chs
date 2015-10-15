@@ -596,7 +596,7 @@ writeBand band xoff yoff sx sy bx by uvec = liftIO $
         (fp, len) = St.unsafeToForeignPtr0 vec
         vec       = St.map (fromValue bNodata) (uToStValue uvec)
     if nElems /= len
-      then throwM GDALBindingError -- $ InvalidRasterSize bx by
+      then throwM GDALBindingError -- (InvalidRasterSize bx by)
       else withForeignPtr fp $ \ptr -> do
         throwIfError_ "writeBand" $
           rasterIO_
