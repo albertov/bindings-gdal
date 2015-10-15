@@ -65,6 +65,7 @@ module GDAL (
   , ifoldlM'
 ) where
 
+import GDAL.Internal.CPLError
+import GDAL.Internal.CPLString
 import GDAL.Internal.GDAL
 import GDAL.Internal.Types
-import GDAL.Internal.CPLString

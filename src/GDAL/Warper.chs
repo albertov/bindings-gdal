@@ -28,6 +28,7 @@ import Foreign.Storable (Storable(..))
 import GDAL.OSR (SpatialReference, toWkt)
 
 import GDAL.Internal.Types
+import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
 import GDAL.Internal.GDAL
 import GDAL.Internal.Util (fromEnumC)

@@ -30,11 +30,9 @@ import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CInt(..), CDouble(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr ( ForeignPtr, withForeignPtr, newForeignPtr
-                          , mallocForeignPtrArray)
+import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (allocaArray)
-import Foreign.Marshal.Utils (toBool, fromBool)
+import Foreign.Marshal.Utils (toBool)
 
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -74,7 +72,7 @@ exportWith fun s = unsafePerformIO $
                     wkt <- peekCString str
                     {#call unsafe VSIFree as ^#} (castPtr str)
                     return wkt
-         err' -> throw $ OGRException Failure
+         _    -> throw $ OGRException Failure
                "OSGeo.OSR.Internal.exportWith: error exporting SpatialReference"
    
 

@@ -13,8 +13,9 @@ import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
 
 import System.FilePath (joinPath)
+import System.Mem (performMajorGC)
 
-import Test.Hspec (Spec, SpecWith, Arg, hspec, beforeAll_)
+import Test.Hspec (Spec, SpecWith, Arg, hspec, before_, after_)
 
 import GDAL
 
@@ -31,7 +32,8 @@ main :: IO ()
 main = hspec spec
 
 spec :: Spec
-spec = beforeAll_ (setQuietErrorHandler >> registerAllDrivers) $ do
+spec = before_ (setQuietErrorHandler >> registerAllDrivers) $
+       after_  (destroyDriverManager >> performMajorGC) $ do
 
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]

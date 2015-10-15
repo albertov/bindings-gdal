@@ -25,6 +25,7 @@ library
                    , GDAL.Warper
                    , GDAL.Internal.Types
                    , GDAL.Internal.CPLString
+                   , GDAL.Internal.CPLError
                    , GDAL.Internal.GDAL
                    , GDAL.Internal.OGR
                    , GDAL.Internal.OSR
@@ -50,7 +51,7 @@ test-suite spec
   build-depends:    base
                   , filepath
                   , hspec
-                  , hspec-core >= 2.1.7
+                  , hspec-core
                   , bindings-gdal
                   , vector
                   , temporary

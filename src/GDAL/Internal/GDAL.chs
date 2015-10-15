@@ -4,21 +4,16 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DeriveGeneric #-}
 
 module GDAL.Internal.GDAL (
     GDALType
   , Datatype (..)
-  , GDALException (..)
-  , ErrorType (..)
-  , isGDALException
   , Geotransform (..)
   , Driver (..)
   , Dataset
@@ -72,8 +67,6 @@ module GDAL.Internal.GDAL (
   , ifoldlM'
 
   -- Internal Util
-  , throwIfError
-  , throwIfError_
   , unDataset
   , unBand
   , withLockedDatasetPtr
@@ -82,10 +75,8 @@ module GDAL.Internal.GDAL (
 ) where
 
 import Control.Applicative (Applicative, (<$>), (<*>))
-import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
-import Control.Exception (Exception(..), SomeException, bracket, throw)
-import Data.IORef (newIORef, readIORef, writeIORef)
-import Control.DeepSeq (NFData)
+import Control.DeepSeq (NFData(rnf))
+import Control.Exception (bracket)
 import Control.Monad (liftM, liftM2, when)
 import Control.Monad.Catch (MonadThrow(throwM))
 import Control.Monad.IO.Class (MonadIO(..))
@@ -93,9 +84,7 @@ import Control.Monad.IO.Class (MonadIO(..))
 import Data.Int (Int16, Int32)
 import Data.Bits ((.&.))
 import Data.Complex (Complex(..), realPart)
-import Data.Maybe (isJust)
 import Data.Proxy (Proxy(..))
-import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Storable as St
@@ -111,15 +100,13 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcess)
 import Data.Char (toUpper)
 
-import GHC.Generics (Generic)
-
 import GDAL.Internal.Types
+import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
 import GDAL.Internal.Util
 
 
 #include "gdal.h"
-#include "cpl_error.h"
 
 
 $(let names = fmap (words . map toUpper) $
@@ -136,62 +123,10 @@ class (Storable a) => GDALType a where
   -- | how to convert from double for use with bandNodataValue
   fromNodata :: CDouble -> a
 
-{# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq,Generic) #}
+{# enum GDALDataType as Datatype {upcaseFirstLetter} deriving (Eq) #}
 
-data GDALException = GDALException !ErrorType !Int !String
-                   | InvalidType !Datatype
-                   | InvalidRasterSize !Int !Int
-                   | InvalidBlockSize !Int
-     deriving (Show, Generic, Typeable)
-
-instance NFData ErrorType
-instance NFData Datatype
-instance NFData GDALException
-instance Exception GDALException
-
-isGDALException :: SomeException -> Bool
-isGDALException e = isJust (fromException e :: Maybe GDALException)
-
-{# enum CPLErr as ErrorType {upcaseFirstLetter} deriving (Eq,Show,Generic) #}
-
-
-type ErrorHandler = CInt -> CInt -> CString -> IO ()
-
-foreign import ccall "cpl_error.h &CPLQuietErrorHandler"
-  c_quietErrorHandler :: FunPtr ErrorHandler
-
-foreign import ccall "cpl_error.h CPLSetErrorHandler"
-  setErrorHandler :: FunPtr ErrorHandler -> IO (FunPtr ErrorHandler)
-
-setQuietErrorHandler :: IO (FunPtr ErrorHandler)
-setQuietErrorHandler = setErrorHandler c_quietErrorHandler
-
-foreign import ccall "cpl_error.h CPLPushErrorHandler"
-  c_pushErrorHandler :: FunPtr ErrorHandler -> IO ()
-
-foreign import ccall "cpl_error.h CPLPopErrorHandler"
-  c_popErrorHandler :: IO ()
-
-foreign import ccall safe "wrapper"
-  mkErrorHandler :: ErrorHandler -> IO (FunPtr ErrorHandler)
-
-throwIfError_ :: String -> IO a -> IO ()
-throwIfError_ prefix act = throwIfError prefix act >> return ()
-
-throwIfError :: String -> IO a -> IO a
-throwIfError prefix act = do
-    ref <- newIORef Nothing
-    handler <- mkErrorHandler $ \err errno cmsg -> do
-      msg <- peekCString cmsg
-      writeIORef ref $ Just $
-        GDALException (toEnumC err) (fromIntegral errno) (prefix ++ ": " ++ msg)
-    ret <- runBounded $
-      bracket (c_pushErrorHandler handler) (const c_popErrorHandler) (const act)
-    readIORef ref >>= maybe (return ret) throw
-  where
-    runBounded 
-      | rtsSupportsBoundThreads = runInBoundThread
-      | otherwise               = id
+instance NFData Datatype where
+  rnf a = a `seq`()
 
 instance Show Datatype where
    show = getDatatypeName
@@ -307,7 +242,7 @@ checkType
   => Band s t a -> GDAL s ()
 checkType b
   | rt == bandDatatype b = return ()
-  | otherwise            = throwM (InvalidType rt)
+  | otherwise            = throwM GDALBindingError --throwM (InvalidType rt)
   where rt = datatype (Proxy :: Proxy a) 
 
 foreign import ccall safe "gdal.h GDALOpen" open_
@@ -661,7 +596,7 @@ writeBand band xoff yoff sx sy bx by uvec = liftIO $
         (fp, len) = St.unsafeToForeignPtr0 vec
         vec       = St.map (fromValue bNodata) (uToStValue uvec)
     if nElems /= len
-      then throw $ InvalidRasterSize bx by
+      then throwM GDALBindingError -- $ InvalidRasterSize bx by
       else withForeignPtr fp $ \ptr -> do
         throwIfError_ "writeBand" $
           rasterIO_
@@ -771,7 +706,7 @@ writeBandBlock band x y uvec = do
         vec       = St.map (fromValue bNodata) (uToStValue uvec)
         nElems    = bandBlockLen band
     if nElems /= len
-      then throw (InvalidBlockSize len)
+      then throwM GDALBindingError -- (InvalidBlockSize len)
       else withForeignPtr fp $ \ptr ->
            throwIfError_ "writeBandBlock" $
               writeBlock_ b (fromIntegral x) (fromIntegral y) ptr
