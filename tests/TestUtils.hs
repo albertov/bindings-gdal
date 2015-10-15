@@ -7,6 +7,7 @@ module TestUtils (
   , existsAndSizeIsGreaterThan
   , it
   , withDir
+  , setupAndTeardown
 ) where
 
 import Control.Monad (guard, unless)
@@ -18,11 +19,26 @@ import Data.Typeable (typeOf)
 import System.IO (IOMode(ReadMode), withBinaryFile, hFileSize)
 import System.IO.Error (isDoesNotExistError)
 import System.IO.Temp (withSystemTempDirectory)
+import System.Mem (performMajorGC)
 
-import Test.Hspec (SpecWith, Arg, Selector)
+import Test.Hspec (SpecWith, Arg, Selector, before_, after_)
 import qualified Test.Hspec as Hspec
 
-import GDAL (GDAL, runGDAL)
+import GDAL (
+    GDAL
+  , runGDAL
+  , setQuietErrorHandler
+  , registerAllDrivers
+  , destroyDriverManager
+  )
+
+-- | Makes sure (or tries) that we're not double-freeing, etc by destroying
+--   the driver manager after every test and peformimg a major garbage
+--   collection to force (really?) the finalizers to run.
+setupAndTeardown :: SpecWith a -> SpecWith a
+setupAndTeardown
+  = before_ (setQuietErrorHandler >> registerAllDrivers)
+  . after_  (destroyDriverManager >> performMajorGC)
 
 it :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
 it n a = Hspec.it n (runGDAL a)

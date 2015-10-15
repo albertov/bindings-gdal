@@ -1,23 +1,30 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module GDAL.Internal.CPLError (
     GDALException (..)
   , ErrorType (..)
   , ErrorNum (..)
   , isGDALException
+  , isBindingException
   , setQuietErrorHandler
   , throwIfError
   , throwIfError_
+  , throwBindingException
+  , bindingExceptionToException
+  , bindingExceptionFromException
 ) where
 
 import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
 import Control.Exception (Exception(..), SomeException, bracket, throw)
 import Control.DeepSeq (NFData(rnf))
+import Control.Monad.Catch (MonadThrow(throwM))
 
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Maybe (isJust)
-import Data.Typeable (Typeable)
+import Data.Typeable (Typeable, cast)
 
 import Foreign.C.String (CString, peekCString)
 import Foreign.C.Types (CInt(..))
@@ -30,17 +37,41 @@ import GDAL.Internal.Util (toEnumC)
 type ErrorHandler = CInt -> CInt -> CString -> IO ()
 
 data GDALException
-  = GDALException    !ErrorType !ErrorNum !String
-  | GDALBindingError
-  deriving (Show, Typeable)
+  = forall e. Exception e =>
+    GDALBindingException !e
+  | GDALException        { gdalErrType :: !ErrorType
+                         , gdalErrNum  :: !ErrorNum
+                         , gdalErrMsg  :: !String
+                         }
+  deriving Typeable
+
+deriving instance Show GDALException
 
 instance Exception GDALException
+
+bindingExceptionToException :: Exception e => e -> SomeException
+bindingExceptionToException = toException . GDALBindingException
+
+bindingExceptionFromException :: Exception e => SomeException -> Maybe e
+bindingExceptionFromException x = do
+  GDALBindingException a <- fromException x
+  cast a
+
 
 instance NFData GDALException where
   rnf a = a `seq` () -- All fields are already strict so no need to rnf them
 
+throwBindingException :: (MonadThrow m, Exception e) => e -> m a
+throwBindingException = throwM . bindingExceptionToException
+
 isGDALException :: SomeException -> Bool
 isGDALException e = isJust (fromException e :: Maybe GDALException)
+
+isBindingException :: SomeException -> Bool
+isBindingException e
+  = case fromException e of
+      Just (GDALBindingException _) -> True
+      _                             -> False
 
 {# enum CPLErr as ErrorType {upcaseFirstLetter} deriving (Eq, Show) #}
 

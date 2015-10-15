@@ -10,9 +10,11 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module GDAL.Internal.GDAL (
     GDALType
+  , GDALRasterException (..)
   , Datatype (..)
   , Geotransform (..)
   , Driver (..)
@@ -26,7 +28,6 @@ module GDAL.Internal.GDAL (
   , Band
   , registerAllDrivers
   , destroyDriverManager
-  , setQuietErrorHandler
   , create
   , createMem
   , flushCache
@@ -66,7 +67,6 @@ module GDAL.Internal.GDAL (
   , ifoldl'
   , ifoldlM'
 
-  -- Internal Util
   , unDataset
   , unBand
   , withLockedDatasetPtr
@@ -76,15 +76,15 @@ module GDAL.Internal.GDAL (
 
 import Control.Applicative (Applicative, (<$>), (<*>))
 import Control.DeepSeq (NFData(rnf))
-import Control.Exception (bracket)
+import Control.Exception (Exception(..), bracket)
 import Control.Monad (liftM, liftM2, when)
-import Control.Monad.Catch (MonadThrow(throwM))
 import Control.Monad.IO.Class (MonadIO(..))
 
 import Data.Int (Int16, Int32)
 import Data.Bits ((.&.))
 import Data.Complex (Complex(..), realPart)
 import Data.Proxy (Proxy(..))
+import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Storable as St
@@ -112,6 +112,19 @@ import GDAL.Internal.Util
 $(let names = fmap (words . map toUpper) $
                 readProcess "gdal-config" ["--formats"] ""
   in createEnum "Driver" names)
+
+data GDALRasterException
+  = InvalidRasterSize !Int !Int
+  | InvalidBlockSize  !Int
+  | InvalidDatatype   !Datatype
+  deriving (Typeable, Show, Eq)
+
+instance NFData GDALRasterException where
+  rnf a = a `seq` () -- All fields are already strict so no need to rnf them
+
+instance Exception GDALRasterException where
+  toException   = bindingExceptionToException
+  fromException = bindingExceptionFromException
 
 
 class (Storable a) => GDALType a where
@@ -241,9 +254,10 @@ checkType
   :: forall s t a. GDALType a
   => Band s t a -> GDAL s ()
 checkType b
-  | rt == bandDatatype b = return ()
-  | otherwise            = throwM GDALBindingError --throwM (InvalidType rt)
+  | rt == bt  = return ()
+  | otherwise = throwBindingException (InvalidDatatype bt)
   where rt = datatype (Proxy :: Proxy a) 
+        bt = bandDatatype b
 
 foreign import ccall safe "gdal.h GDALOpen" open_
    :: CString -> CInt -> IO (Ptr (Dataset s t a))
@@ -596,7 +610,7 @@ writeBand band xoff yoff sx sy bx by uvec = liftIO $
         (fp, len) = St.unsafeToForeignPtr0 vec
         vec       = St.map (fromValue bNodata) (uToStValue uvec)
     if nElems /= len
-      then throwM GDALBindingError -- (InvalidRasterSize bx by)
+      then throwBindingException (InvalidRasterSize bx by)
       else withForeignPtr fp $ \ptr -> do
         throwIfError_ "writeBand" $
           rasterIO_
@@ -706,7 +720,7 @@ writeBandBlock band x y uvec = do
         vec       = St.map (fromValue bNodata) (uToStValue uvec)
         nElems    = bandBlockLen band
     if nElems /= len
-      then throwM GDALBindingError -- (InvalidBlockSize len)
+      then throwBindingException (InvalidBlockSize len)
       else withForeignPtr fp $ \ptr ->
            throwIfError_ "writeBandBlock" $
               writeBlock_ b (fromIntegral x) (fromIntegral y) ptr

@@ -3,8 +3,10 @@ module GDAL (
   , GDALType
   , Datatype (..)
   , GDALException (..)
+  , GDALRasterException (..)
   , ErrorType (..)
   , isGDALException
+  , isBindingException
   , Geotransform (..)
   , Driver (..)
   , Dataset

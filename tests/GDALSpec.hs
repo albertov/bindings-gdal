@@ -3,6 +3,7 @@
 module GDALSpec (main, spec) where
 
 import Control.Applicative (liftA2)
+import Control.Exception (fromException)
 import Control.Monad (void, forM_)
 
 import Data.Maybe (isNothing)
@@ -13,9 +14,8 @@ import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
 
 import System.FilePath (joinPath)
-import System.Mem (performMajorGC)
 
-import Test.Hspec (Spec, SpecWith, Arg, hspec, before_, after_)
+import Test.Hspec (Spec, SpecWith, Arg, hspec)
 
 import GDAL
 
@@ -26,14 +26,14 @@ import TestUtils (
   , existsAndSizeIsGreaterThan
   , it
   , withDir
+  , setupAndTeardown
   )
 
 main :: IO ()
 main = hspec spec
 
 spec :: Spec
-spec = before_ (setQuietErrorHandler >> registerAllDrivers) $
-       after_  (destroyDriverManager >> performMajorGC) $ do
+spec = setupAndTeardown $ do
 
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
@@ -65,7 +65,7 @@ spec = before_ (setQuietErrorHandler >> registerAllDrivers) $
 
   it "cannot get non-existing raster band" $ do
     ds <- createMem 10 10 1 [] :: GDAL s (RWDataset s Int16)
-    getBand 2 ds `shouldThrow` isGDALException
+    getBand 2 ds `shouldThrow` ((== IllegalArg) . gdalErrNum)
 
   it "creates dataset with the correct datatype" $ do
     let shouldHaveType a t = a >>= (\b -> bandDatatype b `shouldBe` t)
@@ -175,18 +175,21 @@ spec = before_ (setQuietErrorHandler >> registerAllDrivers) $
     flushCache ds
     ds2 <- openReadOnly p
     band <- getBand 1 ds2
-    flip shouldThrow isGDALException $ do
-      (_ :: U.Vector (Value Word8)) <- readBandBlock band 0 0
-      return ()
+    let badAction =  do
+          (_ :: U.Vector (Value Word8)) <- readBandBlock band 0 0
+          return ()
+    badAction `shouldThrow` isGDALException
+    badAction `shouldThrow` (== (InvalidDatatype GDT_Int16))
 
   withDir "throws GDALException when writing block with wrong type" $ \dir -> do
     let p = joinPath [dir, "test.tif"]
-    ds <- create GTIFF p 100 100 1 [] :: GDAL s (RWDataset s Int16)
+    ds <- create GTIFF p 100 100 1 [] :: GDAL s (RWDataset s Int32)
     flushCache ds
     ds2 <- openReadWrite p
     band <- getBand 1 ds2
     let v = U.replicate (bandBlockLen band) (Value 0) :: U.Vector (Value Word8)
     writeBandBlock band 0 0 v `shouldThrow` isGDALException
+    writeBandBlock band 0 0 v `shouldThrow` (== (InvalidDatatype GDT_Int32))
 
   it_can_foldl [("TILED", "YES")]
 

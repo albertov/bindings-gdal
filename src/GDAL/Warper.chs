@@ -2,6 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module GDAL.Warper (
     ResampleAlg (..)
@@ -16,7 +17,9 @@ module GDAL.Warper (
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Control.Exception (bracket)
+import Control.DeepSeq (NFData(rnf))
+import Control.Exception (Exception(..), bracket)
+import Data.Typeable (Typeable)
 import Data.Default (Default(..))
 import Foreign.C.String (CString, withCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
@@ -36,6 +39,17 @@ import GDAL.Internal.Util (fromEnumC)
 #include "gdal.h"
 #include "gdal_alg.h"
 #include "gdalwarper.h"
+
+data GDALWarpException
+  = InvalidMaxError !Int
+  deriving (Typeable, Show, Eq)
+
+instance NFData GDALWarpException where
+  rnf a = a `seq` ()
+
+instance Exception GDALWarpException where
+  toException   = bindingExceptionToException
+  fromException = bindingExceptionFromException
 
 {# enum GDALResampleAlg as ResampleAlg {upcaseFirstLetter} deriving (Eq,Read,Show) #}
 
@@ -134,7 +148,7 @@ reprojectImage
   -> Maybe WarpOptions
   -> GDAL s ()
 reprojectImage srcDs srcSr dstDs dstSr alg maxError options
-  | maxError < 0 = error "reprojectImage: maxError < 0"
+  | maxError < 0 = throwBindingException (InvalidMaxError maxError)
   | otherwise
   = liftIO $ throwIfError_ "reprojectImage" $
       withLockedDatasetPtr srcDs $ \srcDsPtr ->
