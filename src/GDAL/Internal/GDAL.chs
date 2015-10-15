@@ -20,7 +20,6 @@ module GDAL.Internal.GDAL (
   , ErrorType (..)
   , isGDALException
   , Geotransform (..)
-  , OptionList
   , Driver (..)
   , Dataset
   , ReadWrite
@@ -79,10 +78,7 @@ module GDAL.Internal.GDAL (
   , unBand
   , withLockedDatasetPtr
   , withLockedBandPtr
-  , withOptionList
   , newDerivedDatasetHandle
-  , toOptionListPtr
-  , fromOptionListPtr
 ) where
 
 import Control.Applicative (Applicative, (<$>), (<*>))
@@ -90,7 +86,7 @@ import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
 import Control.Exception (Exception(..), SomeException, bracket, throw)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Control.DeepSeq (NFData)
-import Control.Monad (liftM, liftM2, foldM, forM, when)
+import Control.Monad (liftM, liftM2, when)
 import Control.Monad.Catch (MonadThrow(throwM))
 import Control.Monad.IO.Class (MonadIO(..))
 
@@ -118,11 +114,11 @@ import Data.Char (toUpper)
 import GHC.Generics (Generic)
 
 import GDAL.Internal.Types
+import GDAL.Internal.CPLString
 import GDAL.Internal.Util
 
 
 #include "gdal.h"
-#include "cpl_string.h"
 #include "cpl_error.h"
 
 
@@ -270,8 +266,6 @@ driverByName :: Driver -> GDAL s DriverH
 driverByName s = liftIO $
   throwIfError "driverByName" (c_driverByName (show s))
 
-type OptionList = [(String,String)]
-
 create
   :: forall s a. GDALType a
   => Driver -> String -> Int -> Int -> Int -> OptionList
@@ -286,25 +280,6 @@ create drv path nx ny bands options = do
     withOptionList options $ \opts ->
         c_create d path' nx' ny' bands' dtype' opts
   newDatasetHandle ptr
-
-withOptionList :: OptionList -> (Ptr CString -> IO c) -> IO c
-withOptionList opts = bracket (toOptionListPtr opts) freeOptionList
-  where freeOptionList = {#call unsafe CSLDestroy as ^#} . castPtr
-
-toOptionListPtr :: OptionList -> IO (Ptr CString)
-toOptionListPtr = foldM folder nullPtr
-  where
-    folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
-                       {#call unsafe CSLSetNameValue as ^#} acc k' v'
-
-fromOptionListPtr :: Ptr CString -> IO OptionList
-fromOptionListPtr ptr = do
-  n <- {#call unsafe CSLCount as ^#} ptr
-  forM [0..n-1] $ \ix -> do
-    s <- {#call unsafe CSLGetField as ^#} ptr ix >>= peekCString
-    return $ break (/='=') s
-    
-  
 
 foreign import ccall safe "gdal.h GDALCreate" c_create
   :: DriverH
