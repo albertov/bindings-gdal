@@ -8,12 +8,11 @@
 
 module GDAL.Internal.Types (
     Value(..)
+  , GDAL
   , uToStValue
   , stToUValue
   , isNoData
   , fromValue
-
-  , GDAL
   , runGDAL
   , gdalForkIO
   , registerFinalizer
