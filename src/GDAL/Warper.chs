@@ -15,7 +15,7 @@ module GDAL.Warper (
 ) where
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Monad (when)
+import Control.Monad (when, void)
 import Control.Monad.IO.Class (liftIO)
 import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), bracket)
@@ -33,6 +33,7 @@ import GDAL.OSR (SpatialReference, toWkt)
 import GDAL.Internal.Types
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
+import GDAL.Internal.CPLProgress
 import GDAL.Internal.GDAL
 import GDAL.Internal.Util (fromEnumC)
 
@@ -42,6 +43,7 @@ import GDAL.Internal.Util (fromEnumC)
 
 data GDALWarpException
   = InvalidMaxError !Int
+  | WarpStopped
   deriving (Typeable, Show, Eq)
 
 instance NFData GDALWarpException where
@@ -145,20 +147,23 @@ reprojectImage
   -> Maybe SpatialReference
   -> ResampleAlg
   -> Int
+  -> Maybe ProgressFun
   -> Maybe WarpOptions
   -> GDAL s ()
-reprojectImage srcDs srcSr dstDs dstSr alg maxError options
+reprojectImage srcDs srcSr dstDs dstSr alg maxError mProgressFun options
   | maxError < 0 = throwBindingException (InvalidMaxError maxError)
   | otherwise
-  = liftIO $ throwIfError_ "reprojectImage" $
-      withLockedDatasetPtr srcDs $ \srcDsPtr ->
-      withLockedDatasetPtr dstDs $ \dstDsPtr ->
-      withMaybeSRAsCString srcSr $ \sSr ->
-      withMaybeSRAsCString dstSr $ \dSr ->
-      withWarpOptionsPtr srcDsPtr options $ \opts ->
-       c_reprojectImage srcDsPtr sSr dstDsPtr dSr
-                        (fromEnumC alg) 0 (fromIntegral maxError)
-                        nullPtr nullPtr opts
+  = do ret <- liftIO $ throwIfError "reprojectImage" $
+                withLockedDatasetPtr srcDs $ \srcDsPtr ->
+                withLockedDatasetPtr dstDs $ \dstDsPtr ->
+                withMaybeSRAsCString srcSr $ \sSr ->
+                withMaybeSRAsCString dstSr $ \dSr ->
+                withWarpOptionsPtr srcDsPtr options $ \opts ->
+                withProgressFun mProgressFun $ \pFunc -> void $
+                 c_reprojectImage srcDsPtr sSr dstDsPtr dSr
+                                  (fromEnumC alg) 0 (fromIntegral maxError)
+                                  pFunc nullPtr opts
+       maybe (throwBindingException WarpStopped) return ret
 
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
 withMaybeSRAsCString Nothing f = f nullPtr
@@ -172,7 +177,7 @@ foreign import ccall safe "gdalwarper.h GDALReprojectImage" c_reprojectImage
   -> CInt                -- ^Resample alg
   -> CDouble             -- ^Memory limit
   -> CDouble             -- ^Max error
-  -> Ptr ()              -- ^Progress func (unused)
+  -> ProgressFunPtr      -- ^Progress func
   -> Ptr ()              -- ^Progress arg (unused)
   -> Ptr WarpOptions     -- ^warp options
   -> IO CInt

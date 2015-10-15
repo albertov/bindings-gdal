@@ -3,11 +3,12 @@
 module GDALSpec (main, spec) where
 
 import Control.Applicative (liftA2)
-import Control.Exception (fromException)
 import Control.Monad (void, forM_)
+import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Maybe (isNothing)
 import Data.Complex (Complex(..))
+import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Int (Int16, Int32)
 import Data.Typeable (Typeable, typeOf)
 import Data.Word (Word8, Word16, Word32)
@@ -15,7 +16,7 @@ import qualified Data.Vector.Unboxed as U
 
 import System.FilePath (joinPath)
 
-import Test.Hspec (Spec, SpecWith, Arg, hspec)
+import Test.Hspec (Spec, SpecWith, Arg, hspec, describe, errorCall)
 
 import GDAL
 
@@ -51,9 +52,36 @@ spec = setupAndTeardown $ do
   withDir "can create and copy dataset" $ \tmpDir -> do
     let p  = joinPath [tmpDir, "test.tif"]
     ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s Int16)
-    ds2 <- createCopy GTIFF p ds True []
+    ds2 <- createCopy GTIFF p ds True [] Nothing
     flushCache ds2
     p `existsAndSizeIsGreaterThan` 0
+
+  describe "progress function" $ do
+    withDir "can interrupt copy" $ \tmpDir -> do
+      let p  = joinPath [tmpDir, "test.tif"]
+      ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s Int16)
+      let stopIt = Just (\_ _ -> return Stop)
+      createCopy GTIFF p ds True [] stopIt `shouldThrow` (==CopyInterrupted)
+
+    withDir "can throw exceptions" $ \tmpDir -> do
+      let p  = joinPath [tmpDir, "test.tif"]
+      ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s Int16)
+      let crashIt = Just (error msg)
+          msg     = "I crashed!"
+      createCopy GTIFF p ds True [] crashIt `shouldThrow` errorCall msg
+
+    withDir "can report progress" $ \tmpDir -> do
+      let p  = joinPath [tmpDir, "test.tif"]
+      ds <- createMem 100 100 1 [] :: GDAL s (RWDataset s Int16)
+      msgsRef <- liftIO (newIORef [])
+      let report pr m = do
+            modifyIORef' msgsRef ((pr,m):)
+            return Continue
+      ds2 <- createCopy GTIFF p ds True [] (Just report)
+      flushCache ds2
+      p `existsAndSizeIsGreaterThan` 0
+      msgs <- liftIO (readIORef msgsRef)
+      msgs `shouldSatisfy` (not . null)
 
   it "can get band count" $ do
     ds <- createMem 10 10 5 [] :: GDAL s (RWDataset s Int16)

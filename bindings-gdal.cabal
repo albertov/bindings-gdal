@@ -26,6 +26,7 @@ library
                    , GDAL.Internal.Types
                    , GDAL.Internal.CPLString
                    , GDAL.Internal.CPLError
+                   , GDAL.Internal.CPLProgress
                    , GDAL.Internal.GDAL
                    , GDAL.Internal.OGR
                    , GDAL.Internal.OSR

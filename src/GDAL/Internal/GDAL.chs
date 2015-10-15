@@ -76,9 +76,9 @@ module GDAL.Internal.GDAL (
 
 import Control.Applicative (Applicative, (<$>), (<*>))
 import Control.DeepSeq (NFData(rnf))
-import Control.Exception (Exception(..), bracket)
+import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when)
-import Control.Monad.IO.Class (MonadIO(..))
+import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Int (Int16, Int32)
 import Data.Bits ((.&.))
@@ -90,7 +90,7 @@ import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Storable as St
 import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
-import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrArray)
 import Foreign.Marshal.Alloc (alloca)
@@ -103,6 +103,7 @@ import Data.Char (toUpper)
 import GDAL.Internal.Types
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
+import GDAL.Internal.CPLProgress
 import GDAL.Internal.Util
 
 
@@ -117,6 +118,8 @@ data GDALRasterException
   = InvalidRasterSize !Int !Int
   | InvalidBlockSize  !Int
   | InvalidDatatype   !Datatype
+  | NullDataset
+  | CopyInterrupted
   deriving (Typeable, Show, Eq)
 
 instance NFData GDALRasterException where
@@ -263,24 +266,19 @@ foreign import ccall safe "gdal.h GDALOpen" open_
    :: CString -> CInt -> IO (Ptr (Dataset s t a))
 
 
-createCopy' :: GDALType a
+createCopy :: GDALType a
   => Driver -> String -> (Dataset s t a) -> Bool -> OptionList
-  -> ProgressFun -> GDAL s (RWDataset s a)
-createCopy' driver path ds strict options progressFun = do
+  -> Maybe ProgressFun -> GDAL s (RWDataset s a)
+createCopy driver path ds strict options progressFun = do
   d <- driverByName driver
-  ptr <- liftIO $
+  mPtr <- liftIO $
+    throwIfError "createCopy" $
     withCString path $ \p ->
     withProgressFun progressFun $ \pFunc ->
     withOptionList options $ \o ->
     withLockedDatasetPtr ds $ \dsPtr ->
       c_createCopy d p dsPtr (fromBool strict) o pFunc (castPtr nullPtr)
-  newDatasetHandle ptr
-
-createCopy :: GDALType a
-  => Driver -> FilePath -> (Dataset s t a) -> Bool -> OptionList
-  -> GDAL s (RWDataset s a)
-createCopy driver path dataset strict options = do
-  createCopy' driver path dataset strict options (\_ _ _ -> return 1)
+  maybe (throwBindingException CopyInterrupted) newDatasetHandle mPtr
 
 foreign import ccall safe "gdal.h GDALCreateCopy" c_createCopy
   :: DriverH
@@ -288,36 +286,26 @@ foreign import ccall safe "gdal.h GDALCreateCopy" c_createCopy
   -> Ptr (Dataset s t a)
   -> CInt
   -> Ptr CString
-  -> FunPtr ProgressFun
+  -> ProgressFunPtr
   -> Ptr ()
   -> IO (Ptr (RWDataset s a))
 
 
-withProgressFun :: forall c.
-  ProgressFun -> (FunPtr ProgressFun -> IO c) -> IO c
-withProgressFun = withCCallback wrapProgressFun
-
-withCCallback :: forall c t a.
-  (t -> IO (FunPtr a)) -> t -> (FunPtr a -> IO c) -> IO c
-withCCallback w f = bracket (w f) freeHaskellFunPtr
-
-type ProgressFun = CDouble -> Ptr CChar -> Ptr () -> IO CInt
-
-foreign import ccall "wrapper"
-  wrapProgressFun :: ProgressFun -> IO (FunPtr ProgressFun)
-
-
 newDatasetHandle :: Ptr (Dataset s t a) -> GDAL s (Dataset s t a)
-newDatasetHandle p = do
-  registerFinalizer (safeCloseDataset p)
-  m <- liftIO newMutex
-  return $ Dataset (m,p)
+newDatasetHandle p
+  | p==nullPtr  = throwBindingException NullDataset
+  | otherwise   = do
+      registerFinalizer (safeCloseDataset p)
+      m <- liftIO newMutex
+      return $ Dataset (m,p)
 
 newDerivedDatasetHandle
   :: Dataset s t a -> Ptr (Dataset s t b) -> GDAL s (Dataset s t b)
-newDerivedDatasetHandle (Dataset (m,_)) p = do
-  registerFinalizer (safeCloseDataset p)
-  return $ Dataset (m,p)
+newDerivedDatasetHandle (Dataset (m,_)) p
+  | p==nullPtr = throwBindingException NullDataset
+  | otherwise  = do
+      registerFinalizer (safeCloseDataset p)
+      return $ Dataset (m,p)
 
 safeCloseDataset :: Ptr (Dataset s t a) -> IO ()
 safeCloseDataset p = do

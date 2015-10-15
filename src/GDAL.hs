@@ -2,11 +2,14 @@ module GDAL (
     GDAL
   , GDALType
   , Datatype (..)
+
   , GDALException (..)
   , GDALRasterException (..)
   , ErrorType (..)
+  , ErrorNum (..)
   , isGDALException
   , isBindingException
+
   , Geotransform (..)
   , Driver (..)
   , Dataset
@@ -19,6 +22,8 @@ module GDAL (
   , ROBand
   , Band
   , Value (..)
+  , ProgressFun
+  , ContinueOrStop (..)
 
   , runGDAL
   , gdalForkIO
@@ -69,5 +74,6 @@ module GDAL (
 
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
+import GDAL.Internal.CPLProgress
 import GDAL.Internal.GDAL
 import GDAL.Internal.Types
