@@ -2,7 +2,8 @@
 *.ll
 *.o
 .fuse_hidden*
-*.swp
+*.sw?
 dist
 .hpc
 cabal-dev
+.stack-work

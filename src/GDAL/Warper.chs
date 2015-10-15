@@ -3,7 +3,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ExistentialQuantification #-}
 
-module OSGeo.GDAL.Warper (
+module GDAL.Warper (
     ResampleAlg (..)
   , WarpOptions (..)
   , GenImgProjTransformer (..)
@@ -25,12 +25,11 @@ import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (mallocArray)
 import Foreign.Marshal.Utils (fromBool)
 import Foreign.Storable (Storable(..))
-import OSGeo.OSR (SpatialReference, toWkt)
+import GDAL.OSR (SpatialReference, toWkt)
 
-import OSGeo.GDAL.Internal.Types
-import OSGeo.GDAL.Internal
-
-import OSGeo.Util (fromEnumC)
+import GDAL.Internal.Types
+import GDAL.Internal.GDAL
+import GDAL.Internal.Util (fromEnumC)
 
 #include "gdal.h"
 #include "gdal_alg.h"

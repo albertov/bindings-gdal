@@ -1,5 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
-module OSGeo.TestUtils (
+module TestUtils (
     shouldSatisfy
   , shouldBe
   , shouldThrow
@@ -22,7 +22,7 @@ import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec (SpecWith, Arg, Selector)
 import qualified Test.Hspec as Hspec
 
-import OSGeo.GDAL (GDAL, runGDAL)
+import GDAL (GDAL, runGDAL)
 
 it :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
 it n a = Hspec.it n (runGDAL a)

@@ -13,7 +13,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
 
-module OSGeo.GDAL.Internal (
+module GDAL.Internal.GDAL (
     GDALType
   , Datatype (..)
   , GDALException (..)
@@ -117,8 +117,8 @@ import Data.Char (toUpper)
 
 import GHC.Generics (Generic)
 
-import OSGeo.GDAL.Internal.Types
-import OSGeo.Util
+import GDAL.Internal.Types
+import GDAL.Internal.Util
 
 
 #include "gdal.h"

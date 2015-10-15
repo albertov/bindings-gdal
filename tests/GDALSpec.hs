@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module OSGeo.GDALSpec (main, spec) where
+module GDALSpec (main, spec) where
 
 import Control.Applicative (liftA2)
 import Control.Monad (void, forM_)
@@ -16,9 +16,9 @@ import System.FilePath (joinPath)
 
 import Test.Hspec (Spec, SpecWith, Arg, hspec, beforeAll_)
 
-import OSGeo.GDAL as GDAL
+import GDAL
 
-import OSGeo.TestUtils (
+import TestUtils (
     shouldBe
   , shouldSatisfy
   , shouldThrow

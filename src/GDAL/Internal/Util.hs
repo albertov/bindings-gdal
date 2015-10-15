@@ -1,5 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
-module OSGeo.Util (
+module GDAL.Internal.Util (
     Mutex
   , newMutex
   , withMutex

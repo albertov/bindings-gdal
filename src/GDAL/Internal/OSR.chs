@@ -1,6 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface , BangPatterns  #-}
 
-module OSGeo.OSR.Internal (
+module GDAL.Internal.OSR (
     SpatialReference
 
   , fromWkt
@@ -38,8 +38,8 @@ import Foreign.Marshal.Utils (toBool, fromBool)
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import OSGeo.Util
-import OSGeo.OGR 
+import GDAL.Internal.Util
+import GDAL.Internal.OGR 
 
 #include "ogr_srs_api.h"
 #include "cpl_vsi.h"

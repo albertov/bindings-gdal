@@ -6,7 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 
-module OSGeo.GDAL.Internal.Types (
+module GDAL.Internal.Types (
     Value(..)
   , uToStValue
   , stToUValue

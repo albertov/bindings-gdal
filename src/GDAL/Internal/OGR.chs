@@ -1,7 +1,7 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module OSGeo.OGR.Internal (
+module GDAL.Internal.OGR (
     Error (..)
   , OGRException (..)
   , isOGRException
@@ -19,7 +19,7 @@ import Foreign.Ptr (Ptr)
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import OSGeo.Util
+import GDAL.Internal.Util
 
 #include "ogr_api.h"
 
