@@ -14,10 +14,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 module OSGeo.GDAL.Internal (
-    GDAL
-  , runGDAL
-  , gdalForkIO
-  , GDALType
+    GDALType
   , Datatype (..)
   , GDALException (..)
   , ErrorType (..)
@@ -33,9 +30,6 @@ module OSGeo.GDAL.Internal (
   , RWBand
   , ROBand
   , Band
-  , Value (..)
-  , fromValue
-  , isNoData
   , registerAllDrivers
   , destroyDriverManager
   , setQuietErrorHandler

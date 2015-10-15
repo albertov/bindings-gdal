@@ -16,20 +16,21 @@ module OSGeo.GDAL.Warper (
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Control.Exception (throw, bracket)
-import Data.Proxy (Proxy(..))
+import Control.Exception (bracket)
 import Data.Default (Default(..))
 import Foreign.C.String (CString, withCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr, castFunPtr, nullFunPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (mallocArray)
-import Foreign.Marshal.Utils (toBool, fromBool)
+import Foreign.Marshal.Utils (fromBool)
 import Foreign.Storable (Storable(..))
 import OSGeo.OSR (SpatialReference, toWkt)
+
+import OSGeo.GDAL.Internal.Types
 import OSGeo.GDAL.Internal
-import OSGeo.Util (fromEnumC, toEnumC)
-import System.IO.Unsafe (unsafePerformIO)
+
+import OSGeo.Util (fromEnumC)
 
 #include "gdal.h"
 #include "gdal_alg.h"
@@ -119,10 +120,6 @@ intListToPtr l = do
   ptr <- mallocArray (length l)
   mapM_ (\(i,v) -> pokeElemOff ptr i (fromIntegral v)) (zip [0..] l)
   return ptr
-
-ptrToIntList :: Int -> Ptr CInt -> IO [Int]
-ptrToIntList 0 _   = return []
-ptrToIntList n ptr = mapM (\i -> fmap fromIntegral (peekElemOff ptr i)) [0..n]
 
 
 reprojectImage
@@ -221,14 +218,8 @@ createWarpedVRT srcDs nPixels nLines gt options = do
           {#call GDALSetGenImgProjTransformerDstGeoTransform as ^#} pArg gtPtr
         c_createWarpedVRT dsPtr (fromIntegral nPixels) (fromIntegral nLines)
                           gtPtr opts
-      --throwIfError_ "initializeWarpedVRT" (c_initializeWarpedVRT ptr opts)
       return ptr
   newDerivedDatasetHandle srcDs newDsPtr
-
-foreign import ccall safe "gdalwarper.h GDALInitializeWarpedVRT" c_initializeWarpedVRT
-  :: Ptr (RODataset s a)
-  -> Ptr WarpOptions
-  -> IO CInt
 
 foreign import ccall safe "gdalwarper.h GDALCreateWarpedVRT" c_createWarpedVRT
   :: Ptr (RODataset s a) -- ^Source dataset
@@ -242,7 +233,7 @@ foreign import ccall safe "gdalwarper.h GDALCreateWarpedVRT" c_createWarpedVRT
 
 withWarpOptionsPtr
   :: Ptr (Dataset s t b) -> Maybe WarpOptions -> (Ptr WarpOptions -> IO a) -> IO a
-withWarpOptionsPtr dsPtr Nothing  f = f nullPtr
+withWarpOptionsPtr _ Nothing  f = f nullPtr
 withWarpOptionsPtr dsPtr (Just (WarpOptions{..})) f
   = bracket createWarpOptions destroyWarpOptions f
   where

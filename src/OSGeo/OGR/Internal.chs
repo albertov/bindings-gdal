@@ -13,21 +13,15 @@ import Data.Maybe (isJust)
 import Control.Exception (Exception, SomeException, throw, fromException)
 import Control.Monad (liftM)
 
-import Foreign.C.String (withCString, CString, peekCString)
-import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
-import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr, freeHaskellFunPtr)
-import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr
-                          ,mallocForeignPtrArray)
-import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (allocaArray)
-import Foreign.Marshal.Utils (toBool, fromBool)
+import Foreign.C.String (peekCString)
+import Foreign.C.Types (CInt(..), CChar(..))
+import Foreign.Ptr (Ptr)
 
 import System.IO.Unsafe (unsafePerformIO)
 
 import OSGeo.Util
 
-#include "ogr_core.h"
+#include "ogr_api.h"
 
 data OGRException = OGRException Error String
      deriving (Show, Typeable)
