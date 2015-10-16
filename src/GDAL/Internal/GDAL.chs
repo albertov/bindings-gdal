@@ -50,6 +50,7 @@ module GDAL.Internal.GDAL (
   , bandBlockCount
   , bandBlockLen
   , bandSize
+  , allBand
   , bandNodataValue
   , setBandNodataValue
   , getBand
@@ -72,7 +73,7 @@ module GDAL.Internal.GDAL (
   , newDerivedDatasetHandle
 ) where
 
-import Control.Applicative ((<$>), (<*>))
+import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when)
@@ -113,7 +114,7 @@ $(let names = fmap (words . map toUpper) $
   in createEnum "Driver" names)
 
 data GDALRasterException
-  = InvalidRasterSize !Int !Int
+  = InvalidRasterSize !Size
   | InvalidBlockSize  !Int
   | InvalidDatatype   !Datatype
   | NullDataset
@@ -212,9 +213,9 @@ driverByName s = liftIO $
 
 create
   :: forall s a. GDALType a
-  => Driver -> String -> Int -> Int -> Int -> OptionList
+  => Driver -> String -> Size -> Int -> OptionList
   -> GDAL s (Dataset s ReadWrite a)
-create drv path nx ny bands options = do
+create drv path (XY nx ny) bands options = do
   d <- driverByName drv
   ptr <- liftIO $ withCString path $ \path' -> do
     let nx'    = fromIntegral nx
@@ -316,7 +317,7 @@ foreign import ccall "gdal.h GDALClose"
 
 createMem
   :: GDALType a
-  => Int -> Int -> Int -> OptionList -> GDAL s (Dataset s ReadWrite a)
+  => Size -> Int -> OptionList -> GDAL s (Dataset s ReadWrite a)
 createMem = create MEM ""
 
 flushCache :: forall s a. RWDataset s a -> GDAL s ()
@@ -423,28 +424,29 @@ foreign import ccall unsafe "gdal.h GDALGetRasterDataType" c_getRasterDataType
   :: Ptr (Band s a t) -> CInt
 
 
-bandBlockSize :: (Band s t a) -> (Int,Int)
+bandBlockSize :: (Band s t a) -> Size
 bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    getBlockSize_ (unBand band) xPtr yPtr
-   liftM2 (,) (liftM fromIntegral $ peek xPtr) (liftM fromIntegral $ peek yPtr)
+   liftM (fmap fromIntegral) (liftM2 XY (peek xPtr) (peek yPtr))
 
 foreign import ccall unsafe "gdal.h GDALGetBlockSize" getBlockSize_
     :: Ptr (Band s a t) -> Ptr CInt -> Ptr CInt -> IO ()
 
 
-bandBlockLen :: (Band s t a) -> Int
-bandBlockLen = uncurry (*) . bandBlockSize
+bandBlockLen :: Band s t a -> Int
+bandBlockLen = (\(XY x y) -> x*y) . bandBlockSize
 
-bandSize :: (Band s a t) -> (Int, Int)
-bandSize band = ( fromIntegral (getBandXSize_ (unBand band))
-                , fromIntegral (getBandYSize_ (unBand band)))
+bandSize :: Band s a t -> Size
+bandSize b = fmap fromIntegral $
+               XY (getBandXSize_ (unBand b)) (getBandYSize_ (unBand b))
 
-bandBlockCount :: Band s t a -> (Int, Int)
-bandBlockCount b
-  = ( ceiling (fromIntegral nx / fromIntegral bx :: Double)
-    , ceiling (fromIntegral ny / fromIntegral by :: Double))
-  where (nx,ny) = bandSize b
-        (bx,by) = bandBlockSize b
+allBand :: Band s a t -> Window Int
+allBand = Window (pure 0) . bandSize
+
+bandBlockCount :: Band s t a -> XY Int
+bandBlockCount b = fmap ceiling $ liftA2 ((/) :: Double -> Double -> Double)
+                     (fmap fromIntegral (bandSize b))
+                     (fmap fromIntegral (bandBlockSize b))
 
 foreign import ccall unsafe "gdal.h GDALGetRasterBandXSize" getBandXSize_
   :: Ptr (Band s t a) -> CInt
@@ -485,32 +487,29 @@ foreign import ccall safe "gdal.h GDALFillRaster" fillRaster_
 
 readBand :: forall s t b a. GDALType a
   => (Band s t b)
-  -> Int -> Int
-  -> Int -> Int
-  -> Int -> Int
+  -> Window Int
+  -> Size
   -> GDAL s (Vector (Value a))
-readBand band xoff yoff sx sy bx by = liftIO $
-  readBandIO band xoff yoff sx sy bx by
+readBand band win size = liftIO $ readBandIO band win size
 {-# INLINE readBand #-}
 
 readBandPure :: forall s b a. GDALType a
   => (ROBand s b)
-  -> Int -> Int
-  -> Int -> Int
-  -> Int -> Int
+  -> Window Int
+  -> Size
   -> Vector (Value a)
-readBandPure band xoff yoff sx sy bx by = unsafePerformIO $
-  readBandIO band xoff yoff sx sy bx by
+readBandPure band win size = unsafePerformIO $ readBandIO band win size
 {-# INLINE readBandPure #-}
 
 readBandIO :: forall s t b a. GDALType a
   => (Band s t b)
-  -> Int -> Int
-  -> Int -> Int
-  -> Int -> Int
+  -> Window Int
+  -> Size
   -> IO (Vector (Value a))
-readBandIO band xoff yoff sx sy bx by = readMasked band read_
+readBandIO band win (XY bx by) = readMasked band read_
   where
+    XY sx sy     = winSize win
+    XY xoff yoff = winMin win
     read_ :: forall b' a'. GDALType a' => Ptr (Band s t b') -> IO (St.Vector a')
     read_ b = do
       fp <- mallocForeignPtrArray (bx * by)
@@ -578,20 +577,21 @@ foreign import ccall safe "gdal.h GDALRasterAdviseRead" adviseRead_
     -> Ptr (Ptr CChar) -> IO CInt
 
 writeBand :: forall s b a. GDALType a
-  => (RWBand s b)
-  -> Int -> Int
-  -> Int -> Int
-  -> Int -> Int
+  => RWBand s b
+  -> Window Int
+  -> Size
   -> Vector (Value a)
   -> GDAL s ()
-writeBand band xoff yoff sx sy bx by uvec = liftIO $
+writeBand band win sz@(XY bx by) uvec = liftIO $
   withLockedBandPtr band $ \bPtr -> do
     bNodata <- fmap (maybe nodata fromNodata) (c_bandNodataValue bPtr)
     let nElems    = bx * by
         (fp, len) = St.unsafeToForeignPtr0 vec
         vec       = St.map (fromValue bNodata) (uToStValue uvec)
+        XY sx sy     = winSize win
+        XY xoff yoff = winMin win
     if nElems /= len
-      then throwBindingException (InvalidRasterSize bx by)
+      then throwBindingException (InvalidRasterSize sz)
       else withForeignPtr fp $ \ptr -> do
         throwIfError_ "writeBand" $
           rasterIO_
@@ -615,8 +615,8 @@ foreign import ccall safe "gdal.h GDALRasterIO" rasterIO_
 
 readBandBlock
   :: forall s t a. GDALType a
-  => Band s t a -> Int -> Int -> GDAL s (Vector (Value a))
-readBandBlock band x y = do
+  => Band s t a -> BlockIx -> GDAL s (Vector (Value a))
+readBandBlock band (XY x y) = do
   checkType band
   liftIO $ readMasked band $ \b -> do
     f <- mallocForeignPtrArray len
@@ -638,19 +638,19 @@ foldl' f = foldlM' (\acc -> return . f acc)
 
 ifoldl'
   :: forall s t a b. GDALType a
-  => (b -> Int -> Int -> Value a -> b) -> b -> Band s t a -> GDAL s b
-ifoldl' f = ifoldlM' (\acc x y -> return . f acc x y)
+  => (b -> BlockIx -> Value a -> b) -> b -> Band s t a -> GDAL s b
+ifoldl' f = ifoldlM' (\acc ix -> return . f acc ix)
 {-# INLINE ifoldl' #-}
 
 foldlM'
   :: forall s t a b. GDALType a
   => (b -> Value a -> IO b) -> b -> Band s t a -> GDAL s b
-foldlM' f = ifoldlM' (\acc _ _ -> f acc)
+foldlM' f = ifoldlM' (\acc _ -> f acc)
 {-# INLINE foldlM' #-}
 
 ifoldlM'
   :: forall s t a b. GDALType a
-  => (b -> Int -> Int -> Value a -> IO b) -> b -> Band s t a  -> GDAL s b
+  => (b -> BlockIx -> Value a -> IO b) -> b -> Band s t a  -> GDAL s b
 ifoldlM' f initialAcc band = liftIO $ do
   mNodata <- c_bandNodataValue (unBand band)
   fp <- mallocForeignPtrArray (sx*sy)
@@ -668,9 +668,8 @@ ifoldlM' f initialAcc band = liftIO $ do
           | jB+1 < ny = goB 0 (jB+1) acc
           | otherwise = return acc
           where
-            applyTo i j a = f a x y . toValue =<< peekElemOff ptr (j*sx+i)
-              where x = iB*sx+i
-                    y = jB*sy+j
+            applyTo i j a = f a ix . toValue =<< peekElemOff ptr (j*sx+i)
+              where ix = XY (iB*sx+i) (jB*sy+j)
             stopx
               | mx /= 0 && iB==nx-1 = mx
               | otherwise           = sx
@@ -683,17 +682,15 @@ ifoldlM' f initialAcc band = liftIO $ do
               | otherwise   = return acc'
     goB 0 0 initialAcc
   where
-    mx      = bx `mod` sx
-    my      = by `mod` sy
-    (nx,ny) = bandBlockCount band
-    (sx,sy) = bandBlockSize band
-    (bx,by) = bandSize band
+    !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
+    !(XY nx ny) = bandBlockCount band
+    !(XY sx sy) = bandBlockSize band
 {-# INLINE ifoldlM' #-}
 
 writeBandBlock
   :: forall s a. GDALType a
-  => RWBand s a -> Int -> Int -> Vector (Value a) -> GDAL s ()
-writeBandBlock band x y uvec = do
+  => RWBand s a -> BlockIx  -> Vector (Value a) -> GDAL s ()
+writeBandBlock band (XY x y) uvec = do
   checkType band
   liftIO $ withLockedBandPtr band $ \b -> do
     bNodata <- fmap (maybe nodata fromNodata) (c_bandNodataValue b)

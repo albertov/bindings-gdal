@@ -2,6 +2,10 @@ module GDAL (
     GDAL
   , GDALType
   , Datatype (..)
+  , XY (..)
+  , Window (..)
+  , Size
+  , BlockIx
 
   , GDALException (..)
   , GDALRasterException (..)
@@ -56,6 +60,9 @@ module GDAL (
   , bandBlockCount
   , bandBlockLen
   , bandSize
+  , allBand
+  , winSize
+  , sizeLen
   , bandNodataValue
   , setBandNodataValue
   , getBand

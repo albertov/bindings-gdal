@@ -6,10 +6,18 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module GDAL.Internal.Types (
     Value(..)
   , GDAL
+  , Window (..)
+  , XY (..)
+  , Size
+  , BlockIx
+  , winSize
+  , sizeLen
   , Ref
   , mkRef
   , deRef
@@ -42,6 +50,7 @@ import Control.Monad.Catch (MonadThrow(..), MonadCatch, MonadMask, finally)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT, runReaderT, ask)
 
+import Data.Typeable (Typeable)
 import Data.Coerce (coerce)
 import Data.Word (Word8)
 
@@ -68,6 +77,47 @@ class Clonable (a :: AccessMode -> *) where
 
 deRef :: Clonable a => Ref s a t -> GDAL s (a t')
 deRef = clone . unsafeDeRef
+
+
+data XY a = XY {px :: !a, py :: !a} deriving (Eq, Ord, Show, Read, Typeable)
+
+instance NFData a => NFData (XY a) where
+  rnf (XY a b) = rnf a `seq` rnf b `seq` ()
+
+data Window a
+  = Window {
+      winMin :: !(XY a)
+    , winMax :: !(XY a)
+    }
+  deriving (Eq, Show, Read, Functor, Typeable)
+
+instance NFData a => NFData (Window a) where
+  rnf (Window a b) = rnf a `seq` rnf b `seq` ()
+
+winSize :: Num a => Window a -> XY a
+winSize w = liftA2 (-) (winMax w) (winMin w)
+{-# INLINE winSize #-}
+
+sizeLen :: Size -> Int
+sizeLen (XY x y) = x*y
+{-# INLINE sizeLen #-}
+
+type Size    = XY Int
+type BlockIx = XY Int
+
+
+instance Functor XY where
+  fmap f (XY a b) = XY (f a) (f b)
+  {-# INLINE fmap #-}
+  a <$ _ = XY a a
+  {-# INLINE (<$) #-}
+
+instance Applicative XY where
+  pure a = XY a a
+  {-# INLINE pure #-}
+  XY a b <*> XY d e = XY (a d) (b e)
+  {-# INLINE (<*>) #-}
+
 
 
 data Value a
