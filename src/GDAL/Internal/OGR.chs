@@ -50,6 +50,7 @@ module GDAL.Internal.OGR (
   , cleanupAll
 ) where
 
+import Control.Applicative ((<$>))
 import Control.Monad (liftM, when, void, (<=<), (>=>))
 import Control.Monad.Catch(throwM, catch, catchJust)
 import Control.Monad.IO.Class (MonadIO(liftIO))
