@@ -67,7 +67,7 @@ shouldBe :: (Show a, Eq a) => a -> a -> GDAL s ()
 shouldBe a  = liftIO . Hspec.shouldBe a
 
 shouldNotBe :: (Show a, Eq a) => a -> a -> GDAL s ()
-shouldNotBe a  = liftIO . Hspec.shouldNotBe a
+shouldNotBe a  = liftIO . flip Hspec.shouldSatisfy (/=a)
 
 
 expectationFailure :: String -> GDAL s ()

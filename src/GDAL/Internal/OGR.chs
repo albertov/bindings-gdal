@@ -67,12 +67,10 @@ import Data.Coerce (coerce)
 import Foreign.C.String (CString, peekCString, withCString)
 import Foreign.C.Types (CInt(..), CChar(..), CUChar(..))
 import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr)
-import qualified Foreign.Concurrent as FConc
 import Foreign.ForeignPtr (
     ForeignPtr
   , withForeignPtr
   , newForeignPtr
-  , newForeignPtr_
   )
 import Foreign.Marshal.Alloc (alloca, mallocBytes)
 import Foreign.Marshal.Utils (toBool)
