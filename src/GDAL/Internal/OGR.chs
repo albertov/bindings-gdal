@@ -40,11 +40,18 @@ module GDAL.Internal.OGR (
   , unsafeThawGeometry
   , unsafeFreezeGeometry
 
+  , datasourceName
+  , executeSQL
+
   , getLayer
   , getLayerByName
-  , executeSQL
+
+  , getSpatialFilterRef
+  , getSpatialFilter
+  , setSpatialFilter
+
   , layerCount
-  , datasourceName
+  , layerName
 
   , registerAllDrivers
   , cleanupAll
@@ -71,6 +78,7 @@ import Foreign.ForeignPtr (
     ForeignPtr
   , withForeignPtr
   , newForeignPtr
+  , newForeignPtr_
   )
 import Foreign.Marshal.Alloc (alloca, mallocBytes)
 import Foreign.Marshal.Utils (toBool)
@@ -146,21 +154,6 @@ foreign import ccall safe "ogr_api.h OGRReleaseDataSource"
   c_releaseDatasource :: Ptr (Datasource s t a) -> IO ()
 
 
-{#pointer OGRLayerH as Layer newtype nocode#}
-
-newtype (Layer s (t::AccessMode) a)
-  = Layer (Mutex, Ptr (Layer s t a))
-
-unLayer :: Layer s t a -> Ptr (Layer s t a)
-unLayer (Layer (_,p)) = p
-
-withLockedLayerPtr
-  :: Layer s t a -> (Ptr (Layer s t a) -> IO b) -> IO b
-withLockedLayerPtr (Layer (m,p)) f = withMutex m $ f p
-
-type ROLayer s = Layer s ReadOnly
-type RWLayer s = Layer s ReadWrite
-
 getLayer :: Int -> Datasource s t a -> GDAL s (Layer s t a)
 getLayer layer (Datasource (m,dp)) = liftIO $ do
   p <- throwIfError "getLayer" (c_getLayer dp (fromIntegral layer))
@@ -188,9 +181,9 @@ foreign import ccall unsafe "ogr_api.h OGR_DS_GetLayerCount" c_getLayerCount
   :: Ptr (Datasource s t a) -> IO CInt
 
 datasourceName :: Datasource s t a -> GDAL s String
-datasourceName = liftIO . (peekCString <=< c_getName . unDatasource)
+datasourceName = liftIO . (peekCString <=< c_dsGeName . unDatasource)
 
-foreign import ccall unsafe "ogr_api.h OGR_DS_GetName" c_getName
+foreign import ccall unsafe "ogr_api.h OGR_DS_GetName" c_dsGeName
   :: Ptr (Datasource s t a) -> IO CString
 
 data SQLDialect
@@ -233,7 +226,61 @@ foreign import ccall safe "ogr_api.h OGR_DS_ReleaseResultSet"
 
 
 
+
+
+
+{#pointer OGRLayerH as Layer newtype nocode#}
+
+newtype (Layer s (t::AccessMode) a)
+  = Layer (Mutex, Ptr (Layer s t a))
+
+unLayer :: Layer s t a -> Ptr (Layer s t a)
+unLayer (Layer (_,p)) = p
+
+withLockedLayerPtr
+  :: Layer s t a -> (Ptr (Layer s t a) -> IO b) -> IO b
+withLockedLayerPtr (Layer (m,p)) f = withMutex m $ f p
+
+type ROLayer s = Layer s ReadOnly
+type RWLayer s = Layer s ReadWrite
+
+layerName :: Layer s t a -> GDAL s String
+layerName = liftIO . (peekCString <=< c_lGetName . unLayer)
+
+foreign import ccall unsafe "ogr_api.h OGR_L_GetName" c_lGetName
+  :: Ptr (Layer s t a) -> IO CString
+
+
+getSpatialFilter :: Layer s t a -> GDAL s (Maybe ROGeometry)
+getSpatialFilter
+  = maybe (return Nothing) (liftM Just . deRef) <=< getSpatialFilterRef
+
+getSpatialFilterRef :: Layer s t a -> GDAL s (Maybe (Ref s Geometry ReadOnly))
+getSpatialFilterRef l = liftIO $ withLockedLayerPtr l $ \lPtr -> do
+  p <- c_getSpatialFilter lPtr
+  if p == nullPtr
+    then return Nothing
+    else liftM (Just . mkRef . Geometry) (newForeignPtr_ p)
+
+foreign import ccall unsafe "ogr_api.h OGR_L_GetSpatialFilter"
+  c_getSpatialFilter :: Ptr (Layer s t a) -> IO (Ptr ROGeometry)
+
+setSpatialFilter :: Layer s t a -> Geometry t' -> GDAL s ()
+setSpatialFilter l g = liftIO $
+  withLockedLayerPtr l $ \lPtr -> withGeometry g$ \gPtr ->
+    c_setSpatialFilter lPtr gPtr
+
+foreign import ccall unsafe "ogr_api.h OGR_L_SetSpatialFilter"
+  c_setSpatialFilter :: Ptr (Layer s t a) -> Ptr (Geometry t') -> IO ()
+
 newtype Geometry (t::AccessMode) = Geometry (ForeignPtr (Geometry t))
+
+instance Clonable Geometry where
+  clone = liftIO . flip withGeometry (c_cloneGeometry >=> newGeometryHandle)
+
+foreign import ccall safe "ogr_api.h OGR_G_Clone"
+  c_cloneGeometry :: Ptr (Geometry t) -> IO (Ptr (Geometry t'))
+
 
 withMaybeGeometry :: Maybe (Geometry t) -> (Ptr (Geometry t) -> IO a) -> IO a
 withMaybeGeometry (Just (Geometry ptr)) = withForeignPtr ptr
@@ -254,12 +301,12 @@ newGeometryHandle p
   | otherwise  = Geometry <$> newForeignPtr c_destroyGeometry p
 
 createFromWkb
-  :: ByteString -> Maybe SpatialReference -> Either OGRError ROGeometry
-createFromWkb bs = unsafePerformIO . createFromWkbIO bs
+  :: Maybe SpatialReference -> ByteString -> Either OGRError ROGeometry
+createFromWkb mSr = unsafePerformIO . createFromWkbIO mSr
 
 createFromWkbIO
-  :: ByteString -> Maybe SpatialReference -> IO (Either OGRError (Geometry t))
-createFromWkbIO bs mSrs =
+  :: Maybe SpatialReference -> ByteString -> IO (Either OGRError (Geometry t))
+createFromWkbIO mSrs bs =
   alloca $ \gPtr ->
   unsafeUseAsCStringLen bs $ \(sPtr, len) ->
   withMaybeSpatialReference mSrs $ \srs ->
@@ -273,12 +320,12 @@ foreign import ccall unsafe "ogr_api.h OGR_G_CreateFromWkb"
 
 
 createFromWkt
-  :: ByteString -> Maybe SpatialReference -> Either OGRError ROGeometry
-createFromWkt bs = unsafePerformIO . createFromWktIO bs
+  :: Maybe SpatialReference -> ByteString -> Either OGRError ROGeometry
+createFromWkt mSrs = unsafePerformIO . createFromWktIO mSrs
 
 createFromWktIO
-  :: ByteString -> Maybe SpatialReference -> IO (Either OGRError (Geometry t))
-createFromWktIO bs mSrs =
+  :: Maybe SpatialReference -> ByteString -> IO (Either OGRError (Geometry t))
+createFromWktIO mSrs bs =
   alloca $ \gPtr ->
   alloca $ \sPtrPtr ->
   unsafeUseAsCString bs $ \sPtr ->

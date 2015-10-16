@@ -72,7 +72,7 @@ module GDAL.Internal.GDAL (
   , newDerivedDatasetHandle
 ) where
 
-import Control.Applicative (Applicative, (<$>), (<*>))
+import Control.Applicative ((<$>), (<*>))
 import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when)

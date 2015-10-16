@@ -10,6 +10,10 @@
 module GDAL.Internal.Types (
     Value(..)
   , GDAL
+  , Ref
+  , mkRef
+  , deRef
+  , Clonable (..)
   , AccessMode
   , ReadWrite
   , ReadOnly
@@ -53,6 +57,17 @@ data AccessMode = ReadOnly | ReadWrite
 
 type ReadOnly  = 'ReadOnly
 type ReadWrite = 'ReadWrite
+
+newtype Ref s a (t :: AccessMode) = Ref {unsafeDeRef :: a t}
+
+mkRef :: a t -> Ref s a t
+mkRef = Ref
+
+class Clonable (a :: AccessMode -> *) where
+  clone :: a t -> GDAL s (a t')
+
+deRef :: Clonable a => Ref s a t -> GDAL s (a t')
+deRef = clone . unsafeDeRef
 
 
 data Value a

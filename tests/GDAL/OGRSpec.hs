@@ -7,6 +7,7 @@ import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Either (isRight)
+import Data.Maybe (isNothing)
 
 import System.Mem (performMajorGC)
 
@@ -65,7 +66,25 @@ spec = setupAndTeardown $ do
 
     it "can get datasource name" $ do
       n <- getShapePath >>= openReadOnly >>= datasourceName
-      n `shouldContain` "fondo"
+      n `shouldContain` "fondo.shp"
+
+    it "can get layer name" $ do
+      n <- getShapePath >>= openReadOnly >>= getLayer 0 >>= layerName
+      n `shouldBe` "fondo"
+
+  describe "getSpatialFilter" $ do
+
+    it "return Noting when no filter has been set" $ do
+      mGeom <- getShapePath >>= openReadOnly >>= getLayer 0 >>= getSpatialFilter
+      mGeom `shouldSatisfy` isNothing
+
+    it "can set a spatial filter and retrieve it" $ do
+      l <- getShapePath >>= openReadWrite >>= getLayer 0
+      let Right g = createFromWkt Nothing "POINT (34 21)"
+      setSpatialFilter l g
+      mGeom <- getSpatialFilter l
+      mGeom `shouldBe` Just g
+
 
   describe "executeSQL" $ do
 
@@ -84,37 +103,37 @@ spec = setupAndTeardown $ do
     describe "createFromWkt / exportToWkt" $ do
 
       it "succeeds if valid" $ do
-        let eGeom = createFromWkt "POINT (34 21)" Nothing
+        let eGeom = createFromWkt Nothing "POINT (34 21)"
         eGeom `shouldSatisfy` isRight
 
       it "fails if invalid" $ do
-        let eGeom = createFromWkt "im not wkt" Nothing
+        let eGeom = createFromWkt Nothing "im not wkt"
         eGeom `shouldBe` Left UnsupportedGeometryType
 
       it "export is same as origin" $ do
-        let Right g = createFromWkt wkt Nothing
+        let Right g = createFromWkt Nothing wkt
             wkt     = "POINT (34 21)"
         exportToWkt g `shouldBe` wkt
 
     describe "createFromWkb / exportToWkb" $ do
 
       it "succeeds if valid" $ do
-        let Right g = createFromWkt "POINT (34 21)" Nothing
+        let Right g = createFromWkt Nothing "POINT (34 21)"
             wkb     = exportToWkb WkbXDR g
-        createFromWkb wkb Nothing `shouldSatisfy` isRight
+        createFromWkb Nothing wkb `shouldSatisfy` isRight
 
       it "fails if invalid" $ do
-        let eGeom = createFromWkb "im not wkb" Nothing
+        let eGeom = createFromWkb Nothing "im not wkb"
         eGeom `shouldBe` Left CorruptData
 
 
     it "compares equal when equal" $ do
-      createFromWkt "POINT (2 5)" Nothing
-        `shouldBe` createFromWkt "POINT (2 5)" Nothing
+      createFromWkt Nothing "POINT (2 5)"
+        `shouldBe` createFromWkt Nothing "POINT (2 5)"
 
-    it "compares not equal when not equal equal" $ do
-      createFromWkt "POINT (2 6)" Nothing
-        `shouldNotBe` createFromWkt "POINT (2 5)" Nothing
+    it "compares not equal when not equal" $ do
+      createFromWkt Nothing "POINT (2 6)"
+        `shouldNotBe` createFromWkt Nothing "POINT (2 5)"
 
 getShapePath :: GDAL s FilePath
 getShapePath = liftIO $ getDataFileName "tests/fixtures/fondo.shp"
