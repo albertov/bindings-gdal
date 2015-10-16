@@ -5,10 +5,14 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE DataKinds #-}
 
 module GDAL.Internal.Types (
     Value(..)
   , GDAL
+  , AccessMode
+  , ReadWrite
+  , ReadOnly
   , uToStValue
   , stToUValue
   , isNoData
@@ -44,6 +48,12 @@ import qualified Data.Vector.Unboxed.Base as U
 
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (Storable(..))
+
+data AccessMode = ReadOnly | ReadWrite
+
+type ReadOnly  = 'ReadOnly
+type ReadWrite = 'ReadWrite
+
 
 data Value a
   = Value {unValue :: !a}

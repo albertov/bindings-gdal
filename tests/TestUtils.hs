@@ -2,12 +2,13 @@
 module TestUtils (
     shouldSatisfy
   , shouldBe
+  , shouldNotBe
   , shouldThrow
+  , shouldContain
   , expectationFailure
   , existsAndSizeIsGreaterThan
   , it
   , withDir
-  , setupAndTeardown
 ) where
 
 import Control.Monad (guard, unless)
@@ -19,26 +20,11 @@ import Data.Typeable (typeOf)
 import System.IO (IOMode(ReadMode), withBinaryFile, hFileSize)
 import System.IO.Error (isDoesNotExistError)
 import System.IO.Temp (withSystemTempDirectory)
-import System.Mem (performMajorGC)
 
-import Test.Hspec (SpecWith, Arg, Selector, before_, after_)
+import Test.Hspec (SpecWith, Arg, Selector)
 import qualified Test.Hspec as Hspec
 
-import GDAL (
-    GDAL
-  , runGDAL
-  , setQuietErrorHandler
-  , registerAllDrivers
-  , destroyDriverManager
-  )
-
--- | Makes sure (or tries) that we're not double-freeing, etc by destroying
---   the driver manager after every test and peformimg a major garbage
---   collection to force (really?) the finalizers to run.
-setupAndTeardown :: SpecWith a -> SpecWith a
-setupAndTeardown
-  = before_ (setQuietErrorHandler >> registerAllDrivers)
-  . after_  (destroyDriverManager >> performMajorGC)
+import GDAL (GDAL, runGDAL)
 
 it :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
 it n a = Hspec.it n (runGDAL a)
@@ -74,8 +60,15 @@ action `shouldThrow` p = do
 shouldSatisfy :: Show a => a -> (a -> Bool) -> GDAL s ()
 shouldSatisfy a = liftIO . Hspec.shouldSatisfy a
 
+shouldContain :: (Show a, Eq a) => [a] -> [a] -> GDAL s ()
+shouldContain a  = liftIO . Hspec.shouldContain a
+
 shouldBe :: (Show a, Eq a) => a -> a -> GDAL s ()
 shouldBe a  = liftIO . Hspec.shouldBe a
+
+shouldNotBe :: (Show a, Eq a) => a -> a -> GDAL s ()
+shouldNotBe a  = liftIO . Hspec.shouldNotBe a
+
 
 expectationFailure :: String -> GDAL s ()
 expectationFailure = liftIO . Hspec.expectationFailure

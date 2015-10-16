@@ -19,8 +19,6 @@ module GDAL.Internal.GDAL (
   , Geotransform (..)
   , Driver (..)
   , Dataset
-  , ReadWrite
-  , ReadOnly
   , RWDataset
   , RODataset
   , RWBand
@@ -170,12 +168,7 @@ instance Show Datatype where
 {#pointer GDALDatasetH as Dataset foreign newtype nocode#}
 
 
-data DatasetMode = ReadOnly | ReadWrite
-
-type ReadOnly  = 'ReadOnly
-type ReadWrite = 'ReadWrite
-
-newtype Dataset s (t::DatasetMode) a
+newtype Dataset s (t::AccessMode) a
   = Dataset (Mutex, Ptr (Dataset s t a))
 
 unDataset :: Dataset s t a -> Ptr (Dataset s t a)
@@ -190,7 +183,7 @@ type RWDataset s = Dataset s ReadWrite
 
 {#pointer GDALRasterBandH as Band newtype nocode#}
 
-newtype (Band s (t::DatasetMode) a)
+newtype (Band s (t::AccessMode) a)
   = Band (Mutex, Ptr (Band s t a))
 
 unBand :: Band s t a -> Ptr (Band s t a)
@@ -242,10 +235,10 @@ foreign import ccall safe "gdal.h GDALCreate" c_create
   -> Ptr CString
   -> IO (Ptr (RWDataset s a))
 
-openReadOnly :: FilePath -> GDAL s (RODataset s a)
+openReadOnly :: String -> GDAL s (RODataset s a)
 openReadOnly p = openWithMode GA_ReadOnly p
 
-openReadWrite :: GDALType a => FilePath -> GDAL s (RWDataset s a)
+openReadWrite :: GDALType a => String -> GDAL s (RWDataset s a)
 openReadWrite p = openWithMode GA_Update p
 
 openWithMode :: Access -> String -> GDAL s (Dataset s t a)

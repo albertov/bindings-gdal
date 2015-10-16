@@ -123,13 +123,13 @@ data WarpOptions =
 
 instance Default WarpOptions where
   def = WarpOptions {
-            woResampleAlg     = GRA_NearestNeighbour
-          , woWarpOptions     = []
-          , woMemoryLimit     = 0
-          , woWorkingDatatype = GDT_Unknown
-          , woBands           = []
-          , woTransfomer      = Just (SomeTransformer (def :: GenImgProjTransformer))
-          }
+          woResampleAlg     = GRA_NearestNeighbour
+        , woWarpOptions     = []
+        , woMemoryLimit     = 0
+        , woWorkingDatatype = GDT_Unknown
+        , woBands           = []
+        , woTransfomer      = Just (SomeTransformer(def::GenImgProjTransformer))
+        }
 
 intListToPtr :: [Int] -> IO (Ptr CInt)
 intListToPtr [] = return nullPtr
@@ -166,8 +166,8 @@ reprojectImage srcDs srcSr dstDs dstSr alg maxError mProgressFun options
        maybe (throwBindingException WarpStopped) return ret
 
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
-withMaybeSRAsCString Nothing f = f nullPtr
-withMaybeSRAsCString (Just srs) f = withCString (toWkt srs) f
+withMaybeSRAsCString Nothing    = ($ nullPtr)
+withMaybeSRAsCString (Just srs) = withCString (either (const "") id (toWkt srs))
 
 foreign import ccall safe "gdalwarper.h GDALReprojectImage" c_reprojectImage
   :: Ptr (Dataset s t a) -- ^Source dataset
@@ -252,7 +252,8 @@ foreign import ccall safe "gdalwarper.h GDALCreateWarpedVRT" c_createWarpedVRT
 
 
 withWarpOptionsPtr
-  :: Ptr (Dataset s t b) -> Maybe WarpOptions -> (Ptr WarpOptions -> IO a) -> IO a
+  :: Ptr (Dataset s t b) -> Maybe WarpOptions -> (Ptr WarpOptions -> IO a)
+  -> IO a
 withWarpOptionsPtr _ Nothing  f = f nullPtr
 withWarpOptionsPtr dsPtr (Just (WarpOptions{..})) f
   = bracket createWarpOptions destroyWarpOptions f
@@ -280,8 +281,8 @@ withWarpOptionsPtr dsPtr (Just (WarpOptions{..})) f
 
     destroyWarpOptions = c_destroyWarpOptions
 
-foreign import ccall unsafe "gdalwarper.h GDALCreateWarpOptions" c_createWarpOptions
-  :: IO (Ptr WarpOptions)
+foreign import ccall unsafe "gdalwarper.h GDALCreateWarpOptions"
+  c_createWarpOptions :: IO (Ptr WarpOptions)
 
-foreign import ccall unsafe "gdalwarper.h GDALDestroyWarpOptions" c_destroyWarpOptions
-  :: Ptr WarpOptions -> IO ()
+foreign import ccall unsafe "gdalwarper.h GDALDestroyWarpOptions"
+  c_destroyWarpOptions :: Ptr WarpOptions -> IO ()

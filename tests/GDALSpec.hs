@@ -15,8 +15,18 @@ import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
 
 import System.FilePath (joinPath)
+import System.Mem (performMajorGC)
 
-import Test.Hspec (Spec, SpecWith, Arg, hspec, describe, errorCall)
+import Test.Hspec (
+    Spec
+  , SpecWith
+  , Arg
+  , after_
+  , before_
+  , describe
+  , errorCall
+  , hspec
+  )
 
 import GDAL
 
@@ -27,7 +37,6 @@ import TestUtils (
   , existsAndSizeIsGreaterThan
   , it
   , withDir
-  , setupAndTeardown
   )
 
 main :: IO ()
@@ -35,6 +44,9 @@ main = hspec spec
 
 spec :: Spec
 spec = setupAndTeardown $ do
+
+  it "cannot open non-existent file" $ do
+    openReadOnly "foo.tif" `shouldThrow` ((==OpenFailed) . gdalErrNum)
 
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
@@ -279,6 +291,13 @@ spec = setupAndTeardown $ do
 #endif
 
 
+-- | Makes sure (or tries) that we're not double-freeing, etc by destroying
+--   the driver manager after every test and peformimg a major garbage
+--   collection to force (really?) the finalizers to run.
+setupAndTeardown :: SpecWith a -> SpecWith a
+setupAndTeardown
+  = before_ (setQuietErrorHandler >> registerAllDrivers)
+  . after_  (destroyDriverManager >> performMajorGC)
 
 
 it_can_write_and_read_band
