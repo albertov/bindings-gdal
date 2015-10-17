@@ -4,7 +4,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module GDAL.Warper (
+module GDAL.Internal.Warper (
     ResampleAlg (..)
   , WarpOptions (..)
   , GenImgProjTransformer (..)
