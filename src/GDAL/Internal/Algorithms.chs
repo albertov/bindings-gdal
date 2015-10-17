@@ -33,10 +33,10 @@ class Transformer t where
 
   destroyTransformer  = {# call GDALDestroyTransformer as ^#} . castPtr
 
-data GenImgProjTransformer s a = forall m b.
+data GenImgProjTransformer s a = forall b.
      GenImgProjTransformer {
       giptSrcDs    :: Maybe (RODataset s a)
-    , giptDstDs    :: Maybe (Dataset s m b)
+    , giptDstDs    :: Maybe (RWDataset s b)
     , giptSrcSrs   :: Maybe SpatialReference
     , giptDstSrs   :: Maybe SpatialReference
     , giptUseGCP   :: Bool
@@ -70,17 +70,17 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
 instance Transformer GenImgProjTransformer where
   transformerFunc _ = c_GDALGenImgProjTransform
   createTransformer dsPtr GenImgProjTransformer{..}
-    = fmap castPtr $ throwIfError "GDALCreateGenImgProjTransformer" $ 
-        withMaybeSRAsCString giptSrcSrs $ \sSr ->
-        withMaybeSRAsCString giptDstSrs $ \dSr ->
-          c_createGenImgProjTransformer
-            (maybe dsPtr unDataset giptSrcDs)
-            sSr
-            (maybe nullPtr unDataset giptDstDs)
-            dSr
-            (fromBool giptUseGCP)
-            (realToFrac giptMaxError)
-            (fromIntegral giptOrder)
+    = throwIfError "GDALCreateGenImgProjTransformer" $
+      withMaybeSRAsCString giptSrcSrs $ \sSr ->
+      withMaybeSRAsCString giptDstSrs $ \dSr ->
+        c_createGenImgProjTransformer
+          (maybe dsPtr unDataset giptSrcDs)
+          sSr
+          (maybe nullPtr unDataset giptDstDs)
+          dSr
+          (fromBool giptUseGCP)
+          (realToFrac giptMaxError)
+          (fromIntegral giptOrder)
 
 foreign import ccall unsafe "gdal_alg.h GDALCreateGenImgProjTransformer"
   c_createGenImgProjTransformer
