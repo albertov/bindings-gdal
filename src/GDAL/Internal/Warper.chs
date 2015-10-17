@@ -1,7 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module GDAL.Internal.Warper (
@@ -21,24 +20,23 @@ import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), bracket)
 import Data.Typeable (Typeable)
 import Data.Default (Default(..))
-import Foreign.C.String (CString, withCString)
+import Foreign.C.String (CString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr, castFunPtr, nullFunPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (mallocArray)
-import Foreign.Marshal.Utils (fromBool)
 import Foreign.Storable (Storable(..))
-import GDAL.OSR (SpatialReference, toWkt)
 
+import GDAL.Internal.Algorithms
 import GDAL.Internal.Types
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
 import GDAL.Internal.CPLProgress
+import GDAL.Internal.OSR (SpatialReference, withMaybeSRAsCString)
 import GDAL.Internal.GDAL
 import GDAL.Internal.Util (fromEnumC)
 
 #include "gdal.h"
-#include "gdal_alg.h"
 #include "gdalwarper.h"
 
 data GDALWarpException
@@ -53,63 +51,9 @@ instance Exception GDALWarpException where
   toException   = bindingExceptionToException
   fromException = bindingExceptionFromException
 
-{# enum GDALResampleAlg as ResampleAlg {upcaseFirstLetter} deriving (Eq,Read,Show) #}
+{# enum GDALResampleAlg as ResampleAlg {upcaseFirstLetter}
+     deriving (Eq,Read,Show) #}
 
-type TransformerFunc = Ptr () -> CInt -> CInt -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CInt -> CInt
-
-class Transformer t where
-  transformerFunc     :: t -> FunPtr TransformerFunc
-  createTransformer   :: Ptr () -> t -> IO (Ptr t)
-  destroyTransformer  :: Ptr t -> IO ()
-
-  destroyTransformer  = {# call GDALDestroyTransformer as ^#} . castPtr
-  
-data GenImgProjTransformer = forall s a.
-    GenImgProjTransformer {
-      giptSrcDs    :: Maybe (RODataset s a)
-    , giptDstDs    :: Maybe (RWDataset s a)
-    , giptSrcSrs   :: Maybe SpatialReference
-    , giptDstSrs   :: Maybe SpatialReference
-    , giptUseGCP   :: Bool
-    , giptMaxError :: Double
-    , giptOrder    :: Int
-  }
-
-instance Default GenImgProjTransformer where
-  def = GenImgProjTransformer {
-          giptSrcDs    = Nothing
-        , giptDstDs    = Nothing
-        , giptSrcSrs   = Nothing
-        , giptDstSrs   = Nothing
-        , giptUseGCP   = True
-        , giptMaxError = 1
-        , giptOrder    = 0
-        }
-
-setTransformer :: Transformer t => t -> WarpOptions -> WarpOptions
-setTransformer t opts = opts {woTransfomer = Just (SomeTransformer t)}
-
-foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
-  c_GDALGenImgProjTransform :: FunPtr TransformerFunc
-
-instance Transformer GenImgProjTransformer where
-  transformerFunc _ = c_GDALGenImgProjTransform
-  createTransformer dsPtr GenImgProjTransformer{..}
-    = fmap castPtr $ throwIfError "GDALCreateGenImgProjTransformer" $ 
-        withMaybeSRAsCString giptSrcSrs $ \sSr ->
-        withMaybeSRAsCString giptDstSrs $ \dSr ->
-          {#call GDALCreateGenImgProjTransformer as ^#}
-            (maybe dsPtr (castPtr . unDataset) giptSrcDs)
-            sSr
-            (castPtr (maybe nullPtr unDataset giptDstDs))
-            dSr
-            (fromBool giptUseGCP)
-            (realToFrac giptMaxError)
-            (fromIntegral giptOrder)
-
-data SomeTransformer = forall t. Transformer t => SomeTransformer t
-
-instance Show SomeTransformer where show _ = "SomeTransformer"
 
 data WarpOptions = 
   WarpOptions {
@@ -131,12 +75,51 @@ instance Default WarpOptions where
         , woTransfomer      = Just (SomeTransformer(def::GenImgProjTransformer))
         }
 
-intListToPtr :: [Int] -> IO (Ptr CInt)
-intListToPtr [] = return nullPtr
-intListToPtr l = do
-  ptr <- mallocArray (length l)
-  mapM_ (\(i,v) -> pokeElemOff ptr i (fromIntegral v)) (zip [0..] l)
-  return ptr
+setTransformer :: Transformer t => t -> WarpOptions -> WarpOptions
+setTransformer t opts = opts {woTransfomer = Just (SomeTransformer t)}
+
+
+withWarpOptionsPtr
+  :: Ptr (Dataset s t b) -> Maybe WarpOptions -> (Ptr WarpOptions -> IO a)
+  -> IO a
+withWarpOptionsPtr _ Nothing  f = f nullPtr
+withWarpOptionsPtr dsPtr (Just (WarpOptions{..})) f
+  = bracket createWarpOptions destroyWarpOptions f
+  where
+    createWarpOptions = do
+      p <- c_createWarpOptions
+      {#set GDALWarpOptions.eResampleAlg #} p (fromEnumC woResampleAlg)
+      oListPtr <- toOptionListPtr woWarpOptions
+      {#set GDALWarpOptions.papszWarpOptions #} p oListPtr
+      {#set GDALWarpOptions.dfWarpMemoryLimit #} p (realToFrac woMemoryLimit)
+      {#set GDALWarpOptions.eWorkingDataType #} p (fromEnumC woWorkingDatatype)
+      {#set GDALWarpOptions.nBandCount #} p (fromIntegral (length woBands))
+      {#set GDALWarpOptions.panSrcBands #} p =<< intListToPtr (map fst woBands)
+      {#set GDALWarpOptions.panDstBands #} p =<< intListToPtr (map snd woBands)
+      case woTransfomer of
+        Just (SomeTransformer t) -> do
+          {#set GDALWarpOptions.pfnTransformer #} p
+            (castFunPtr (transformerFunc t))
+          tArg <- fmap castPtr (createTransformer (castPtr dsPtr) t)
+          {#set GDALWarpOptions.pTransformerArg #} p tArg
+        Nothing -> do
+          {#set GDALWarpOptions.pfnTransformer #} p nullFunPtr
+          {#set GDALWarpOptions.pTransformerArg #} p nullPtr
+      return p
+
+    destroyWarpOptions = c_destroyWarpOptions
+
+    intListToPtr [] = return nullPtr
+    intListToPtr l = do
+      ptr <- mallocArray (length l)
+      mapM_ (\(i,v) -> pokeElemOff ptr i (fromIntegral v)) (zip [0..] l)
+      return ptr
+
+foreign import ccall unsafe "gdalwarper.h GDALCreateWarpOptions"
+  c_createWarpOptions :: IO (Ptr WarpOptions)
+
+foreign import ccall unsafe "gdalwarper.h GDALDestroyWarpOptions"
+  c_destroyWarpOptions :: Ptr WarpOptions -> IO ()
 
 
 reprojectImage
@@ -164,10 +147,6 @@ reprojectImage srcDs srcSr dstDs dstSr alg maxError mProgressFun options
                                   (fromEnumC alg) 0 (fromIntegral maxError)
                                   pFunc nullPtr opts
        maybe (throwBindingException WarpStopped) return ret
-
-withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
-withMaybeSRAsCString Nothing    = ($ nullPtr)
-withMaybeSRAsCString (Just srs) = withCString (either (const "") id (toWkt srs))
 
 foreign import ccall safe "gdalwarper.h GDALReprojectImage" c_reprojectImage
   :: Ptr (Dataset s t a) -- ^Source dataset
@@ -248,41 +227,3 @@ foreign import ccall safe "gdalwarper.h GDALCreateWarpedVRT" c_createWarpedVRT
   -> Ptr CDouble         -- ^geotransform
   -> Ptr WarpOptions     -- ^warp options
   -> IO (Ptr (Dataset s t a))
-
-
-
-withWarpOptionsPtr
-  :: Ptr (Dataset s t b) -> Maybe WarpOptions -> (Ptr WarpOptions -> IO a)
-  -> IO a
-withWarpOptionsPtr _ Nothing  f = f nullPtr
-withWarpOptionsPtr dsPtr (Just (WarpOptions{..})) f
-  = bracket createWarpOptions destroyWarpOptions f
-  where
-    createWarpOptions = do
-      p <- c_createWarpOptions
-      {#set GDALWarpOptions.eResampleAlg #} p (fromEnumC woResampleAlg)
-      oListPtr <- toOptionListPtr woWarpOptions
-      {#set GDALWarpOptions.papszWarpOptions #} p oListPtr
-      {#set GDALWarpOptions.dfWarpMemoryLimit #} p (realToFrac woMemoryLimit)
-      {#set GDALWarpOptions.eWorkingDataType #} p (fromEnumC woWorkingDatatype)
-      {#set GDALWarpOptions.nBandCount #} p (fromIntegral (length woBands))
-      {#set GDALWarpOptions.panSrcBands #} p =<< intListToPtr (map fst woBands)
-      {#set GDALWarpOptions.panDstBands #} p =<< intListToPtr (map snd woBands)
-      case woTransfomer of
-        Just (SomeTransformer t) -> do
-          {#set GDALWarpOptions.pfnTransformer #} p
-            (castFunPtr (transformerFunc t))
-          tArg <- fmap castPtr (createTransformer (castPtr dsPtr) t)
-          {#set GDALWarpOptions.pTransformerArg #} p tArg
-        Nothing -> do
-          {#set GDALWarpOptions.pfnTransformer #} p nullFunPtr
-          {#set GDALWarpOptions.pTransformerArg #} p nullPtr
-      return p
-
-    destroyWarpOptions = c_destroyWarpOptions
-
-foreign import ccall unsafe "gdalwarper.h GDALCreateWarpOptions"
-  c_createWarpOptions :: IO (Ptr WarpOptions)
-
-foreign import ccall unsafe "gdalwarper.h GDALDestroyWarpOptions"
-  c_destroyWarpOptions :: Ptr WarpOptions -> IO ()

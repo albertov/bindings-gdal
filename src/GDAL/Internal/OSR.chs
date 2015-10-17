@@ -22,6 +22,7 @@ module GDAL.Internal.OSR (
   , getLinearUnits
 
   , withSpatialReference
+  , withMaybeSRAsCString
 ) where
 
 import Control.Applicative ((<$>), (<*>))
@@ -159,3 +160,7 @@ getUnitsWith fun s = unsafePerformIO $
       ptr <- peek p
       units <- peekCString ptr
       return (realToFrac value, units)
+
+withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
+withMaybeSRAsCString Nothing    = ($ nullPtr)
+withMaybeSRAsCString (Just srs) = withCString (either (const "") id (toWkt srs))
