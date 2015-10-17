@@ -2,15 +2,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module GDAL.Internal.Warper (
     ResampleAlg (..)
   , WarpOptions (..)
-  , GenImgProjTransformer (..)
   , reprojectImage
+  , withTransformer
   , autoCreateWarpedVRT
   , createWarpedVRT
-  , setTransformer
 ) where
 
 import Control.Applicative ((<$>), (<*>))
@@ -55,33 +56,45 @@ instance Exception GDALWarpException where
      deriving (Eq,Read,Show) #}
 
 
-data WarpOptions = 
-  WarpOptions {
+data WarpOptions s a = forall t. (Transformer t, Show (t s a))
+  => WarpOptions {
       woResampleAlg     :: ResampleAlg
     , woWarpOptions     :: OptionList
     , woMemoryLimit     :: Double
     , woWorkingDatatype :: Datatype
     , woBands           :: [(Int,Int)]
-    , woTransfomer      :: Maybe SomeTransformer
-  } deriving (Show)
+    , woTransfomer      :: Maybe (t s a)
+    }
 
-instance Default WarpOptions where
+deriving instance Show (WarpOptions s a)
+
+instance Default (WarpOptions s a) where
   def = WarpOptions {
           woResampleAlg     = GRA_NearestNeighbour
         , woWarpOptions     = []
         , woMemoryLimit     = 0
         , woWorkingDatatype = GDT_Unknown
         , woBands           = []
-        , woTransfomer      = Just (SomeTransformer(def::GenImgProjTransformer))
+        , woTransfomer      = Just (def :: GenImgProjTransformer s a)
         }
 
-setTransformer :: Transformer t => t -> WarpOptions -> WarpOptions
-setTransformer t opts = opts {woTransfomer = Just (SomeTransformer t)}
-
+-- Avoids "Record update for insufficiently polymorphic field" when doigs
+-- opts { woTransfomer = Just ...}
+withTransformer
+  :: forall t s a. (Transformer t, Show (t s a))
+  => WarpOptions s a -> t s a -> WarpOptions s a
+withTransformer opts t = WarpOptions {
+    woResampleAlg     = woResampleAlg opts
+  , woWarpOptions     = woWarpOptions opts
+  , woMemoryLimit     = woMemoryLimit opts
+  , woWorkingDatatype = woWorkingDatatype opts
+  , woBands           = woBands opts
+  , woTransfomer      = Just t
+  }
 
 withWarpOptionsPtr
-  :: Ptr (Dataset s t b) -> Maybe WarpOptions -> (Ptr WarpOptions -> IO a)
-  -> IO a
+  :: Ptr (RODataset s a) -> Maybe (WarpOptions s a)
+  -> (Ptr (WarpOptions s a) -> IO b) -> IO b
 withWarpOptionsPtr _ Nothing  f = f nullPtr
 withWarpOptionsPtr dsPtr (Just (WarpOptions{..})) f
   = bracket createWarpOptions destroyWarpOptions f
@@ -97,10 +110,10 @@ withWarpOptionsPtr dsPtr (Just (WarpOptions{..})) f
       {#set GDALWarpOptions.panSrcBands #} p =<< intListToPtr (map fst woBands)
       {#set GDALWarpOptions.panDstBands #} p =<< intListToPtr (map snd woBands)
       case woTransfomer of
-        Just (SomeTransformer t) -> do
+        Just t -> do
           {#set GDALWarpOptions.pfnTransformer #} p
             (castFunPtr (transformerFunc t))
-          tArg <- fmap castPtr (createTransformer (castPtr dsPtr) t)
+          tArg <- fmap castPtr (createTransformer dsPtr t)
           {#set GDALWarpOptions.pTransformerArg #} p tArg
         Nothing -> do
           {#set GDALWarpOptions.pfnTransformer #} p nullFunPtr
@@ -116,22 +129,22 @@ withWarpOptionsPtr dsPtr (Just (WarpOptions{..})) f
       return ptr
 
 foreign import ccall unsafe "gdalwarper.h GDALCreateWarpOptions"
-  c_createWarpOptions :: IO (Ptr WarpOptions)
+  c_createWarpOptions :: IO (Ptr (WarpOptions s a))
 
 foreign import ccall unsafe "gdalwarper.h GDALDestroyWarpOptions"
-  c_destroyWarpOptions :: Ptr WarpOptions -> IO ()
+  c_destroyWarpOptions :: Ptr (WarpOptions s a) -> IO ()
 
 
 reprojectImage
   :: GDALType a
-  => Dataset s t a
+  => RODataset s a
   -> Maybe SpatialReference
-  -> RWDataset s a
+  -> RWDataset s b
   -> Maybe SpatialReference
   -> ResampleAlg
   -> Int
   -> Maybe ProgressFun
-  -> Maybe WarpOptions
+  -> Maybe (WarpOptions s a)
   -> GDAL s ()
 reprojectImage srcDs srcSr dstDs dstSr alg maxError mProgressFun options
   | maxError < 0 = throwBindingException (InvalidMaxError maxError)
@@ -149,16 +162,16 @@ reprojectImage srcDs srcSr dstDs dstSr alg maxError mProgressFun options
        maybe (throwBindingException WarpStopped) return ret
 
 foreign import ccall safe "gdalwarper.h GDALReprojectImage" c_reprojectImage
-  :: Ptr (Dataset s t a) -- ^Source dataset
-  -> CString             -- ^Source proj (WKT)
-  -> Ptr (RWDataset s a) -- ^Dest dataset
-  -> CString             -- ^Dest proj (WKT)
-  -> CInt                -- ^Resample alg
-  -> CDouble             -- ^Memory limit
-  -> CDouble             -- ^Max error
-  -> ProgressFunPtr      -- ^Progress func
-  -> Ptr ()              -- ^Progress arg (unused)
-  -> Ptr WarpOptions     -- ^warp options
+  :: Ptr (Dataset s t a)   -- ^Source dataset
+  -> CString               -- ^Source proj (WKT)
+  -> Ptr (RWDataset s b)   -- ^Dest dataset
+  -> CString               -- ^Dest proj (WKT)
+  -> CInt                  -- ^Resample alg
+  -> CDouble               -- ^Memory limit
+  -> CDouble               -- ^Max error
+  -> ProgressFunPtr        -- ^Progress func
+  -> Ptr ()                -- ^Progress arg (unused)
+  -> Ptr (WarpOptions s a) -- ^warp options
   -> IO CInt
 
 autoCreateWarpedVRT
@@ -168,8 +181,8 @@ autoCreateWarpedVRT
   -> Maybe SpatialReference
   -> ResampleAlg
   -> Int
-  -> Maybe WarpOptions
-  -> GDAL s (RODataset s a)
+  -> Maybe (WarpOptions s a)
+  -> GDAL s (RODataset s b)
 autoCreateWarpedVRT srcDs srcSr dstSr alg maxError options = do
   newDsPtr <- liftIO $
     withLockedDatasetPtr srcDs $ \srcDsPtr ->
@@ -183,13 +196,13 @@ autoCreateWarpedVRT srcDs srcSr dstSr alg maxError options = do
 
 
 foreign import ccall safe "gdalwarper.h GDALAutoCreateWarpedVRT" c_autoCreateWarpedVRT
-  :: Ptr (RODataset s a) -- ^Source dataset
-  -> CString             -- ^Source proj (WKT)
-  -> CString             -- ^Dest proj (WKT)
-  -> CInt                -- ^Resample alg
-  -> CDouble             -- ^Max error
-  -> Ptr WarpOptions     -- ^warp options
-  -> IO (Ptr (Dataset s t a))
+  :: Ptr (RODataset s a)   -- ^Source dataset
+  -> CString               -- ^Source proj (WKT)
+  -> CString               -- ^Dest proj (WKT)
+  -> CInt                  -- ^Resample alg
+  -> CDouble               -- ^Max error
+  -> Ptr (WarpOptions s a) -- ^warp options
+  -> IO (Ptr (RODataset s b))
 
 createWarpedVRT
   :: GDALType a
@@ -197,8 +210,8 @@ createWarpedVRT
   -> Int
   -> Int
   -> Geotransform
-  -> WarpOptions
-  -> GDAL s (RODataset s a)
+  -> WarpOptions s a
+  -> GDAL s (RODataset s b)
 createWarpedVRT srcDs nPixels nLines gt options = do
   let dsPtr      = unDataset srcDs
       nBands     = datasetBandCount srcDs
@@ -221,9 +234,9 @@ createWarpedVRT srcDs nPixels nLines gt options = do
   newDerivedDatasetHandle srcDs newDsPtr
 
 foreign import ccall safe "gdalwarper.h GDALCreateWarpedVRT" c_createWarpedVRT
-  :: Ptr (RODataset s a) -- ^Source dataset
-  -> CInt                -- ^nPixels
-  -> CInt                -- ^nLines
-  -> Ptr CDouble         -- ^geotransform
-  -> Ptr WarpOptions     -- ^warp options
-  -> IO (Ptr (Dataset s t a))
+  :: Ptr (RODataset s a)   -- ^Source dataset
+  -> CInt                  -- ^nPixels
+  -> CInt                  -- ^nLines
+  -> Ptr CDouble           -- ^geotransform
+  -> Ptr (WarpOptions s a) -- ^warp options
+  -> IO (Ptr (RODataset s b))

@@ -1,23 +1,24 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ExistentialQuantification #-}
 
 module GDAL.Internal.Algorithms (
     Transformer (..)
-  , SomeTransformer (..)
   , TransformerFunc
   , GenImgProjTransformer (..)
 ) where
 
 import Data.Default (Default(..))
 
-import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
+import Foreign.C.Types (CDouble(..), CInt(..))
+import Foreign.C.String (CString)
 import Foreign.Marshal.Utils (fromBool)
 import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr)
 
 import GDAL.Internal.CPLError
 import GDAL.Internal.OSR (SpatialReference, withMaybeSRAsCString)
-import GDAL.Internal.GDAL
+{#import GDAL.Internal.GDAL#}
 
 #include "gdal_alg.h"
 
@@ -26,21 +27,16 @@ type TransformerFunc
  -> Ptr CInt -> CInt
 
 class Transformer t where
-  transformerFunc     :: t -> FunPtr TransformerFunc
-  createTransformer   :: Ptr () -> t -> IO (Ptr t)
-  destroyTransformer  :: Ptr t -> IO ()
+  transformerFunc     :: t s a -> FunPtr TransformerFunc
+  createTransformer   :: Ptr (RODataset s a) -> t s a -> IO (Ptr (t s a))
+  destroyTransformer  :: Ptr (t s a) -> IO ()
 
   destroyTransformer  = {# call GDALDestroyTransformer as ^#} . castPtr
 
-data SomeTransformer = forall t. Transformer t => SomeTransformer t
-
-instance Show SomeTransformer where
-  show _ = "SomeTransformer"
-
-data GenImgProjTransformer = forall s a.
-    GenImgProjTransformer {
+data GenImgProjTransformer s a = forall m b.
+     GenImgProjTransformer {
       giptSrcDs    :: Maybe (RODataset s a)
-    , giptDstDs    :: Maybe (RWDataset s a)
+    , giptDstDs    :: Maybe (Dataset s m b)
     , giptSrcSrs   :: Maybe SpatialReference
     , giptDstSrs   :: Maybe SpatialReference
     , giptUseGCP   :: Bool
@@ -48,7 +44,16 @@ data GenImgProjTransformer = forall s a.
     , giptOrder    :: Int
   }
 
-instance Default GenImgProjTransformer where
+instance Show (GenImgProjTransformer s a) where
+  show GenImgProjTransformer{..} = concat [
+    "GenImgProjTransformer { giptSrcSrs = ", show giptSrcSrs
+                        , ", giptDstSrs = ", show giptDstSrs
+                        , ", giptUseGCP = ", show giptUseGCP
+                        , ", giptMaxError = ", show giptMaxError
+                        , ", giptOrder = ", show giptOrder
+                        , " }"]
+
+instance Default (GenImgProjTransformer s a) where
   def = GenImgProjTransformer {
           giptSrcDs    = Nothing
         , giptDstDs    = Nothing
@@ -68,11 +73,16 @@ instance Transformer GenImgProjTransformer where
     = fmap castPtr $ throwIfError "GDALCreateGenImgProjTransformer" $ 
         withMaybeSRAsCString giptSrcSrs $ \sSr ->
         withMaybeSRAsCString giptDstSrs $ \dSr ->
-          {#call GDALCreateGenImgProjTransformer as ^#}
-            (maybe dsPtr (castPtr . unDataset) giptSrcDs)
+          c_createGenImgProjTransformer
+            (maybe dsPtr unDataset giptSrcDs)
             sSr
-            (castPtr (maybe nullPtr unDataset giptDstDs))
+            (maybe nullPtr unDataset giptDstDs)
             dSr
             (fromBool giptUseGCP)
             (realToFrac giptMaxError)
             (fromIntegral giptOrder)
+
+foreign import ccall unsafe "gdal_alg.h GDALCreateGenImgProjTransformer"
+  c_createGenImgProjTransformer
+    :: Ptr (RODataset s a) -> CString -> Ptr (Dataset s m b) -> CString -> CInt
+    -> CDouble -> CInt -> IO (Ptr (GenImgProjTransformer s a))

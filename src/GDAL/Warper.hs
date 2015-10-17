@@ -1,11 +1,10 @@
 module GDAL.Warper (
     ResampleAlg (..)
   , WarpOptions (..)
-  , GenImgProjTransformer (..)
+  , withTransformer
   , reprojectImage
   , autoCreateWarpedVRT
   , createWarpedVRT
-  , setTransformer
 ) where
 
 import GDAL.Internal.Warper

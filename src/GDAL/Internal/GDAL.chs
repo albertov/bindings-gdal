@@ -31,6 +31,7 @@ module GDAL.Internal.GDAL (
   , flushCache
   , openReadOnly
   , openReadWrite
+  , unsafeToReadOnly
   , createCopy
 
   , datatypeSize
@@ -82,6 +83,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Data.Int (Int16, Int32)
 import Data.Bits ((.&.))
 import Data.Complex (Complex(..), realPart)
+import Data.Coerce (coerce)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
@@ -103,6 +105,8 @@ import GDAL.Internal.Types
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
 import GDAL.Internal.CPLProgress
+import GDAL.Internal.OSR (SpatialReference, fromWkt, toWkt)
+import GDAL.Internal.OGRError (OGRException)
 import GDAL.Internal.Util
 
 
@@ -117,6 +121,7 @@ data GDALRasterException
   = InvalidRasterSize !Size
   | InvalidBlockSize  !Int
   | InvalidDatatype   !Datatype
+  | InvalidProjection !OGRException
   | NullDataset
   | CopyInterrupted
   deriving (Typeable, Show, Eq)
@@ -247,6 +252,9 @@ openWithMode m p =
   (liftIO $ withCString p $ \p' -> throwIfError "open" (open_ p' (fromEnumC m)))
   >>= newDatasetHandle
 
+unsafeToReadOnly :: RWDataset s a -> GDAL s (RODataset s a)
+unsafeToReadOnly ds = flushCache ds >> return (coerce ds)
+
 checkType
   :: forall s t a. GDALType a
   => Band s t a -> GDAL s ()
@@ -337,17 +345,23 @@ foreign import ccall unsafe "gdal.h GDALGetRasterXSize" getDatasetXSize_
 foreign import ccall unsafe "gdal.h GDALGetRasterYSize" getDatasetYSize_
   :: Ptr (Dataset s t a) -> CInt
 
-datasetProjection :: Dataset s t a -> GDAL s String
-datasetProjection d = liftIO (getProjection_ (unDataset d) >>= peekCString)
+datasetProjection :: Dataset s t a -> GDAL s (Maybe SpatialReference)
+datasetProjection d = do
+  srs <- liftIO (getProjection_ (unDataset d) >>= peekCString)
+  if null srs
+    then return Nothing
+    else either (throwBindingException . InvalidProjection)
+                (return . Just)
+                (fromWkt srs)
 
 foreign import ccall unsafe "gdal.h GDALGetProjectionRef" getProjection_
   :: Ptr (Dataset s t a) -> IO (Ptr CChar)
 
 
-setDatasetProjection :: (RWDataset s a) -> String -> GDAL s ()
-setDatasetProjection d p = liftIO $
+setDatasetProjection :: RWDataset s a -> SpatialReference -> GDAL s ()
+setDatasetProjection d srs = liftIO $
   throwIfError_ "setDatasetProjection" $
-    withLockedDatasetPtr d $ withCString p . setProjection' 
+    withLockedDatasetPtr d $ withCString (toWkt srs) . setProjection' 
 
 foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
   :: Ptr (Dataset s t a) -> Ptr CChar -> IO CInt

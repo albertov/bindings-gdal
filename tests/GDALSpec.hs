@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module GDALSpec (main, spec) where
+module GDALSpec (main, spec, setupAndTeardown) where
 
 import Control.Applicative (liftA2, pure)
 import Control.Monad (void, forM_)
@@ -29,6 +29,7 @@ import Test.Hspec (
   )
 
 import GDAL
+import GDAL.OSR
 
 import TestUtils (
     shouldBe
@@ -152,12 +153,20 @@ spec = setupAndTeardown $ do
     gt2 <- datasetGeotransform ds
     gt `shouldBe` gt2
 
-  it "can set and get projection" $ do
-    ds <- createMem (XY 10 10) 1 [] :: GDAL s (RWDataset s Int16)
-    let proj = "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
-    setDatasetProjection ds proj
-    proj2 <- datasetProjection ds
-    proj `shouldBe` proj2
+  describe "datasetProjection" $ do
+
+    it "can set and get" $ do
+      ds <- createMem (XY 10 10) 1 [] :: GDAL s (RWDataset s Int16)
+      let Right proj = fromProj4
+                          "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
+      setDatasetProjection ds proj
+      proj2 <- datasetProjection ds
+      Just proj `shouldBe` proj2
+
+    it "returns Nothing if dataset has no projection" $ do
+      ds <- createMem (XY 10 10) 1 [] :: GDAL s (RWDataset s Int16)
+      proj <- datasetProjection ds
+      proj `shouldSatisfy` isNothing
 
   it "can set and get nodata value" $ do
     ds <- createMem (XY 10 10) 1 [] :: GDAL s (RWDataset s Int16)

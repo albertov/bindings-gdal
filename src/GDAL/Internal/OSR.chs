@@ -49,17 +49,17 @@ import GDAL.Internal.CPLError hiding (None)
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
 
 instance Show SpatialReference where
-   show = either (\s -> "broken SpatialReference: " ++ show s) id . toWkt
+   show = toWkt
 
-toWkt :: SpatialReference -> Either OGRError String
+toWkt :: SpatialReference -> String
 toWkt s = exportWith fun s
   where
     fun s' p = {#call unsafe OSRExportToPrettyWkt as ^#} s' p 1
 
-toProj4 :: SpatialReference -> Either OGRError String
+toProj4 :: SpatialReference -> String
 toProj4 = exportWith {#call unsafe OSRExportToProj4 as ^#}
 
-toXML :: SpatialReference -> Either OGRError String
+toXML :: SpatialReference -> String
 toXML = exportWith fun
   where
     fun s' p = {#call unsafe OSRExportToXML as ^#} s' p (castPtr nullPtr)
@@ -67,8 +67,9 @@ toXML = exportWith fun
 exportWith
   :: (Ptr SpatialReference -> Ptr CString -> IO CInt)
   -> SpatialReference
-  -> Either OGRError String
+  -> String
 exportWith fun s = unsafePerformIO $ alloca $ \ptr ->
+  liftM (either (error "could not serialize SpatialReference") id) $
   checkOGRError
     (withSpatialReference s (\s' -> fun s' ptr))
     (do str <- peek ptr
@@ -92,28 +93,28 @@ newSpatialRefHandle p
 emptySpatialRef :: IO SpatialReference
 emptySpatialRef = c_newSpatialRef (castPtr nullPtr) >>= newSpatialRefHandle
 
-fromWkt, fromProj4, fromXML :: String -> Either OGRError SpatialReference
+fromWkt, fromProj4, fromXML :: String -> Either OGRException SpatialReference
 fromWkt s = unsafePerformIO $
   (withCString s $ \a -> fmap Right (c_newSpatialRef a >>= newSpatialRefHandle))
-    `catch`
-  (\(OGRException e _) -> return (Left e))
+    `catch` (return . Left)
 
 fromProj4 = fromImporter importFromProj4
 fromXML = fromImporter importFromXML
 
-fromEPSG :: Int -> Either OGRError SpatialReference
+fromEPSG :: Int -> Either OGRException SpatialReference
 fromEPSG = fromImporter importFromEPSG
 
 fromImporter
   :: (SpatialReference -> a -> IO CInt)
   -> a
-  -> Either OGRError SpatialReference
+  -> Either OGRException SpatialReference
 fromImporter f s = unsafePerformIO $ do
   r <- emptySpatialRef
-  err <- liftM toEnumC $ f r s
-  case err of
-    None -> return $ Right r
-    e    -> return $ Left e
+  (do err <- liftM toEnumC $ f r s
+      case err of
+        None -> return $ Right r
+        e    -> return $ Left (OGRException e "")) `catch` (return . Left)
+
 
 {#fun OSRImportFromProj4 as importFromProj4
    {withSpatialReference* `SpatialReference', `String'} -> `CInt' id  #}
@@ -163,4 +164,4 @@ getUnitsWith fun s = unsafePerformIO $
 
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
 withMaybeSRAsCString Nothing    = ($ nullPtr)
-withMaybeSRAsCString (Just srs) = withCString (either (const "") id (toWkt srs))
+withMaybeSRAsCString (Just srs) = withCString (toWkt srs)
