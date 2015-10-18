@@ -1,7 +1,8 @@
 module GDAL.Warper (
     ResampleAlg (..)
   , WarpOptions (..)
-  , withTransformer
+  , GDALWarpException (..)
+  , setTransformer
   , reprojectImage
   , autoCreateWarpedVRT
   , createWarpedVRT

@@ -70,11 +70,11 @@ spec = setupAndTeardown $ do
     p `existsAndSizeIsGreaterThan` 0
 
   describe "progress function" $ do
-    withDir "can interrupt copy" $ \tmpDir -> do
+    withDir "can stop copy" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
       ds <- createMem (XY 100 100) 1 [] :: GDAL s (RWDataset s Int16)
       let stopIt = Just (\_ _ -> return Stop)
-      createCopy GTIFF p ds True [] stopIt `shouldThrow` (==CopyInterrupted)
+      createCopy GTIFF p ds True [] stopIt `shouldThrow` (==CopyStopped)
 
     withDir "can throw exceptions" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
@@ -305,7 +305,7 @@ spec = setupAndTeardown $ do
 --   collection to force (really?) the finalizers to run.
 setupAndTeardown :: SpecWith a -> SpecWith a
 setupAndTeardown
-  = before_ (setQuietErrorHandler >> registerAllDrivers)
+  = before_ (registerAllDrivers)
   . after_  (performMajorGC >> destroyDriverManager)
 
 

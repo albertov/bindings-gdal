@@ -27,13 +27,13 @@ type TransformerFunc
  -> Ptr CInt -> CInt
 
 class Transformer t where
-  transformerFunc     :: t s a -> FunPtr TransformerFunc
-  createTransformer   :: Ptr (RODataset s a) -> t s a -> IO (Ptr (t s a))
-  destroyTransformer  :: Ptr (t s a) -> IO ()
+  transformerFunc     :: t s a b -> FunPtr TransformerFunc
+  createTransformer   :: Ptr (RODataset s a) -> t s a b -> IO (Ptr (t s a b))
+  destroyTransformer  :: Ptr (t s a b) -> IO ()
 
   destroyTransformer  = {# call GDALDestroyTransformer as ^#} . castPtr
 
-data GenImgProjTransformer s a = forall b.
+data GenImgProjTransformer s a b =
      GenImgProjTransformer {
       giptSrcDs    :: Maybe (RODataset s a)
     , giptDstDs    :: Maybe (RWDataset s b)
@@ -44,7 +44,7 @@ data GenImgProjTransformer s a = forall b.
     , giptOrder    :: Int
   }
 
-instance Show (GenImgProjTransformer s a) where
+instance Show (GenImgProjTransformer s a b) where
   show GenImgProjTransformer{..} = concat [
     "GenImgProjTransformer { giptSrcSrs = ", show giptSrcSrs
                         , ", giptDstSrs = ", show giptDstSrs
@@ -53,7 +53,7 @@ instance Show (GenImgProjTransformer s a) where
                         , ", giptOrder = ", show giptOrder
                         , " }"]
 
-instance Default (GenImgProjTransformer s a) where
+instance Default (GenImgProjTransformer s a b) where
   def = GenImgProjTransformer {
           giptSrcDs    = Nothing
         , giptDstDs    = Nothing
@@ -85,4 +85,4 @@ instance Transformer GenImgProjTransformer where
 foreign import ccall unsafe "gdal_alg.h GDALCreateGenImgProjTransformer"
   c_createGenImgProjTransformer
     :: Ptr (RODataset s a) -> CString -> Ptr (Dataset s m b) -> CString -> CInt
-    -> CDouble -> CInt -> IO (Ptr (GenImgProjTransformer s a))
+    -> CDouble -> CInt -> IO (Ptr (GenImgProjTransformer s a b))

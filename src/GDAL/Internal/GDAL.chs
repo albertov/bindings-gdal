@@ -13,7 +13,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module GDAL.Internal.GDAL (
-    GDALType
+    GDALType (..)
   , GDALRasterException (..)
   , Datatype (..)
   , Geotransform (..)
@@ -123,7 +123,7 @@ data GDALRasterException
   | InvalidDatatype   !Datatype
   | InvalidProjection !OGRException
   | NullDataset
-  | CopyInterrupted
+  | CopyStopped
   deriving (Typeable, Show, Eq)
 
 instance NFData GDALRasterException where
@@ -134,7 +134,7 @@ instance Exception GDALRasterException where
   fromException = bindingExceptionFromException
 
 
-class (Storable a) => GDALType a where
+class (Storable a, Show a) => GDALType a where
   datatype :: Proxy a -> Datatype
   -- | default nodata value when writing to bands with no datavalue set
   nodata   :: a
@@ -280,7 +280,7 @@ createCopy driver path ds strict options progressFun = do
     withOptionList options $ \o ->
     withLockedDatasetPtr ds $ \dsPtr ->
       c_createCopy d p dsPtr (fromBool strict) o pFunc (castPtr nullPtr)
-  maybe (throwBindingException CopyInterrupted) newDatasetHandle mPtr
+  maybe (throwBindingException CopyStopped) newDatasetHandle mPtr
 
 foreign import ccall safe "gdal.h GDALCreateCopy" c_createCopy
   :: DriverH

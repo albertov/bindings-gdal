@@ -1,4 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module GDAL.Internal.CPLProgress (
     ProgressFunPtr
@@ -28,6 +30,7 @@ type ProgressFun    = Double -> Maybe String -> IO ContinueOrStop
 type CProgressFun   = CDouble -> CString -> Ptr () -> IO CInt
 type ProgressFunPtr = FunPtr CProgressFun
 
+instance Show ProgressFun where show _ = "ProgressFun"
 
 withProgressFun :: Maybe ProgressFun -> (ProgressFunPtr -> IO c) -> IO (Maybe c)
 withProgressFun Nothing  act = fmap Just (act c_dummyProgress)
