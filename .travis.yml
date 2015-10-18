@@ -7,6 +7,7 @@ addons:
     packages:
     - libgmp-dev
     - libgdal1-dev
+    - gdal-bin
 
 env:
   - ARGS="--resolver lts-1"
@@ -18,6 +19,7 @@ before_install:
 - mkdir -p ~/.local/bin
 - export PATH=$HOME/.local/bin:$PATH
 - travis_retry curl -L https://github.com/commercialhaskell/stack/releases/download/v0.1.5.0/stack-0.1.5.0-x86_64-linux.tar.gz | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
+- gdalinfo --version
 
 script: stack $ARGS --no-terminal --install-ghc test --haddock
 
