@@ -11,7 +11,7 @@ import Data.Maybe (isNothing)
 
 import System.Mem (performMajorGC)
 
-import Test.Hspec (Spec, SpecWith, hspec, describe, before_, after_)
+import Test.Hspec (Spec, SpecWith, hspec, describe, before_, after_, afterAll_)
 
 import GDAL (
     GDAL
@@ -144,4 +144,5 @@ getShapePath = liftIO $ getDataFileName "tests/fixtures/fondo.shp"
 setupAndTeardown :: SpecWith a -> SpecWith a
 setupAndTeardown
   = before_ (setQuietErrorHandler >> OGR.registerAllDrivers)
-  . after_  (OGR.cleanupAll >> performMajorGC)
+  . after_  performMajorGC
+  . afterAll_ OGR.cleanupAll

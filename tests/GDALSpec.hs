@@ -306,7 +306,7 @@ spec = setupAndTeardown $ do
 setupAndTeardown :: SpecWith a -> SpecWith a
 setupAndTeardown
   = before_ (setQuietErrorHandler >> registerAllDrivers)
-  . after_  (destroyDriverManager >> performMajorGC)
+  . after_  (performMajorGC >> destroyDriverManager)
 
 
 it_can_write_and_read_band

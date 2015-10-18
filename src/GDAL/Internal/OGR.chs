@@ -1,4 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DataKinds #-}
@@ -63,17 +64,19 @@ import Control.Monad.Catch(throwM, catch, catchJust)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.ByteString (ByteString)
-import Data.ByteString.Char8 (packCString, unpack)
+import Data.ByteString.Char8 (unpack)
 import Data.ByteString.Unsafe (
     unsafeUseAsCString
   , unsafeUseAsCStringLen
   , unsafePackMallocCStringLen
+  , unsafePackCStringFinalizer 
   )
 import Data.Coerce (coerce)
+import Data.Word (Word8)
 
 import Foreign.C.String (CString, peekCString, withCString)
 import Foreign.C.Types (CInt(..), CChar(..), CUChar(..))
-import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr)
+import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr, plusPtr)
 import Foreign.ForeignPtr (
     ForeignPtr
   , withForeignPtr
@@ -93,6 +96,7 @@ import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.Util
 
 #include "ogr_api.h"
+#include "cpl_vsi.h"
 
 {#context prefix = "OGR" #}
 
@@ -350,7 +354,14 @@ withMaybeSpatialReference Nothing  = ($ nullPtr)
 withMaybeSpatialReference (Just s) = withSpatialReference s
 
 peekAndPack :: Ptr CString -> IO ByteString
-peekAndPack = peek >=> packCString
+peekAndPack pptr = do
+  p <- liftM castPtr (peek pptr) :: IO (Ptr Word8)
+  let findLen !n = do
+        v <- peek (p `plusPtr` n) :: IO Word8
+        if v==0 then return n else findLen (n+1)
+  len <- findLen 0
+  unsafePackCStringFinalizer p len ({#call unsafe VSIFree as ^#} (castPtr p))
+
 
 exportToWktIO :: Geometry t -> IO ByteString
 exportToWktIO g = withGeometry g $ \gPtr -> alloca $ \sPtrPtr -> do

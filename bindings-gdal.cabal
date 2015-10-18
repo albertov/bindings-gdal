@@ -60,7 +60,7 @@ test-suite spec
   build-depends:    base
                   , filepath
                   , hspec
-                  , hspec-core
+                  , hspec-core >= 1.13
                   , bindings-gdal
                   , vector
                   , bytestring

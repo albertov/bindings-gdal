@@ -120,7 +120,13 @@ withWarpOptionsPtr dsPtr (Just (WarpOptions{..})) f
           {#set GDALWarpOptions.pTransformerArg #} p nullPtr
       return p
 
-    destroyWarpOptions = c_destroyWarpOptions
+    destroyWarpOptions p = do
+      case woTransfomer of
+        Just (_ :: t s a) -> do
+          t <- {#get GDALWarpOptions.pTransformerArg #} p
+          destroyTransformer (castPtr t :: Ptr (t s a))
+        Nothing -> return ()
+      c_destroyWarpOptions p
 
     intListToPtr [] = return nullPtr
     intListToPtr l = do
