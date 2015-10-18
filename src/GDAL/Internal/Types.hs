@@ -14,7 +14,6 @@ module GDAL.Internal.Types (
   , GDAL
   , Window (..)
   , XY (..)
-  , HasOptions (..)
   , Size
   , BlockIx
   , winSize
@@ -269,8 +268,3 @@ gdalForkIO (GDAL a) = GDAL $ do
 
 registerFinalizer :: IO () -> GDAL s ()
 registerFinalizer = GDAL . void . register
-
-
-class HasOptions t where
-  data Option t :: *
-  toStringPair :: Option t -> (String, String)
