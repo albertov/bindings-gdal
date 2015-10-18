@@ -33,6 +33,7 @@ module GDAL.Internal.GDAL (
   , openReadWrite
   , unsafeToReadOnly
   , createCopy
+  , driverCreationOptionList
 
   , datatypeSize
   , datatypeByName
@@ -122,6 +123,7 @@ data GDALRasterException
   | InvalidBlockSize  !Int
   | InvalidDatatype   !Datatype
   | InvalidProjection !OGRException
+  | InvalidDriverOptions
   | NullDataset
   | CopyStopped
   deriving (Typeable, Show, Eq)
@@ -212,23 +214,33 @@ type RWBand s = Band s ReadWrite
 {# fun unsafe GDALGetDriverByName as c_driverByName
     { `String' } -> `DriverH' id #}
 
-driverByName :: Driver -> GDAL s DriverH
-driverByName s = liftIO $
-  throwIfError "driverByName" (c_driverByName (show s))
+driverByName :: Driver -> IO DriverH
+driverByName s = throwIfError "driverByName" (c_driverByName (show s))
+
+driverCreationOptionList :: Driver -> String
+driverCreationOptionList driver = unsafePerformIO $ do
+  d <- driverByName driver
+  {#call GDALGetDriverCreationOptionList	as ^#} d >>= peekCString
+
+validateCreationOptions :: DriverH -> Ptr CString -> IO ()
+validateCreationOptions d o = do
+  valid <- liftM toBool ({#call unsafe GDALValidateCreationOptions as ^ #} d o)
+  when (not valid) (throwBindingException InvalidDriverOptions)
 
 create
   :: forall s a. GDALType a
   => Driver -> String -> Size -> Int -> OptionList
   -> GDAL s (Dataset s ReadWrite a)
 create drv path (XY nx ny) bands options = do
-  d <- driverByName drv
   ptr <- liftIO $ withCString path $ \path' -> do
     let nx'    = fromIntegral nx
         ny'    = fromIntegral ny
         bands' = fromIntegral bands
         dtype' = fromEnumC $ datatype (Proxy :: Proxy a)
-    withOptionList options $ \opts ->
-        c_create d path' nx' ny' bands' dtype' opts
+    d <- driverByName drv
+    withOptionList options $ \opts -> do
+      validateCreationOptions d opts
+      c_create d path' nx' ny' bands' dtype' opts
   newDatasetHandle ptr
 
 foreign import ccall safe "gdal.h GDALCreate" c_create
@@ -272,14 +284,15 @@ createCopy :: GDALType a
   => Driver -> String -> (Dataset s t a) -> Bool -> OptionList
   -> Maybe ProgressFun -> GDAL s (RWDataset s a)
 createCopy driver path ds strict options progressFun = do
-  d <- driverByName driver
-  mPtr <- liftIO $
+  mPtr <- liftIO $ do
+    d <- driverByName driver
     throwIfError "createCopy" $
-    withCString path $ \p ->
-    withProgressFun progressFun $ \pFunc ->
-    withOptionList options $ \o ->
-    withLockedDatasetPtr ds $ \dsPtr ->
-      c_createCopy d p dsPtr (fromBool strict) o pFunc (castPtr nullPtr)
+      withCString path $ \p ->
+      withProgressFun progressFun $ \pFunc ->
+      withOptionList options $ \o -> do
+        validateCreationOptions d o
+        withLockedDatasetPtr ds $ \dsPtr ->
+          c_createCopy d p dsPtr (fromBool strict) o pFunc (castPtr nullPtr)
   maybe (throwBindingException CopyStopped) newDatasetHandle mPtr
 
 foreign import ccall safe "gdal.h GDALCreateCopy" c_createCopy
