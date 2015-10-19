@@ -12,7 +12,6 @@ module GDAL.Internal.Warper (
   , GDALWarpException (..)
   , reprojectImage
   , setTransformer
-  , autoCreateWarpedVRT
   , createWarpedVRT
   , def
 ) where
@@ -75,7 +74,7 @@ data BandOptions a b
 
 
 data WarpOptions s a b
-  = forall t. (Transformer t, Show (t s a b), GDALType a, GDALType b)
+  = forall t. (Transformer t, GDALType a, GDALType b)
   => WarpOptions {
       woResampleAlg     :: ResampleAlg
     , woWarpOptions     :: OptionList
@@ -86,8 +85,6 @@ data WarpOptions s a b
     , woProgressFun     :: Maybe ProgressFun
     }
 
-deriving instance Show (WarpOptions s a b)
-
 instance (GDALType a, GDALType b) => Default (WarpOptions s a b) where
   def = WarpOptions {
           woResampleAlg     = NearestNeighbour
@@ -95,16 +92,16 @@ instance (GDALType a, GDALType b) => Default (WarpOptions s a b) where
         , woMemoryLimit     = 0
         , woWorkingDatatype = GDT_Unknown
         , woBands           = []
-        , woTransfomer      = Just (def :: GenImgProjTransformer s a b)
+        , woTransfomer      = Nothing :: Maybe (GenImgProjTransformer s a b)
         , woProgressFun     = Nothing
         }
 
 -- Avoids "Record update for insufficiently polymorphic field" when doigs
 -- opts { woTransfomer = Just ...}
 setTransformer
-  :: forall t s a b. (Transformer t, Show (t s a b), GDALType a, GDALType b)
-  => WarpOptions s a b -> t s a b -> WarpOptions s a b
-setTransformer opts t = WarpOptions {
+  :: forall t s a b. (Transformer t, GDALType a, GDALType b)
+  => t s a b -> WarpOptions s a b -> WarpOptions s a b
+setTransformer t opts = WarpOptions {
     woResampleAlg     = woResampleAlg opts
   , woWarpOptions     = woWarpOptions opts
   , woMemoryLimit     = woMemoryLimit opts
@@ -194,13 +191,7 @@ mkWarpOptionsPtr ds wo@WarpOptions{..} = do
         {#set GDALWarpOptions.padfSrcNoDataImag #} p vPtrSrcI
       return p
 
-    destroyWarpOptions p = do
-      case woTransfomer of
-        Just (_ :: t s a b) -> do
-          t <- {#get GDALWarpOptions.pTransformerArg #} p
-          destroyTransformer (castPtr t :: Ptr (t s a b))
-        Nothing -> return ()
-      c_destroyWarpOptions p
+    destroyWarpOptions = c_destroyWarpOptions
 
     listToPtr [] = return nullPtr
     listToPtr l = do
@@ -258,51 +249,17 @@ foreign import ccall safe "gdalwarper.h GDALReprojectImage" c_reprojectImage
   -> Ptr (WarpOptions s a b) -- ^warp options
   -> IO CInt
 
-autoCreateWarpedVRT
-  :: (GDALType a, GDALType b)
-  => RODataset s a
-  -> Maybe SpatialReference
-  -> Maybe SpatialReference
-  -> ResampleAlg
-  -> Double
-  -> OptionList
-  -> GDAL s (RODataset s b)
-autoCreateWarpedVRT ds srcSrs dstSrs algo maxError opts = do
-  options' <- setOptionDefaults ds Nothing (def {woWarpOptions=opts})
-  oDsPtr <- liftIO $
-    withMaybeSRAsCString srcSrs $ \srcSrs' ->
-    withMaybeSRAsCString dstSrs $ \dstSrs' ->
-    withWarpOptionsPtr ds options' $ \wopts ->
-    c_autoCreateWarpedVRT (unDataset ds) srcSrs' dstSrs' algo' maxError' wopts
-  oDs <- newDerivedDatasetHandle ds oDsPtr
-  setDstNodata oDs options'
-  unsafeToReadOnly oDs
-  where
-    algo'     = fromEnumC algo
-    maxError' = realToFrac maxError
-
-
-
-foreign import ccall safe "gdalwarper.h GDALAutoCreateWarpedVRT" c_autoCreateWarpedVRT
-  :: Ptr (RODataset s a)     -- ^Source dataset
-  -> CString                 -- ^Source proj (WKT)
-  -> CString                 -- ^Dest proj (WKT)
-  -> CInt                    -- ^Resample alg
-  -> CDouble                 -- ^Max error
-  -> Ptr (WarpOptions s a b) -- ^warp options
-  -> IO (Ptr (RWDataset s b))
-
 createWarpedVRT
-  :: (GDALType a, GDALType b)
+  :: forall s a b. (GDALType a, GDALType b)
   => RODataset s a
   -> Size
   -> Geotransform
   -> WarpOptions s a b
   -> GDAL s (RODataset s b)
-createWarpedVRT srcDs (XY nPixels nLines) geotransform options = do
+createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
   let dsPtr = unDataset srcDs
-  options' <- setOptionDefaults srcDs Nothing options
-  (opts,finalizeOpts) <- liftIO (mkWarpOptionsPtr srcDs options')
+  options'' <- setOptionDefaults srcDs Nothing options'
+  (opts,finalizeOpts) <- liftIO (mkWarpOptionsPtr srcDs options'')
   registerFinalizer finalizeOpts
   newDsPtr <- liftIO $ alloca $ \gt -> do
     poke (castPtr gt) geotransform
@@ -311,8 +268,13 @@ createWarpedVRT srcDs (XY nPixels nLines) geotransform options = do
       {#call GDALSetGenImgProjTransformerDstGeoTransform as ^#} pArg gt
     c_createWarpedVRT dsPtr (fromIntegral nPixels) (fromIntegral nLines) gt opts
   oDs <- newDerivedDatasetHandle srcDs newDsPtr
-  setDstNodata oDs options'
+  setDstNodata oDs options''
   unsafeToReadOnly oDs
+  where
+    options' = case woTransfomer of
+                 Nothing -> setTransformer (def :: GenImgProjTransformer s a b)
+                                           wo
+                 Just _  -> wo
 
 setDstNodata :: GDALType b => RWDataset s b -> WarpOptions s a b -> GDAL s ()
 setDstNodata oDs options

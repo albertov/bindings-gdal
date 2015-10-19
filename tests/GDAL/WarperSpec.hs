@@ -148,28 +148,6 @@ spec = setupAndTeardown $ do
         U.sum v2 `shouldBe` U.sum v1
         ) :: forall s. GDAL s ())
 
-  describe "autoCreateWarpedVRT" $ do
-
-    forM_ resampleAlgorithmsWhichHonorNodata $ \algo ->
-      it ("honors woDstNodata " ++ show algo) $ ((do
-        let sz  = XY 100 100
-            v1 :: U.Vector (Value Int32)
-            v1  = U.generate (sizeLen sz)
-                  (\i -> if i<50 then NoData else Value (fromIntegral i))
-            gt  = Geotransform 0 10 0 0 0 (-10)
-        ds' <- createMem sz 1 [] :: GDAL s (RWDataset s Int32)
-        setDatasetGeotransform ds' gt
-        b <- getBand 1 ds'
-        setBandNodataValue b (-1)
-        writeBand b (allBand b) sz v1
-        ds <- unsafeToReadOnly ds'
-
-        ds2 <- autoCreateWarpedVRT ds Nothing Nothing algo 0 [] :: GDAL s (RODataset s Int32)
-        b2 <- getBand 1 ds2
-        v2 <- readBand b2 (allBand b2) (bandSize b2)
-        v2 `shouldSatisfy` U.all (>(Value 0))
-        U.sum v2 `shouldBe` U.sum v1
-        ) :: forall s. GDAL s ())
 
 resampleAlgorithmsWhichHonorNodata :: [ResampleAlg]
 resampleAlgorithmsWhichHonorNodata = filter (`notElem` bad) [minBound..maxBound]

@@ -5,7 +5,6 @@ module GDAL.Warper (
   , GDALWarpException (..)
   , setTransformer
   , reprojectImage
-  , autoCreateWarpedVRT
   , createWarpedVRT
 ) where
 
