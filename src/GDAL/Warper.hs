@@ -1,6 +1,7 @@
 module GDAL.Warper (
     ResampleAlg (..)
   , WarpOptions (..)
+  , BandOptions (..)
   , GDALWarpException (..)
   , setTransformer
   , reprojectImage

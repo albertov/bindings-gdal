@@ -93,10 +93,10 @@ import GDAL.Internal.Types
 import GDAL.Internal.OGRError
 import GDAL.Internal.OSR
 import GDAL.Internal.CPLError hiding (None)
+import GDAL.Internal.CPLConv (cplFree)
 import GDAL.Internal.Util
 
 #include "ogr_api.h"
-#include "cpl_vsi.h"
 
 {#context prefix = "OGR" #}
 
@@ -360,7 +360,7 @@ peekAndPack pptr = do
         v <- peek (p `plusPtr` n) :: IO Word8
         if v==0 then return n else findLen (n+1)
   len <- findLen 0
-  unsafePackCStringFinalizer p len ({#call unsafe VSIFree as ^#} (castPtr p))
+  unsafePackCStringFinalizer p len (cplFree p)
 
 
 exportToWktIO :: Geometry t -> IO ByteString

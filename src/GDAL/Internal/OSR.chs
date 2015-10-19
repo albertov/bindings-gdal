@@ -42,9 +42,9 @@ import System.IO.Unsafe (unsafePerformIO)
 import GDAL.Internal.Util
 import GDAL.Internal.OGRError
 import GDAL.Internal.CPLError hiding (None)
+import GDAL.Internal.CPLConv (cplFree)
 
 #include "ogr_srs_api.h"
-#include "cpl_vsi.h"
 
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
 
@@ -74,7 +74,7 @@ exportWith fun s = unsafePerformIO $ alloca $ \ptr ->
     (withSpatialReference s (\s' -> fun s' ptr))
     (do str <- peek ptr
         wkt <- peekCString str
-        {#call unsafe VSIFree as ^#} (castPtr str)
+        cplFree str
         return wkt)
 
 

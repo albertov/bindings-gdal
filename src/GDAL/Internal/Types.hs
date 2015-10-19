@@ -34,7 +34,7 @@ module GDAL.Internal.Types (
   , registerFinalizer
 ) where
 
-import Control.Applicative
+import Control.Applicative (Applicative(..), liftA2)
 import Control.Concurrent (ThreadId)
 import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar, newEmptyMVar)
 import Control.Exception (evaluate)
@@ -123,33 +123,86 @@ instance Applicative XY where
 data Value a
   = Value {unValue :: !a}
   | NoData
-  deriving (Eq, Show, Read)
+  deriving (Eq, Ord, Show, Read)
 
 instance NFData a => NFData (Value a) where
   rnf (Value a) = rnf a `seq` ()
   rnf NoData    = ()
+  {-# INLINE rnf #-}
 
-instance  Functor Value  where
-    fmap _ NoData       = NoData
-    fmap f (Value a)    = Value (f a)
+instance Functor Value where
+  fmap _ NoData       = NoData
+  fmap f (Value a)    = Value (f a)
+  {-# INLINE fmap #-}
 
 instance Applicative Value where
-    pure = Value
+  pure = Value
+  {-# INLINE pure #-}
 
-    Value f <*> m       = fmap f m
-    NoData  <*> _m      = NoData
+  Value f <*> m       = fmap f m
+  NoData  <*> _m      = NoData
+  {-# INLINE (<*>) #-}
 
-    Value _m1 *> m2     = m2
-    NoData    *> _m2    = NoData
+  Value _m1 *> m2     = m2
+  NoData    *> _m2    = NoData
+  {-# INLINE (*>) #-}
 
-instance Monad Value  where
-    (Value x) >>= k     = k x
-    NoData    >>= _     = NoData
+instance Monad Value where
+  (Value x) >>= k     = k x
+  NoData    >>= _     = NoData
+  {-# INLINE (>>=) #-}
 
-    (>>) = (*>)
+  (>>) = (*>)
+  {-# INLINE (>>) #-}
 
-    return              = Value
-    fail _              = NoData
+  return              = Value
+  {-# INLINE return #-}
+  fail _              = NoData
+  {-# INLINE fail #-}
+
+instance Num a => Num (Value a) where
+  Value a + Value b = Value (a+b)
+  Value a + NoData  = Value a
+  NoData  + Value a = Value a
+  NoData  + NoData  = NoData
+  {-# INLINE (+) #-}
+
+  Value a - Value b = Value (a-b)
+  Value a - NoData  = Value a
+  NoData  - Value a = Value a
+  NoData  - NoData  = NoData
+  {-# INLINE (-) #-}
+
+  Value a * Value b = Value (a*b)
+  Value a * NoData  = Value a
+  NoData  * Value a = Value a
+  NoData  * NoData  = NoData
+  {-# INLINE (*) #-}
+
+  negate = fmap negate
+  {-# INLINE negate #-}
+
+  abs = fmap abs
+  {-# INLINE abs #-}
+
+  signum = fmap signum
+  {-# INLINE signum #-}
+
+  fromInteger = Value . fromInteger
+  {-# INLINE fromInteger #-}
+
+instance Fractional a => Fractional (Value a) where
+  Value a / Value b = Value (a/b)
+  Value a / NoData  = Value a
+  NoData  / Value a = Value a
+  NoData  / NoData  = NoData
+  {-# INLINE (/) #-}
+
+  recip = fmap recip
+  {-# INLINE recip #-}
+
+  fromRational = Value . fromRational
+  {-# INLINE fromRational #-}
 
 type FlagType = Word8
 

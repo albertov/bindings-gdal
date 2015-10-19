@@ -315,7 +315,7 @@ newDatasetHandle p
       return $ Dataset (m,p)
 
 newDerivedDatasetHandle
-  :: Dataset s t a -> Ptr (Dataset s t b) -> GDAL s (Dataset s t b)
+  :: Dataset s t' a -> Ptr (Dataset s t b) -> GDAL s (Dataset s t b)
 newDerivedDatasetHandle (Dataset (m,_)) p
   | p==nullPtr = throwBindingException NullDataset
   | otherwise  = do

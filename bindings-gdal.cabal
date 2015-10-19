@@ -31,6 +31,7 @@ library
                    , GDAL.Internal.CPLString
                    , GDAL.Internal.CPLError
                    , GDAL.Internal.CPLProgress
+                   , GDAL.Internal.CPLConv
                    , GDAL.Internal.GDAL
                    , GDAL.Internal.OGR
                    , GDAL.Internal.OGRError

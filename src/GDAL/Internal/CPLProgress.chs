@@ -10,7 +10,7 @@ module GDAL.Internal.CPLProgress (
 ) where
 
 import Control.Monad (when)
-import Control.Monad.Catch (bracket, catchAll, throwM)
+import Control.Monad.Catch (bracket, catchAll, throwM, catchJust)
 import Data.IORef (newIORef, readIORef, writeIORef)
 
 import Foreign.C.String (CString, peekCString)
@@ -18,6 +18,10 @@ import Foreign.C.Types (CDouble(..), CInt(..))
 import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr, nullPtr)
 
 import GDAL.Internal.Util (fromEnumC)
+import GDAL.Internal.CPLError (
+    GDALException(gdalErrNum)
+  , ErrorNum(UserInterrupt)
+  )
 
 #include "cpl_progress.h"
 
@@ -45,7 +49,10 @@ withProgressFun (Just f) act = do
         when (ret == Stop) (writeIORef stoppedRef True)
         return (fromEnumC ret)
       catcher exc = writeIORef excRef (Just exc) >> return Stop
-  ret <- bracket (c_wrapProgressFun progressFunc) freeHaskellFunPtr act
+  ret <- catchJust
+          (\e->if gdalErrNum e==UserInterrupt then Just e else Nothing)
+          (bracket (c_wrapProgressFun progressFunc) freeHaskellFunPtr act)
+          (const (writeIORef stoppedRef True >> return undefined))
   stopped <- readIORef stoppedRef
   let retWhenNoException
         | stopped   = return Nothing
