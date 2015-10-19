@@ -37,8 +37,8 @@ library
                    , GDAL.Internal.OGRError
                    , GDAL.Internal.OSR
                    , GDAL.Internal.Util
-                   , GDAL.Internal.Warper
                    , GDAL.Internal.Algorithms
+                   , GDAL.Internal.Warper
   build-depends:     base >=4.5 && < 5
                    , vector
                    , bytestring
