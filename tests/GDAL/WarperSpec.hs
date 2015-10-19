@@ -126,7 +126,7 @@ spec = setupAndTeardown $ do
   describe "createWarpedVRT" $ do
 
     forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
-      it ("handles nodata " ++ show algo) $ ((do
+      it ("handles nodata (GenImgProjTransformer)" ++ show algo) $ ((do
         let sz  = XY 100 100
             sz2 = XY 200 200
             gt  = Geotransform 0 10 0 0 0 (-10)
@@ -148,6 +148,56 @@ spec = setupAndTeardown $ do
         U.sum v2 `shouldBe` U.sum v1
         ) :: forall s. GDAL s ())
 
+    forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
+      it ("handles nodata (GenImgProjTransformer2) " ++ show algo) $ ((do
+        let sz  = XY 100 100
+            sz2 = XY 200 200
+            gt  = Geotransform 0 10 0 0 0 (-10)
+            v1 :: U.Vector (Value Int32)
+            v1  = U.generate (sizeLen sz)
+                  (\i -> if i<50 then NoData else Value (fromIntegral i))
+        ds' <- createMem sz 1 [] :: GDAL s (RWDataset s Int32)
+        setDatasetGeotransform ds' gt
+        b <- getBand 1 ds'
+        setBandNodataValue b (-1)
+        writeBand b (allBand b) sz v1
+        ds <- unsafeToReadOnly ds'
+
+        let opts = setTransformer (def :: GenImgProjTransformer2 s a b)
+                                  (def {woResampleAlg = algo})
+
+        ds2 <- createWarpedVRT ds sz2 gt opts :: GDAL s (RODataset s Int32)
+        b2 <- getBand 1 ds2
+        v2 <- readBand b2 (allBand b2) sz2
+        v2 `shouldSatisfy` U.all (>(Value 0))
+        U.sum v2 `shouldBe` U.sum v1
+        ) :: forall s. GDAL s ())
+
+
+    forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
+      it ("handles nodata (GenImgProjTransformer3) " ++ show algo) $ ((do
+        let sz  = XY 100 100
+            sz2 = XY 200 200
+            gt  = Geotransform 0 10 0 0 0 (-10)
+            v1 :: U.Vector (Value Int32)
+            v1  = U.generate (sizeLen sz)
+                  (\i -> if i<50 then NoData else Value (fromIntegral i))
+        ds' <- createMem sz 1 [] :: GDAL s (RWDataset s Int32)
+        setDatasetGeotransform ds' gt
+        b <- getBand 1 ds'
+        setBandNodataValue b (-1)
+        writeBand b (allBand b) sz v1
+        ds <- unsafeToReadOnly ds'
+
+        let opts = setTransformer (def {gipt3SrcGt = Just gt})
+                                  (def {woResampleAlg = algo})
+
+        ds2 <- createWarpedVRT ds sz2 gt opts :: GDAL s (RODataset s Int32)
+        b2 <- getBand 1 ds2
+        v2 <- readBand b2 (allBand b2) sz2
+        v2 `shouldSatisfy` U.all (>(Value 0))
+        U.sum v2 `shouldBe` U.sum v1
+        ) :: forall s. GDAL s ())
 
 resampleAlgorithmsWhichHandleNodata :: [ResampleAlg]
 resampleAlgorithmsWhichHandleNodata

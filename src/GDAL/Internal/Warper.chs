@@ -39,8 +39,8 @@ import Foreign.Storable (Storable(..))
 
 import GDAL.Internal.Types
 import GDAL.Internal.Util (fromEnumC)
-import GDAL.Internal.Algorithms
 import GDAL.Internal.CPLConv
+{#import GDAL.Internal.Algorithms #}
 {#import GDAL.Internal.CPLError #}
 {#import GDAL.Internal.CPLString #}
 {#import GDAL.Internal.CPLProgress #}
