@@ -85,7 +85,7 @@ isBindingException e
   , CPLE_NotSupported    as NotSupported
   , CPLE_AssertionFailed as AssertionFailed
   , CPLE_NoWriteAccess   as NoWriteAccess
-  , CPLE_UserInterrupt   as UserInterrupt 
+  , CPLE_UserInterrupt   as UserInterrupt
   , CPLE_ObjectNull      as ObjectNull
   } deriving (Eq, Bounded, Show) #}
 
@@ -128,6 +128,6 @@ throwIfError prefix act = do
                                   (const act)
       readIORef ref >>= maybe (return ret) throw
   where
-    runBounded 
+    runBounded
       | rtsSupportsBoundThreads = runInBoundThread
       | otherwise               = id

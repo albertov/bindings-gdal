@@ -72,7 +72,7 @@ data BandOptions a b
     , biSrcNoData :: !(Maybe a)
     , biDstNoData :: !(Maybe b)
     } deriving Show
- 
+
 
 data WarpOptions s a b
   = forall t. (Transformer t, Show (t s a b), GDALType a, GDALType b)
@@ -123,7 +123,7 @@ setOptionDefaults
 setOptionDefaults ds moDs wo@WarpOptions{..} = do
   bands <- if null woBands
             then forM [1..datasetBandCount ds] $ \i -> do
-              srcNd <- getBand i ds >>= bandNodataValue 
+              srcNd <- getBand i ds >>= bandNodataValue
               dstNd <- case moDs of
                          Just oDs -> getBand i oDs >>= bandNodataValue
                          Nothing  -> return (fmap (fromNodata . toNodata) srcNd)
@@ -135,11 +135,11 @@ setOptionDefaults ds moDs wo@WarpOptions{..} = do
         | otherwise = woWarpOptions
   return (wo { woWarpOptions = warpOptions, woBands = bands})
 
-anyBandHasNoData :: WarpOptions s a b -> Bool    
+anyBandHasNoData :: WarpOptions s a b -> Bool
 anyBandHasNoData wo
   = any (\BandOptions{..} -> isJust biSrcNoData || isJust biDstNoData) (woBands wo)
 
-anyBandHasDstNoData :: WarpOptions s a b -> Bool    
+anyBandHasDstNoData :: WarpOptions s a b -> Bool
 anyBandHasDstNoData wo = any (\BandOptions{..} -> isJust biDstNoData) (woBands wo)
 
 withWarpOptionsPtr
@@ -320,7 +320,7 @@ setDstNodata oDs options
       forM_ (woBands options) $ \BandOptions{..} ->
         case biDstNoData of
           Just nd -> do
-            b <- getBand biDst oDs 
+            b <- getBand biDst oDs
             setBandNodataValue b nd
           Nothing -> return ()
 

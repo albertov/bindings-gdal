@@ -61,7 +61,7 @@ spec = setupAndTeardown $ do
         o = [("zlevel", "bad level")]
         action = create GTIFF p (pure 3000) 1 o :: GDAL s (RWDataset s Int16)
     action `shouldThrow` (==InvalidDriverOptions)
-  
+
   withDir "can create and open dataset" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
     ds <- create GTIFF p (pure 100) 1 [] :: GDAL s (RWDataset s Int16)

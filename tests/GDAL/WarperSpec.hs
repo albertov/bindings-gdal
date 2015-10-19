@@ -119,12 +119,12 @@ spec = setupAndTeardown $ do
         flushCache ds2
 
         v2 <- readBand b2 (allBand b2) sz2
-        v2 `shouldSatisfy` U.all (>(Value 0)) 
+        v2 `shouldSatisfy` U.all (>(Value 0))
         U.sum v2 `shouldBe` U.sum v1
         ) :: forall s. GDAL s ())
 
   describe "createWarpedVRT" $ do
-    
+
     forM_ resampleAlgorithmsWhichHonorNodata $ \algo ->
       it ("honors woDstNodata " ++ show algo) $ ((do
         let sz  = XY 100 100
@@ -144,12 +144,12 @@ spec = setupAndTeardown $ do
         ds2 <- createWarpedVRT ds sz2 gt opts :: GDAL s (RODataset s Int32)
         b2 <- getBand 1 ds2
         v2 <- readBand b2 (allBand b2) sz2
-        v2 `shouldSatisfy` U.all (>(Value 0)) 
+        v2 `shouldSatisfy` U.all (>(Value 0))
         U.sum v2 `shouldBe` U.sum v1
         ) :: forall s. GDAL s ())
 
   describe "autoCreateWarpedVRT" $ do
-    
+
     forM_ resampleAlgorithmsWhichHonorNodata $ \algo ->
       it ("honors woDstNodata " ++ show algo) $ ((do
         let sz  = XY 100 100
@@ -167,7 +167,7 @@ spec = setupAndTeardown $ do
         ds2 <- autoCreateWarpedVRT ds Nothing Nothing algo 0 [] :: GDAL s (RODataset s Int32)
         b2 <- getBand 1 ds2
         v2 <- readBand b2 (allBand b2) (bandSize b2)
-        v2 `shouldSatisfy` U.all (>(Value 0)) 
+        v2 `shouldSatisfy` U.all (>(Value 0))
         U.sum v2 `shouldBe` U.sum v1
         ) :: forall s. GDAL s ())
 

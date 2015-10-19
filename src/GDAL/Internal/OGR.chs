@@ -69,7 +69,7 @@ import Data.ByteString.Unsafe (
     unsafeUseAsCString
   , unsafeUseAsCStringLen
   , unsafePackMallocCStringLen
-  , unsafePackCStringFinalizer 
+  , unsafePackCStringFinalizer
   )
 import Data.Coerce (coerce)
 import Data.Word (Word8)

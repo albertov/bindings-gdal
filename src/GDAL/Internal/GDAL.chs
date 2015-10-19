@@ -273,7 +273,7 @@ checkType
 checkType b
   | rt == bt  = return ()
   | otherwise = throwBindingException (InvalidDatatype bt)
-  where rt = datatype (Proxy :: Proxy a) 
+  where rt = datatype (Proxy :: Proxy a)
         bt = bandDatatype b
 
 foreign import ccall safe "gdal.h GDALOpen" open_
@@ -350,7 +350,7 @@ foreign import ccall safe "gdal.h GDALFlushCache" c_flushCache
 datasetSize :: Dataset s t a -> (Int, Int)
 datasetSize ds
   = let d = unDataset ds
-    in (fromIntegral (getDatasetXSize_ d), fromIntegral (getDatasetYSize_ d)) 
+    in (fromIntegral (getDatasetXSize_ d), fromIntegral (getDatasetYSize_ d))
 
 foreign import ccall unsafe "gdal.h GDALGetRasterXSize" getDatasetXSize_
   :: Ptr (Dataset s t a) -> CInt
@@ -374,7 +374,7 @@ foreign import ccall unsafe "gdal.h GDALGetProjectionRef" getProjection_
 setDatasetProjection :: RWDataset s a -> SpatialReference -> GDAL s ()
 setDatasetProjection d srs = liftIO $
   throwIfError_ "setDatasetProjection" $
-    withLockedDatasetPtr d $ withCString (toWkt srs) . setProjection' 
+    withLockedDatasetPtr d $ withCString (toWkt srs) . setProjection'
 
 foreign import ccall unsafe "gdal.h GDALSetProjection" setProjection'
   :: Ptr (Dataset s t a) -> Ptr CChar -> IO CInt
@@ -409,7 +409,7 @@ instance Storable Geotransform where
                  <*> liftM realToFrac (peekElemOff p 3)
                  <*> liftM realToFrac (peekElemOff p 4)
                  <*> liftM realToFrac (peekElemOff p 5)
-            
+
 
 datasetGeotransform :: Dataset s t a -> GDAL s Geotransform
 datasetGeotransform d = liftIO $ alloca $ \p -> do
@@ -491,10 +491,10 @@ c_bandNodataValue b = alloca $ \p -> do
    hasNodata <- liftM toBool $ peek p
    return (if hasNodata then Just value else Nothing)
 {-# INLINE c_bandNodataValue #-}
-   
+
 foreign import ccall unsafe "gdal.h GDALGetRasterNoDataValue" getNodata_
    :: Ptr (Band s t a) -> Ptr CInt -> IO CDouble
-   
+
 
 setBandNodataValue :: GDALType a => (RWBand s a) -> a -> GDAL s ()
 setBandNodataValue b v
@@ -556,7 +556,7 @@ readBandIO band win (XY bx by) = readMasked band read_
           if (toEnumC e == CE_None)
             then rasterIO_
               b
-              (fromEnumC GF_Read) 
+              (fromEnumC GF_Read)
               (fromIntegral xoff)
               (fromIntegral yoff)
               (fromIntegral sx)
@@ -623,7 +623,7 @@ writeBand band win sz@(XY bx by) uvec = liftIO $
         throwIfError_ "writeBand" $
           rasterIO_
             bPtr
-            (fromEnumC GF_Write) 
+            (fromEnumC GF_Write)
             (fromIntegral xoff)
             (fromIntegral yoff)
             (fromIntegral sx)
