@@ -95,8 +95,8 @@ spec = setupAndTeardown $ do
       let opts = [ ("OPTIMIZE_SIZE","TRUE") ]
       reprojectImage ds Nothing ds2 Nothing NearestNeighbour 0 0 Nothing opts
 
-    forM_ resampleAlgorithmsWhichHonorNodata $ \algo ->
-      it ("honors woDstNodata " ++ show algo) $ ((do
+    forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
+      it ("handles nodata " ++ show algo) $ ((do
         let sz  = XY 100 100
             sz2 = XY 200 200
             gt  = Geotransform 0 10 0 0 0 (-10)
@@ -125,8 +125,8 @@ spec = setupAndTeardown $ do
 
   describe "createWarpedVRT" $ do
 
-    forM_ resampleAlgorithmsWhichHonorNodata $ \algo ->
-      it ("honors woDstNodata " ++ show algo) $ ((do
+    forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
+      it ("handles nodata " ++ show algo) $ ((do
         let sz  = XY 100 100
             sz2 = XY 200 200
             gt  = Geotransform 0 10 0 0 0 (-10)
@@ -149,8 +149,9 @@ spec = setupAndTeardown $ do
         ) :: forall s. GDAL s ())
 
 
-resampleAlgorithmsWhichHonorNodata :: [ResampleAlg]
-resampleAlgorithmsWhichHonorNodata = filter (`notElem` bad) [minBound..maxBound]
+resampleAlgorithmsWhichHandleNodata :: [ResampleAlg]
+resampleAlgorithmsWhichHandleNodata
+  = filter (`notElem` bad) [minBound..maxBound]
   where
     bad
       | GDAL.version >= (1, 11) = [CubicSpline]
