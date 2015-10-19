@@ -8,6 +8,7 @@ addons:
     - libgmp-dev
     - libgdal1-dev
     - gdal-bin
+    - valgrind
 
 env:
   - ARGS="--resolver lts-1"
@@ -21,7 +22,9 @@ before_install:
 - travis_retry curl -L https://github.com/commercialhaskell/stack/releases/download/v0.1.5.0/stack-0.1.5.0-x86_64-linux.tar.gz | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
 - gdalinfo --version
 
-script: stack $ARGS --no-terminal --install-ghc test --haddock
+script:
+- stack $ARGS --no-terminal --install-ghc test --haddock
+- find .stack-work -type f -name spec -exec valgrind --leak-check=full {} ';'
 
 cache:
   directories:
