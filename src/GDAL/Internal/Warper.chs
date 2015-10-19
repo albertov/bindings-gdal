@@ -143,17 +143,8 @@ withWarpOptionsPtr
   :: (GDALType a, GDALType b)
   => RODataset s a -> WarpOptions s a b -> (Ptr (WarpOptions s a b) -> IO c)
   -> IO c
-withWarpOptionsPtr ds wo f = do
-  (opts, finalize) <- mkWarpOptionsPtr ds wo
-  bracket (return opts) (const finalize) f
-
-mkWarpOptionsPtr
-  :: (GDALType a, GDALType b)
-  => RODataset s a -> WarpOptions s a b
-  -> IO (Ptr (WarpOptions s a b), IO ())
-mkWarpOptionsPtr ds wo@WarpOptions{..} = do
-  p <- createWarpOptions
-  return (p, destroyWarpOptions p)
+withWarpOptionsPtr ds wo@WarpOptions{..}
+  = bracket createWarpOptions destroyWarpOptions
   where
     dsPtr = unDataset ds
     createWarpOptions = do
@@ -257,20 +248,22 @@ createWarpedVRT
   -> WarpOptions s a b
   -> GDAL s (RODataset s b)
 createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
-  let dsPtr = unDataset srcDs
   options'' <- setOptionDefaults srcDs Nothing options'
-  (opts,finalizeOpts) <- liftIO (mkWarpOptionsPtr srcDs options'')
-  registerFinalizer finalizeOpts
-  newDsPtr <- liftIO $ alloca $ \gt -> do
-    poke (castPtr gt) geotransform
-    pArg <- {#get GDALWarpOptions.pTransformerArg #} opts
-    when (pArg /= nullPtr) $
-      {#call GDALSetGenImgProjTransformerDstGeoTransform as ^#} pArg gt
-    c_createWarpedVRT dsPtr (fromIntegral nPixels) (fromIntegral nLines) gt opts
+  newDsPtr <- liftIO $
+    withWarpOptionsPtr srcDs options'' $ \opts ->
+    alloca $ \gt -> do
+      poke (castPtr gt) geotransform
+      pArg <- {#get GDALWarpOptions.pTransformerArg #} opts
+      when (pArg /= nullPtr) $
+        {#call GDALSetGenImgProjTransformerDstGeoTransform as ^#} pArg gt
+      c_createWarpedVRT dsPtr nPixels' nLines' gt opts
   oDs <- newDerivedDatasetHandle srcDs newDsPtr
   setDstNodata oDs options''
   unsafeToReadOnly oDs
   where
+    nPixels' = fromIntegral nPixels
+    nLines'  = fromIntegral nLines
+    dsPtr    = unDataset srcDs
     options' = case woTransfomer of
                  Nothing -> setTransformer (def :: GenImgProjTransformer s a b)
                                            wo
