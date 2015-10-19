@@ -78,6 +78,7 @@ module GDAL (
   , foldlM'
   , ifoldl'
   , ifoldlM'
+  , version
 ) where
 
 import GDAL.Internal.CPLError

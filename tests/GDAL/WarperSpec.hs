@@ -172,4 +172,8 @@ spec = setupAndTeardown $ do
         ) :: forall s. GDAL s ())
 
 resampleAlgorithmsWhichHonorNodata :: [ResampleAlg]
-resampleAlgorithmsWhichHonorNodata = filter (/=CubicSpline) [minBound..maxBound]
+resampleAlgorithmsWhichHonorNodata = filter (`notElem` bad) [minBound..maxBound]
+  where
+    bad
+      | GDAL.version >= (1, 11) = [CubicSpline]
+      | otherwise               = [CubicSpline, Mode, Average]

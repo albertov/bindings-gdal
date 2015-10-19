@@ -109,8 +109,10 @@ type BlockIx = XY Int
 instance Functor XY where
   fmap f (XY a b) = XY (f a) (f b)
   {-# INLINE fmap #-}
+#if MIN_VERSION_base(4,8,0)
   a <$ _ = XY a a
   {-# INLINE (<$) #-}
+#endif
 
 instance Applicative XY where
   pure a = XY a a

@@ -73,6 +73,7 @@ module GDAL.Internal.GDAL (
   , withLockedDatasetPtr
   , withLockedBandPtr
   , newDerivedDatasetHandle
+  , version
 ) where
 
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
@@ -746,6 +747,11 @@ foreign import ccall safe "gdal.h GDALGetMaskBand" c_getMaskBand
 foreign import ccall unsafe "gdal.h GDALGetMaskFlags" c_getMaskFlags
    :: Ptr (Band s t a) -> IO CInt
 
+{#enum define Version { GDAL_VERSION_MAJOR  as VersionMajor
+                      , GDAL_VERSION_MINOR  as VersionMinor } #}
+
+version :: (Int, Int)
+version = (fromEnum VersionMajor, fromEnum VersionMinor)
 
 instance GDALType Word8 where
   datatype _ = GDT_Byte
