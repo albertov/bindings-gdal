@@ -140,7 +140,8 @@ spec = setupAndTeardown $ do
         writeBand b (allBand b) sz v1
         ds <- unsafeToReadOnly ds'
 
-        let opts = def {woResampleAlg = algo}
+        let opts = setTransformer (def {giptSrcDs = Just ds})
+                                  (def {woResampleAlg = algo})
         ds2 <- createWarpedVRT ds sz2 gt opts :: GDAL s (RODataset s Int32)
         b2 <- getBand 1 ds2
         v2 <- readBand b2 (allBand b2) sz2
@@ -163,7 +164,7 @@ spec = setupAndTeardown $ do
         writeBand b (allBand b) sz v1
         ds <- unsafeToReadOnly ds'
 
-        let opts = setTransformer (def :: GenImgProjTransformer2 s a b)
+        let opts = setTransformer (def {gipt2SrcDs = Just ds})
                                   (def {woResampleAlg = algo})
 
         ds2 <- createWarpedVRT ds sz2 gt opts :: GDAL s (RODataset s Int32)

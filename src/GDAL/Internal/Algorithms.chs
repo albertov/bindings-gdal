@@ -3,19 +3,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE KindSignatures #-}
 
 module GDAL.Internal.Algorithms (
     Transformer (..)
-  , TransformerFunc
+  , TransformerFun
   , GenImgProjTransformer (..)
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)
 
+  , createTransformerAndArg
+  , getTransformerFunPtr
+
   , rasterizeLayersBuf
+  , rasterizeLayersBufIO
 ) where
 
 import Control.DeepSeq (NFData(rnf))
-import Control.Exception (Exception(..))
+import Control.Exception (Exception(..), bracket)
 import Control.Monad (liftM)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
@@ -26,7 +31,6 @@ import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 
 import Foreign.C.Types (CDouble(..), CInt(..))
-import qualified Foreign.C.Types as C2HSImp -- workaround c2hs 0.26
 import Foreign.C.String (CString)
 import Foreign.Marshal.Utils (fromBool)
 import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr, nullFunPtr)
@@ -58,21 +62,37 @@ instance Exception GDALAlgorithmException where
   fromException = bindingExceptionFromException
 
 class Transformer t where
-  transformerFunc     :: t s a b -> TransformerFunc
-  createTransformer   :: Ptr (RODataset s a) -> t s a b -> IO (Ptr (t s a b))
-  destroyTransformer  :: Ptr (t s a b) -> IO ()
+  createTransformerFun  :: t s a b -> IO (TransformerFun t s a b)
+  destroyTransformerFun :: TransformerFun t s a b -> IO ()
+  createTransformerArg   :: t s a b -> IO (Ptr (t s a b))
+  destroyTransformerArg  :: Ptr (t s a b) -> IO ()
 
-  destroyTransformer  = {# call GDALDestroyTransformer as ^#} . castPtr
+  destroyTransformerArg  = {# call GDALDestroyTransformer as ^#} . castPtr
+  destroyTransformerFun = const (return ())
 
-{# pointer GDALTransformerFunc as TransformerFunc #}
+createTransformerAndArg
+  :: Transformer t
+  => Maybe (t s a b) -> IO (TransformerFun t s a b, Ptr (t s a b), IO ())
+createTransformerAndArg Nothing = return (TransformerFun nullFunPtr, nullPtr, return ())
+createTransformerAndArg (Just tr) = do
+  arg <- createTransformerArg tr
+  t <- createTransformerFun tr
+  return (t, arg, (destroyTransformerFun t >> destroyTransformerArg arg))
 
-{-
-withTransformer :: Transformer t => t -> (Ptr (t s a b) -> IO c) -> IO c
-withTransformer t = bracket
--}
+type CTransformerFun = Ptr () -> CInt -> CInt -> Ptr CDouble
+                     -> Ptr CDouble -> Ptr CDouble -> Ptr CInt -> IO CInt
 
-foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
-  c_GDALGenImgProjTransform :: TransformerFunc
+newtype TransformerFun (t :: * -> * -> * -> *) s a b
+  = TransformerFun {getTransformerFunPtr :: FunPtr CTransformerFun}
+
+{# pointer *GDALTransformerFunc as TransformerFun newtype nocode#}
+
+withTransformerAndArg
+  :: Transformer t
+  => Maybe (t s a b) -> (TransformerFun t s a b -> Ptr (t s a b) -> IO c)
+  -> IO c
+withTransformerAndArg t f = do
+  bracket (createTransformerAndArg t) (\(_,_,d) -> d) (\(tr,arg,_) -> f tr arg)
 
 
 -- ############################################################################
@@ -102,19 +122,23 @@ instance Default (GenImgProjTransformer s a b) where
         }
 
 instance Transformer GenImgProjTransformer where
-  transformerFunc _ = c_GDALGenImgProjTransform
-  createTransformer dsPtr GenImgProjTransformer{..}
+  createTransformerFun _ = return c_GDALGenImgProjTransform
+  createTransformerArg GenImgProjTransformer{..}
     = throwIfError "GDALCreateGenImgProjTransformer" $
       withMaybeSRAsCString giptSrcSrs $ \sSr ->
       withMaybeSRAsCString giptDstSrs $ \dSr ->
         c_createGenImgProjTransformer
-          (maybe dsPtr unDataset giptSrcDs)
+          (maybe nullPtr unDataset giptSrcDs)
           sSr
           (maybe nullPtr unDataset giptDstDs)
           dSr
           (fromBool giptUseGCP)
           (realToFrac giptMaxError)
           (fromIntegral giptOrder)
+
+foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
+  c_GDALGenImgProjTransform :: TransformerFun GenImgProjTransformer s a b
+
 
 foreign import ccall safe "gdal_alg.h GDALCreateGenImgProjTransformer"
   c_createGenImgProjTransformer
@@ -140,14 +164,17 @@ instance Default (GenImgProjTransformer2 s a b) where
         }
 
 instance Transformer GenImgProjTransformer2 where
-  transformerFunc _ = c_GDALGenImgProjTransform
-  createTransformer dsPtr GenImgProjTransformer2{..}
+  createTransformerFun _ = return c_GDALGenImgProjTransform2
+  createTransformerArg GenImgProjTransformer2{..}
     = throwIfError "GDALCreateGenImgProjTransformer2" $
       withOptionList gipt2Options $ \opts ->
         c_createGenImgProjTransformer2
-          (maybe dsPtr unDataset gipt2SrcDs)
+          (maybe nullPtr unDataset gipt2SrcDs)
           (maybe nullPtr unDataset gipt2DstDs)
           opts
+
+foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
+  c_GDALGenImgProjTransform2 :: TransformerFun GenImgProjTransformer2 s a b
 
 foreign import ccall safe "gdal_alg.h GDALCreateGenImgProjTransformer2"
   c_createGenImgProjTransformer2
@@ -175,8 +202,8 @@ instance Default (GenImgProjTransformer3 s a b) where
         }
 
 instance Transformer GenImgProjTransformer3 where
-  transformerFunc _ = c_GDALGenImgProjTransform
-  createTransformer _ GenImgProjTransformer3{..}
+  createTransformerFun _ = return c_GDALGenImgProjTransform3
+  createTransformerArg GenImgProjTransformer3{..}
     = throwIfError "GDALCreateGenImgProjTransformer3" $
       withMaybeSRAsCString gipt3SrcSrs $ \sSr ->
       withMaybeSRAsCString gipt3DstSrs $ \dSr ->
@@ -188,6 +215,9 @@ withMaybeGeotransformPtr
   :: Maybe Geotransform -> (Ptr Geotransform -> IO a) -> IO a
 withMaybeGeotransformPtr Nothing   f = f nullPtr
 withMaybeGeotransformPtr (Just g) f = alloca $ \gp -> poke gp g >> f gp
+
+foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
+  c_GDALGenImgProjTransform3 :: TransformerFun GenImgProjTransformer3 s a b
 
 foreign import ccall safe "gdal_alg.h GDALCreateGenImgProjTransformer3"
   c_createGenImgProjTransformer3
@@ -212,17 +242,37 @@ rasterizeLayersBuf
   -> GDAL s (U.Vector (Value a))
 rasterizeLayersBuf
   size layers srs geotransform mTransformer nodataValue burnValue options
-  progressFun = liftIO $ do
+  progressFun
+  = liftIO $ rasterizeLayersBufIO size layers srs geotransform
+               mTransformer nodataValue burnValue options progressFun
+
+rasterizeLayersBufIO
+  :: forall s t a l. (GDALType a, Transformer t)
+  => Size
+  -> [ROLayer s l]
+  -> SpatialReference
+  -> Geotransform
+  -> Maybe (t s a a)
+  -> a
+  -> a
+  -> OptionList
+  -> Maybe ProgressFun
+  -> IO (U.Vector (Value a))
+rasterizeLayersBufIO
+  size layers srs geotransform mTransformer nodataValue burnValue options
+  progressFun = do
     ret <- withLockedLayerPtrs layers $ \layerPtrs ->
              withArrayLen layerPtrs $ \len lPtrPtr ->
              with geotransform $ \gt ->
              withMaybeSRAsCString (Just srs) $ \srsPtr ->
              withOptionList options $ \opts ->
+             withTransformerAndArg mTransformer $ \trans tArg ->
              withProgressFun progressFun $ \pFun -> do
               mVec <- Stm.replicate (sizeLen size) nodataValue
               Stm.unsafeWith mVec $ \vecPtr ->
-                 c_rasterizeLayersBuf vecPtr nx ny dt 0 0 (fromIntegral len)
-                   lPtrPtr srsPtr gt nullFunPtr nullPtr bValue opts pFun nullPtr
+                 throwIfError_ "rasterizeLayersBuf" $
+                   c_rasterizeLayersBuf vecPtr nx ny dt 0 0 (fromIntegral len)
+                     lPtrPtr srsPtr gt trans tArg bValue opts pFun nullPtr
               return mVec
     maybe (throwBindingException RasterizeStopped)
           (liftM (stToUValue . St.map toValue) . St.unsafeFreeze) ret
@@ -245,8 +295,8 @@ foreign import ccall safe "gdal_alg.h GDALRasterizeLayersBuf"
     -> Ptr (Ptr (ROLayer s b)) -- pahLayers
     -> CString           -- pszDstProjection
     -> Ptr Geotransform  -- padfDstGeoTransform
-    -> TransformerFunc   -- pfnTransformer
-    -> Ptr ()            -- pTransformerArg
+    -> TransformerFun t s a a  -- pfnTransformer
+    -> Ptr (t s a a)     -- pTransformerArg
     -> CDouble           -- dfBurnValue
     -> Ptr CString       -- papszOptions
     -> ProgressFunPtr    -- pfnProgress

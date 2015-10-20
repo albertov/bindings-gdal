@@ -31,7 +31,6 @@ import Foreign.Ptr (
   , FunPtr
   , nullPtr
   , castPtr
-  , nullFunPtr
   )
 import Foreign.Marshal.Utils (with)
 import Foreign.Storable (Storable(..))
@@ -156,14 +155,10 @@ withWarpOptionsPtr ds wo@WarpOptions{..}
         listToArray (map (fromIntegral . biSrc) woBands)
       {#set GDALWarpOptions.panDstBands #} p =<<
         listToArray (map (fromIntegral . biDst) woBands)
-      case woTransfomer of
-        Just t -> do
-          {#set GDALWarpOptions.pfnTransformer #} p (transformerFunc t)
-          tArg <- fmap castPtr (createTransformer dsPtr t)
-          {#set GDALWarpOptions.pTransformerArg #} p tArg
-        Nothing -> do
-          {#set GDALWarpOptions.pfnTransformer #} p nullFunPtr
-          {#set GDALWarpOptions.pTransformerArg #} p nullPtr
+      -- ignores finalizer since destroyWarpOptions takes care of it
+      (t, tArg, _) <- createTransformerAndArg woTransfomer
+      {#set GDALWarpOptions.pfnTransformer #} p (getTransformerFunPtr t)
+      {#set GDALWarpOptions.pTransformerArg #} p (castPtr tArg)
       when (anyBandHasNoData wo) $ do
         vPtrSrcR <- listToArray
                       (map (toNodata . fromMaybe nodata . biSrcNoData) woBands)
