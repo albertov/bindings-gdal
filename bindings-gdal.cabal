@@ -20,7 +20,7 @@ source-repository head
 
 
 library
-  build-tools:       c2hs
+  build-tools:       c2hs >= 0.25
   hs-source-dirs:    src
   exposed-modules:   GDAL
                    , GDAL.OGR
