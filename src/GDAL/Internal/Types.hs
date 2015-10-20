@@ -18,10 +18,6 @@ module GDAL.Internal.Types (
   , BlockIx
   , winSize
   , sizeLen
-  , Ref
-  , mkRef
-  , deRef
-  , Clonable (..)
   , AccessMode
   , ReadWrite
   , ReadOnly
@@ -66,18 +62,6 @@ data AccessMode = ReadOnly | ReadWrite
 
 type ReadOnly  = 'ReadOnly
 type ReadWrite = 'ReadWrite
-
-newtype Ref s a (t :: AccessMode) = Ref {unsafeDeRef :: a t}
-
-mkRef :: a t -> Ref s a t
-mkRef = Ref
-
-class Clonable (a :: AccessMode -> *) where
-  clone :: a t -> GDAL s (a t')
-
-deRef :: Clonable a => Ref s a t -> GDAL s (a t')
-deRef = clone . unsafeDeRef
-
 
 data XY a = XY {px :: !a, py :: !a} deriving (Eq, Ord, Show, Read, Typeable)
 

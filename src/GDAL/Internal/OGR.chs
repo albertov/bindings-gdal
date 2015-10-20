@@ -8,13 +8,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 
 module GDAL.Internal.OGR (
-    GeometryType (..)
-  , Geometry
-  , ROGeometry
-  , RWGeometry
-  , Datasource
+    Datasource
   , SQLDialect (..)
-  , WkbByteOrder (..)
   , Layer
   , RODatasource
   , RWDatasource
@@ -29,18 +24,6 @@ module GDAL.Internal.OGR (
   , withLockedLayerPtr
   , withLockedLayerPtrs
 
-  , createFromWktIO
-  , createFromWkbIO
-  , exportToWktIO
-  , exportToWkbIO
-
-  , createFromWkt
-  , createFromWkb
-  , exportToWkt
-  , exportToWkb
-
-  , unsafeThawGeometry
-  , unsafeFreezeGeometry
 
   , datasourceName
   , executeSQL
@@ -48,7 +31,6 @@ module GDAL.Internal.OGR (
   , getLayer
   , getLayerByName
 
-  , getSpatialFilterRef
   , getSpatialFilter
   , setSpatialFilter
 
@@ -91,15 +73,15 @@ import Foreign.Storable (peek, poke)
 import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
-import GDAL.Internal.OGRError
+{#import GDAL.Internal.OGRGeometry#}
+{#import GDAL.Internal.OGRFeature#}
+{#import GDAL.Internal.OGRError#}
 import GDAL.Internal.OSR
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLConv (cplFree)
 import GDAL.Internal.Util
 
 #include "ogr_api.h"
-
-{#context prefix = "OGR" #}
 
 {#fun OGRRegisterAll as registerAllDrivers {} -> `()'  #}
 {#fun OGRCleanupAll  as cleanupAll {} -> `()'  #}
@@ -126,10 +108,6 @@ withLockedDatasourcePtr (Datasource (m,p)) f = withMutex m (f p)
   , TRUE   as OGR_Update
   } deriving (Eq, Show) #}
 
-{#enum define WkbByteOrder
-  { wkbXDR  as WkbXDR
-  , wkbNDR  as WkbNDR
-  } deriving (Eq, Show) #}
 
 openReadOnly :: String -> GDAL s (RODatasource s)
 openReadOnly p = openWithMode OGR_ReadOnly p
@@ -203,7 +181,7 @@ withSQLDialect SqliteDialect  = withCString "SQLITE"
 withSQLDialect OGRDialect     = withCString "OGRSQL"
 
 executeSQL
-  :: SQLDialect -> String -> Maybe ROGeometry -> RODatasource s
+  :: SQLDialect -> String -> Maybe Geometry -> RODatasource s
   -> GDAL s (ROLayer s a)
 executeSQL dialect query mSpatialFilter ds@(Datasource (m,dsP)) = do
   p <- catchJust selectExc execute (throwBindingException . SQLQueryError)
@@ -222,7 +200,7 @@ executeSQL dialect query mSpatialFilter ds@(Datasource (m,dsP)) = do
 
 foreign import ccall safe "ogr_api.h OGR_DS_ExecuteSQL"
   c_executeSQL
-    :: Ptr (RODatasource s) -> CString -> Ptr ROGeometry -> CString
+    :: Ptr (RODatasource s) -> CString -> Ptr Geometry -> CString
     -> IO (Ptr (ROLayer s a))
 
 foreign import ccall safe "ogr_api.h OGR_DS_ReleaseResultSet"
@@ -264,145 +242,20 @@ foreign import ccall unsafe "ogr_api.h OGR_L_GetName" c_lGetName
   :: Ptr (Layer s t a) -> IO CString
 
 
-getSpatialFilter :: Layer s t a -> GDAL s (Maybe ROGeometry)
-getSpatialFilter
-  = maybe (return Nothing) (liftM Just . deRef) <=< getSpatialFilterRef
-
-getSpatialFilterRef :: Layer s t a -> GDAL s (Maybe (Ref s Geometry ReadOnly))
-getSpatialFilterRef l = liftIO $ withLockedLayerPtr l $ \lPtr -> do
+getSpatialFilter :: Layer s t a -> GDAL s (Maybe Geometry)
+getSpatialFilter l = liftIO $ withLockedLayerPtr l $ \lPtr -> do
   p <- c_getSpatialFilter lPtr
   if p == nullPtr
     then return Nothing
-    else liftM (Just . mkRef . Geometry) (newForeignPtr_ p)
+    else liftM Just (cloneGeometry p)
 
 foreign import ccall unsafe "ogr_api.h OGR_L_GetSpatialFilter"
-  c_getSpatialFilter :: Ptr (Layer s t a) -> IO (Ptr ROGeometry)
+  c_getSpatialFilter :: Ptr (Layer s t a) -> IO (Ptr Geometry)
 
-setSpatialFilter :: Layer s t a -> Geometry t' -> GDAL s ()
+setSpatialFilter :: Layer s t a -> Geometry -> GDAL s ()
 setSpatialFilter l g = liftIO $
   withLockedLayerPtr l $ \lPtr -> withGeometry g$ \gPtr ->
     c_setSpatialFilter lPtr gPtr
 
 foreign import ccall unsafe "ogr_api.h OGR_L_SetSpatialFilter"
-  c_setSpatialFilter :: Ptr (Layer s t a) -> Ptr (Geometry t') -> IO ()
-
-newtype Geometry (t::AccessMode) = Geometry (ForeignPtr (Geometry t))
-
-instance Clonable Geometry where
-  clone = liftIO . flip withGeometry (c_cloneGeometry >=> newGeometryHandle)
-
-foreign import ccall safe "ogr_api.h OGR_G_Clone"
-  c_cloneGeometry :: Ptr (Geometry t) -> IO (Ptr (Geometry t'))
-
-
-withMaybeGeometry :: Maybe (Geometry t) -> (Ptr (Geometry t) -> IO a) -> IO a
-withMaybeGeometry (Just (Geometry ptr)) = withForeignPtr ptr
-withMaybeGeometry Nothing               = ($ nullPtr)
-
-withGeometry :: Geometry t -> (Ptr (Geometry t) -> IO a) -> IO a
-withGeometry (Geometry ptr) = withForeignPtr ptr
-
-type ROGeometry = Geometry ReadOnly
-type RWGeometry = Geometry ReadWrite
-
-foreign import ccall "ogr_api.h &OGR_G_DestroyGeometry"
-  c_destroyGeometry :: FunPtr (Ptr (Geometry t) -> IO ())
-
-newGeometryHandle :: Ptr (Geometry t) -> IO (Geometry t)
-newGeometryHandle p
-  | p==nullPtr = throwBindingException NullGeometry
-  | otherwise  = Geometry <$> newForeignPtr c_destroyGeometry p
-
-createFromWkb
-  :: Maybe SpatialReference -> ByteString -> Either OGRError ROGeometry
-createFromWkb mSr = unsafePerformIO . createFromWkbIO mSr
-
-createFromWkbIO
-  :: Maybe SpatialReference -> ByteString -> IO (Either OGRError (Geometry t))
-createFromWkbIO mSrs bs =
-  alloca $ \gPtr ->
-  unsafeUseAsCStringLen bs $ \(sPtr, len) ->
-  withMaybeSpatialReference mSrs $ \srs ->
-    checkOGRError
-      (c_createFromWkb sPtr srs gPtr (fromIntegral len))
-      (peek gPtr >>= newGeometryHandle)
-
-foreign import ccall unsafe "ogr_api.h OGR_G_CreateFromWkb"
-  c_createFromWkb ::
-    CString -> Ptr SpatialReference -> Ptr (Ptr (Geometry t)) -> CInt -> IO CInt
-
-
-createFromWkt
-  :: Maybe SpatialReference -> ByteString -> Either OGRError ROGeometry
-createFromWkt mSrs = unsafePerformIO . createFromWktIO mSrs
-
-createFromWktIO
-  :: Maybe SpatialReference -> ByteString -> IO (Either OGRError (Geometry t))
-createFromWktIO mSrs bs =
-  alloca $ \gPtr ->
-  alloca $ \sPtrPtr ->
-  unsafeUseAsCString bs $ \sPtr ->
-  withMaybeSpatialReference mSrs $ \srs ->
-    checkOGRError
-      (poke sPtrPtr sPtr >> c_createFromWkt sPtrPtr srs gPtr)
-      (peek gPtr >>= newGeometryHandle)
-
-foreign import ccall unsafe "ogr_api.h OGR_G_CreateFromWkt"
-  c_createFromWkt ::
-    Ptr CString -> Ptr SpatialReference -> Ptr (Ptr (Geometry t)) -> IO CInt
-
-unsafeFreezeGeometry :: RWGeometry -> ROGeometry
-unsafeFreezeGeometry = coerce
-
-unsafeThawGeometry :: RWGeometry -> ROGeometry
-unsafeThawGeometry = coerce
-
-withMaybeSpatialReference
-  :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a
-withMaybeSpatialReference Nothing  = ($ nullPtr)
-withMaybeSpatialReference (Just s) = withSpatialReference s
-
-peekAndPack :: Ptr CString -> IO ByteString
-peekAndPack pptr = do
-  p <- liftM castPtr (peek pptr) :: IO (Ptr Word8)
-  let findLen !n = do
-        v <- peek (p `plusPtr` n) :: IO Word8
-        if v==0 then return n else findLen (n+1)
-  len <- findLen 0
-  unsafePackCStringFinalizer p len (cplFree p)
-
-
-exportToWktIO :: Geometry t -> IO ByteString
-exportToWktIO g = withGeometry g $ \gPtr -> alloca $ \sPtrPtr -> do
-  void $ {#call OGR_G_ExportToWkt as ^ #} (castPtr gPtr) sPtrPtr
-  peekAndPack sPtrPtr
-
-exportToWkt :: ROGeometry -> ByteString
-exportToWkt = unsafePerformIO . exportToWktIO
-
-exportToWkbIO :: WkbByteOrder -> Geometry t -> IO ByteString
-exportToWkbIO bo g = withGeometry g $ \gPtr -> do
-  len <- liftM fromIntegral ({#call OGR_G_WkbSize as ^ #} (castPtr gPtr))
-  buf <- mallocBytes len
-  void $ {#call OGR_G_ExportToWkb as ^ #} (castPtr gPtr) (fromEnumC bo) buf
-  unsafePackMallocCStringLen (castPtr buf, len)
-
-exportToWkb :: WkbByteOrder -> ROGeometry -> ByteString
-exportToWkb bo = unsafePerformIO . exportToWkbIO bo
-
-geomEqIO :: Geometry t -> Geometry t1 -> IO Bool
-geomEqIO a b = withGeometry a $ \aPtr -> withGeometry b $ \bPtr ->
-  liftM toBool ({#call OGR_G_Equals as ^#} (castPtr aPtr) (castPtr bPtr))
-
-instance Show ROGeometry where
-  show = unpack . exportToWkt
-
-instance Eq ROGeometry where
-  a == b = unsafePerformIO (geomEqIO a b)
-
-{#enum OGRwkbGeometryType as GeometryType {underscoreToCase}#}
-
-instance Show GeometryType where
-  show s = unsafePerformIO $
-            {#call unsafe OGRGeometryTypeToName as ^#} s' >>= peekCString
-    where s' = fromEnumC s
+  c_setSpatialFilter :: Ptr (Layer s t a) -> Ptr Geometry -> IO ()
