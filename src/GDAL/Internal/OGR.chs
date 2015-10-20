@@ -107,17 +107,17 @@ import GDAL.Internal.Util
 
 {#pointer OGRDataSourceH as Datasource foreign newtype nocode#}
 
-newtype Datasource s (t::AccessMode) a
-  = Datasource (Mutex, Ptr (Datasource s t a))
+newtype Datasource s (t::AccessMode)
+  = Datasource (Mutex, Ptr (Datasource s t))
 
-unDatasource :: Datasource s t a -> Ptr (Datasource s t a)
+unDatasource :: Datasource s t -> Ptr (Datasource s t)
 unDatasource (Datasource (_,p)) = p
 
 type RODatasource s = Datasource s ReadOnly
 type RWDatasource s = Datasource s ReadWrite
 
 withLockedDatasourcePtr
-  :: Datasource s t a -> (Ptr (Datasource s t a) -> IO b) -> IO b
+  :: Datasource s t -> (Ptr (Datasource s t) -> IO b) -> IO b
 withLockedDatasourcePtr (Datasource (m,p)) f = withMutex m (f p)
 
 
@@ -131,13 +131,13 @@ withLockedDatasourcePtr (Datasource (m,p)) f = withMutex m (f p)
   , wkbNDR  as WkbNDR
   } deriving (Eq, Show) #}
 
-openReadOnly :: String -> GDAL s (RODatasource s a)
+openReadOnly :: String -> GDAL s (RODatasource s)
 openReadOnly p = openWithMode OGR_ReadOnly p
 
-openReadWrite :: String -> GDAL s (RWDatasource s a)
+openReadWrite :: String -> GDAL s (RWDatasource s)
 openReadWrite p = openWithMode OGR_Update p
 
-openWithMode :: OGRAccess -> String -> GDAL s (Datasource s t a)
+openWithMode :: OGRAccess -> String -> GDAL s (Datasource s t)
 openWithMode m p = do
   ptr <- liftIO $ withCString p $ \p' ->
            throwIfError "open" (c_open p' (fromEnumC m) nullPtr)
@@ -145,9 +145,9 @@ openWithMode m p = do
     throwM (GDALException CE_Failure OpenFailed "OGROpen returned a NULL ptr"))
 
 foreign import ccall safe "ogr_api.h OGROpen" c_open
-   :: CString -> CInt -> Ptr () -> IO (Ptr (Datasource s t a))
+   :: CString -> CInt -> Ptr () -> IO (Ptr (Datasource s t))
 
-newDatasourceHandle :: Ptr (Datasource s t a) -> GDAL s (Datasource s t a)
+newDatasourceHandle :: Ptr (Datasource s t) -> GDAL s (Datasource s t)
 newDatasourceHandle p
   | p==nullPtr  = throwBindingException NullDatasource
   | otherwise   = do
@@ -156,19 +156,19 @@ newDatasourceHandle p
       return $ Datasource (m,p)
 
 foreign import ccall safe "ogr_api.h OGRReleaseDataSource"
-  c_releaseDatasource :: Ptr (Datasource s t a) -> IO ()
+  c_releaseDatasource :: Ptr (Datasource s t) -> IO ()
 
 
-getLayer :: Int -> Datasource s t a -> GDAL s (Layer s t a)
+getLayer :: Int -> Datasource s t -> GDAL s (Layer s t a)
 getLayer layer (Datasource (m,dp)) = liftIO $ do
   p <- throwIfError "getLayer" (c_getLayer dp (fromIntegral layer))
   when (p==nullPtr) $ throwBindingException (InvalidLayerIndex layer)
   return (Layer (m, p))
 
 foreign import ccall safe "ogr_api.h OGR_DS_GetLayer" c_getLayer
-  :: Ptr (Datasource s t a) -> CInt -> IO (Ptr (Layer s t a))
+  :: Ptr (Datasource s t) -> CInt -> IO (Ptr (Layer s t a))
 
-getLayerByName :: String -> Datasource s t a -> GDAL s (Layer s t a)
+getLayerByName :: String -> Datasource s t -> GDAL s (Layer s t a)
 getLayerByName layer (Datasource (m,dp)) = liftIO $
   withCString layer $ \lyr -> do
     p <- throwIfError "getLayerByName" (c_getLayerByName dp lyr)
@@ -176,20 +176,20 @@ getLayerByName layer (Datasource (m,dp)) = liftIO $
     return (Layer (m,p))
 
 foreign import ccall safe "ogr_api.h OGR_DS_GetLayerByName" c_getLayerByName
-  :: Ptr (Datasource s t a) -> CString -> IO (Ptr (Layer s t a))
+  :: Ptr (Datasource s t) -> CString -> IO (Ptr (Layer s t a))
 
 
-layerCount :: Datasource s t a -> GDAL s Int
+layerCount :: Datasource s t -> GDAL s Int
 layerCount = liftM fromIntegral . liftIO . c_getLayerCount . unDatasource
 
 foreign import ccall unsafe "ogr_api.h OGR_DS_GetLayerCount" c_getLayerCount
-  :: Ptr (Datasource s t a) -> IO CInt
+  :: Ptr (Datasource s t) -> IO CInt
 
-datasourceName :: Datasource s t a -> GDAL s String
+datasourceName :: Datasource s t -> GDAL s String
 datasourceName = liftIO . (peekCString <=< c_dsGeName . unDatasource)
 
 foreign import ccall unsafe "ogr_api.h OGR_DS_GetName" c_dsGeName
-  :: Ptr (Datasource s t a) -> IO CString
+  :: Ptr (Datasource s t) -> IO CString
 
 data SQLDialect
   = DefaultDialect
@@ -203,7 +203,7 @@ withSQLDialect SqliteDialect  = withCString "SQLITE"
 withSQLDialect OGRDialect     = withCString "OGRSQL"
 
 executeSQL
-  :: SQLDialect -> String -> Maybe ROGeometry -> RODatasource s a
+  :: SQLDialect -> String -> Maybe ROGeometry -> RODatasource s
   -> GDAL s (ROLayer s a)
 executeSQL dialect query mSpatialFilter ds@(Datasource (m,dsP)) = do
   p <- catchJust selectExc execute (throwBindingException . SQLQueryError)
@@ -222,12 +222,12 @@ executeSQL dialect query mSpatialFilter ds@(Datasource (m,dsP)) = do
 
 foreign import ccall safe "ogr_api.h OGR_DS_ExecuteSQL"
   c_executeSQL
-    :: Ptr (RODatasource s a) -> CString -> Ptr ROGeometry -> CString
+    :: Ptr (RODatasource s) -> CString -> Ptr ROGeometry -> CString
     -> IO (Ptr (ROLayer s a))
 
 foreign import ccall safe "ogr_api.h OGR_DS_ReleaseResultSet"
   c_releaseResultSet
-    :: Ptr (RODatasource s a) -> Ptr (ROLayer s a) -> IO ()
+    :: Ptr (RODatasource s) -> Ptr (ROLayer s a) -> IO ()
 
 
 
