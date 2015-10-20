@@ -3,6 +3,7 @@ module GDAL.Internal.Util (
     Mutex
   , newMutex
   , withMutex
+  , withMutexes
   , fromEnumC
   , toEnumC
   , createEnum
@@ -27,7 +28,7 @@ createEnum name getNames = do
   let ctors = map (\n -> NormalC (mkName n) []) names
   return $ [DataD [] (mkName name) [] ctors [''Show, ''Enum, ''Eq, ''Read]]
 
-newtype Mutex = Mutex (MVar ())
+newtype Mutex = Mutex {unMutex :: MVar ()}
 
 newMutex :: IO Mutex
 newMutex = fmap Mutex (newMVar ())
@@ -37,3 +38,9 @@ withMutex (Mutex m) action = finally (acquireMutex >> action) releaseMutex
   where
     acquireMutex = takeMVar m
     releaseMutex = putMVar m ()
+
+withMutexes :: [Mutex] -> IO a -> IO a
+withMutexes ms action = finally (acquireMutexes >> action) releaseMutexes
+  where
+    acquireMutexes = mapM_ (takeMVar . unMutex) ms
+    releaseMutexes = mapM_ (flip putMVar () . unMutex) ms

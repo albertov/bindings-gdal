@@ -7,6 +7,7 @@ module GDAL.Internal.CPLConv (
   , cplMallocArray
   , cplNew
   , cplFree
+  , listToArray
   ) where
 
 import Control.DeepSeq (NFData(rnf))
@@ -52,3 +53,12 @@ cplNew v = cplMalloc >>= (\p -> poke p v >> return p)
 cplFree :: Ptr a -> IO ()
 cplFree = {#call unsafe VSIFree as ^#} . castPtr
 {-# INLINE cplFree #-}
+
+
+listToArray :: Storable a => [a] -> IO (Ptr a)
+listToArray [] = return nullPtr
+listToArray l = do
+  ptr <- cplMallocArray (length l)
+  mapM_ (\(i,v) -> pokeElemOff ptr i v) (zip [0..] l)
+  return ptr
+{-# INLINE listToArray #-}

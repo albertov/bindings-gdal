@@ -91,13 +91,14 @@ import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Storable as St
+import qualified Data.Vector.Storable.Mutable as Stm
 import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrArray)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Utils (toBool, fromBool)
+import Foreign.Marshal.Utils (toBool, fromBool, with)
 
 import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcess)
@@ -423,12 +424,11 @@ foreign import ccall unsafe "gdal.h GDALGetGeoTransform" getGeoTransform
 setDatasetGeotransform :: (RWDataset s a) -> Geotransform -> GDAL s ()
 setDatasetGeotransform ds gt = liftIO $
   throwIfError_ "setDatasetGeotransform" $
-    withLockedDatasetPtr ds $ \dsPtr ->
-      alloca $ \p -> (poke p gt >> setGeoTransform dsPtr (castPtr p))
+    withLockedDatasetPtr ds $ \dsPtr -> with gt $ setGeoTransform dsPtr
 
 
 foreign import ccall unsafe "gdal.h GDALSetGeoTransform" setGeoTransform
-  :: Ptr (Dataset s t a) -> Ptr CDouble -> IO CInt
+  :: Ptr (Dataset s t a) -> Ptr Geotransform -> IO CInt
 
 datasetBandCount :: Dataset s t a -> Int
 datasetBandCount = fromIntegral . bandCount_ . unDataset
@@ -540,9 +540,9 @@ readBandIO band win (XY bx by) = readMasked band read_
     XY xoff yoff = winMin win
     read_ :: forall b' a'. GDALType a' => Ptr (Band s t b') -> IO (St.Vector a')
     read_ b = do
-      fp <- mallocForeignPtrArray (bx * by)
+      vec <- Stm.new (bx*by)
       let dtype = fromEnumC (datatype (Proxy :: Proxy a'))
-      withForeignPtr fp $ \ptr -> do
+      Stm.unsafeWith vec $ \ptr -> do
         throwIfError_ "readBandIO" $ do
           e <- adviseRead_
             b
@@ -569,7 +569,7 @@ readBandIO band win (XY bx by) = readMasked band read_
               0
               0
             else return e
-      return $ St.unsafeFromForeignPtr0 fp (bx * by)
+      St.unsafeFreeze vec
 {-# INLINE readBandIO #-}
 
 readMasked
@@ -647,11 +647,11 @@ readBandBlock
 readBandBlock band (XY x y) = do
   checkType band
   liftIO $ readMasked band $ \b -> do
-    f <- mallocForeignPtrArray len
-    withForeignPtr f $ \ptr ->
+    vec <- Stm.new len
+    Stm.unsafeWith vec $ \ptr ->
       throwIfError_ "readBandBlock" $
         readBlock_ b (fromIntegral x) (fromIntegral y) (castPtr ptr)
-    return $ St.unsafeFromForeignPtr0 f len
+    St.unsafeFreeze vec
   where len = bandBlockLen band
 {-# INLINE readBandBlock #-}
 

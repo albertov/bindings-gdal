@@ -34,7 +34,7 @@ import Foreign.Ptr (
   , castFunPtr
   , nullFunPtr
   )
-import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Utils (with)
 import Foreign.Storable (Storable(..))
 
 import GDAL.Internal.Types
@@ -82,7 +82,6 @@ data WarpOptions s a b
     , woWorkingDatatype :: Datatype
     , woBands           :: [BandOptions a b]
     , woTransfomer      :: Maybe (t s a b)
-    , woProgressFun     :: Maybe ProgressFun
     }
 
 instance (GDALType a, GDALType b) => Default (WarpOptions s a b) where
@@ -93,7 +92,6 @@ instance (GDALType a, GDALType b) => Default (WarpOptions s a b) where
         , woWorkingDatatype = GDT_Unknown
         , woBands           = []
         , woTransfomer      = Nothing :: Maybe (GenImgProjTransformer s a b)
-        , woProgressFun     = Nothing
         }
 
 -- Avoids "Record update for insufficiently polymorphic field" when doigs
@@ -108,7 +106,6 @@ setTransformer t opts = WarpOptions {
   , woWorkingDatatype = woWorkingDatatype opts
   , woBands           = woBands opts
   , woTransfomer      = Just t
-  , woProgressFun     = woProgressFun opts
   }
 
 
@@ -157,9 +154,9 @@ withWarpOptionsPtr ds wo@WarpOptions{..}
       {#set GDALWarpOptions.eWorkingDataType #} p (fromEnumC woWorkingDatatype)
       {#set GDALWarpOptions.nBandCount #} p (fromIntegral (length woBands))
       {#set GDALWarpOptions.panSrcBands #} p =<<
-        listToPtr (map (fromIntegral . biSrc) woBands)
+        listToArray (map (fromIntegral . biSrc) woBands)
       {#set GDALWarpOptions.panDstBands #} p =<<
-        listToPtr (map (fromIntegral . biDst) woBands)
+        listToArray (map (fromIntegral . biDst) woBands)
       case woTransfomer of
         Just t -> do
           {#set GDALWarpOptions.pfnTransformer #} p
@@ -170,12 +167,12 @@ withWarpOptionsPtr ds wo@WarpOptions{..}
           {#set GDALWarpOptions.pfnTransformer #} p nullFunPtr
           {#set GDALWarpOptions.pTransformerArg #} p nullPtr
       when (anyBandHasNoData wo) $ do
-        vPtrSrcR <- listToPtr
+        vPtrSrcR <- listToArray
                       (map (toNodata . fromMaybe nodata . biSrcNoData) woBands)
-        vPtrSrcI <- listToPtr (replicate (length woBands) 0)
-        vPtrDstR <- listToPtr
+        vPtrSrcI <- listToArray (replicate (length woBands) 0)
+        vPtrDstR <- listToArray
                       (map (toNodata . fromMaybe nodata . biDstNoData) woBands)
-        vPtrDstI <- listToPtr (replicate (length woBands) 0)
+        vPtrDstI <- listToArray (replicate (length woBands) 0)
         {#set GDALWarpOptions.padfDstNoDataReal #} p vPtrDstR
         {#set GDALWarpOptions.padfDstNoDataImag #} p vPtrDstI
         {#set GDALWarpOptions.padfSrcNoDataReal #} p vPtrSrcR
@@ -183,12 +180,6 @@ withWarpOptionsPtr ds wo@WarpOptions{..}
       return p
 
     destroyWarpOptions = c_destroyWarpOptions
-
-    listToPtr [] = return nullPtr
-    listToPtr l = do
-      ptr <- cplMallocArray (length l)
-      mapM_ (\(i,v) -> pokeElemOff ptr i v) (zip [0..] l)
-      return ptr
 
 foreign import ccall unsafe "gdalwarper.h GDALCreateWarpOptions"
   c_createWarpOptions :: IO (Ptr (WarpOptions s a b))
@@ -251,12 +242,12 @@ createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
   options'' <- setOptionDefaults srcDs Nothing options'
   newDsPtr <- liftIO $
     withWarpOptionsPtr srcDs options'' $ \opts ->
-    alloca $ \gt -> do
-      poke (castPtr gt) geotransform
+    with geotransform $ \gt -> do
       pArg <- {#get GDALWarpOptions.pTransformerArg #} opts
       when (pArg /= nullPtr) $
-        {#call GDALSetGenImgProjTransformerDstGeoTransform as ^#} pArg gt
-      c_createWarpedVRT dsPtr nPixels' nLines' gt opts
+        {#call GDALSetGenImgProjTransformerDstGeoTransform as ^#} pArg
+          (castPtr gt)
+      c_createWarpedVRT dsPtr nPixels' nLines' (castPtr gt) opts
   oDs <- newDerivedDatasetHandle srcDs newDsPtr
   setDstNodata oDs options''
   unsafeToReadOnly oDs

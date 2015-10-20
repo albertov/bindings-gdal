@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module GDAL.Internal.Algorithms (
     Transformer (..)
@@ -9,23 +10,51 @@ module GDAL.Internal.Algorithms (
   , GenImgProjTransformer (..)
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)
+
+  , rasterizeLayersBuf
 ) where
 
+import Control.DeepSeq (NFData(rnf))
+import Control.Exception (Exception(..))
+import Control.Monad (liftM)
+import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
+import Data.Proxy (Proxy(Proxy))
+import Data.Typeable (Typeable)
+import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Storable as St
+import qualified Data.Vector.Storable.Mutable as Stm
 
 import Foreign.C.Types (CDouble(..), CInt(..))
 import Foreign.C.String (CString)
 import Foreign.Marshal.Utils (fromBool)
-import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr)
+import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr, nullFunPtr)
 import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Array (withArrayLen)
+import Foreign.Marshal.Utils (with)
 import Foreign.Storable (poke)
 
-import GDAL.Internal.CPLError
+import GDAL.Internal.Util (fromEnumC)
+import GDAL.Internal.Types
 import GDAL.Internal.CPLString
 import GDAL.Internal.OSR (SpatialReference, withMaybeSRAsCString)
+{#import GDAL.Internal.CPLProgress#}
+{#import GDAL.Internal.OGR#}
+{#import GDAL.Internal.CPLError#}
 {#import GDAL.Internal.GDAL#}
 
 #include "gdal_alg.h"
+
+data GDALAlgorithmException
+  = RasterizeStopped
+  deriving (Typeable, Show, Eq)
+
+instance NFData GDALAlgorithmException where
+  rnf a = a `seq` ()
+
+instance Exception GDALAlgorithmException where
+  toException   = bindingExceptionToException
+  fromException = bindingExceptionFromException
 
 class Transformer t where
   transformerFunc     :: t s a b -> TransformerFunc
@@ -35,6 +64,11 @@ class Transformer t where
   destroyTransformer  = {# call GDALDestroyTransformer as ^#} . castPtr
 
 {# pointer GDALTransformerFunc as TransformerFunc #}
+
+{-
+withTransformer :: Transformer t => t -> (Ptr (t s a b) -> IO c) -> IO c
+withTransformer t = bracket
+-}
 
 foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
   c_GDALGenImgProjTransform :: TransformerFunc
@@ -81,7 +115,7 @@ instance Transformer GenImgProjTransformer where
           (realToFrac giptMaxError)
           (fromIntegral giptOrder)
 
-foreign import ccall unsafe "gdal_alg.h GDALCreateGenImgProjTransformer"
+foreign import ccall safe "gdal_alg.h GDALCreateGenImgProjTransformer"
   c_createGenImgProjTransformer
     :: Ptr (RODataset s a) -> CString -> Ptr (Dataset s m b) -> CString -> CInt
     -> CDouble -> CInt -> IO (Ptr (GenImgProjTransformer s a b))
@@ -114,7 +148,7 @@ instance Transformer GenImgProjTransformer2 where
           (maybe nullPtr unDataset gipt2DstDs)
           opts
 
-foreign import ccall unsafe "gdal_alg.h GDALCreateGenImgProjTransformer2"
+foreign import ccall safe "gdal_alg.h GDALCreateGenImgProjTransformer2"
   c_createGenImgProjTransformer2
     :: Ptr (RODataset s a) -> Ptr (RWDataset s b) -> Ptr CString
     -> IO (Ptr (GenImgProjTransformer2 s a b))
@@ -154,7 +188,66 @@ withMaybeGeotransformPtr
 withMaybeGeotransformPtr Nothing   f = f nullPtr
 withMaybeGeotransformPtr (Just g) f = alloca $ \gp -> poke gp g >> f gp
 
-foreign import ccall unsafe "gdal_alg.h GDALCreateGenImgProjTransformer3"
+foreign import ccall safe "gdal_alg.h GDALCreateGenImgProjTransformer3"
   c_createGenImgProjTransformer3
     :: CString -> Ptr Geotransform -> CString -> Ptr Geotransform
     -> IO (Ptr (GenImgProjTransformer3 s a b))
+
+-- ############################################################################
+-- GDALRasterizeLayersBuf
+-- ############################################################################
+
+rasterizeLayersBuf
+  :: forall s t a l. (GDALType a, Transformer t)
+  => Size
+  -> [ROLayer s l]
+  -> SpatialReference
+  -> Geotransform
+  -> Maybe (t s a a)
+  -> a
+  -> a
+  -> OptionList
+  -> Maybe ProgressFun
+  -> GDAL s (U.Vector (Value a))
+rasterizeLayersBuf
+  size layers srs geotransform mTransformer nodataValue burnValue options
+  progressFun = liftIO $ do
+    ret <- withLockedLayerPtrs layers $ \layerPtrs ->
+             withArrayLen layerPtrs $ \len lPtrPtr ->
+             with geotransform $ \gt ->
+             withMaybeSRAsCString (Just srs) $ \srsPtr ->
+             withOptionList options $ \opts ->
+             withProgressFun progressFun $ \pFun -> do
+              mVec <- Stm.replicate (sizeLen size) nodataValue
+              Stm.unsafeWith mVec $ \vecPtr ->
+                 c_rasterizeLayersBuf vecPtr nx ny dt 0 0 (fromIntegral len)
+                   lPtrPtr srsPtr gt nullFunPtr nullPtr bValue opts pFun nullPtr
+              return mVec
+    maybe (throwBindingException RasterizeStopped)
+          (liftM (stToUValue . St.map toValue) . St.unsafeFreeze) ret
+  where
+    toValue v = if toNodata v == ndValue then NoData else Value v
+    dt        = fromEnumC (datatype (Proxy :: Proxy a))
+    bValue    = toNodata burnValue
+    ndValue   = toNodata nodataValue
+    XY nx ny  = fmap fromIntegral size
+
+foreign import ccall safe "gdal_alg.h GDALRasterizeLayersBuf"
+  c_rasterizeLayersBuf
+    :: Ptr a             -- pData
+    -> CInt              -- eBufXSize
+    -> CInt              -- eBufYSize
+    -> CInt              -- eBufType
+    -> CInt              -- nPixelSpace
+    -> CInt              -- nLineSpace
+    -> CInt              -- nLayerCount
+    -> Ptr (Ptr (ROLayer s b)) -- pahLayers
+    -> CString           -- pszDstProjection
+    -> Ptr Geotransform  -- padfDstGeoTransform
+    -> TransformerFunc   -- pfnTransformer
+    -> Ptr ()            -- pTransformerArg
+    -> CDouble           -- dfBurnValue
+    -> Ptr CString       -- papszOptions
+    -> ProgressFunPtr    -- pfnProgress
+    -> Ptr ()            -- pProgressArg
+    -> IO CInt

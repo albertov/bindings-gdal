@@ -27,6 +27,7 @@ module GDAL.Internal.OGR (
   , openReadOnly
   , openReadWrite
   , withLockedLayerPtr
+  , withLockedLayerPtrs
 
   , createFromWktIO
   , createFromWkbIO
@@ -241,9 +242,17 @@ newtype (Layer s (t::AccessMode) a)
 unLayer :: Layer s t a -> Ptr (Layer s t a)
 unLayer (Layer (_,p)) = p
 
+lMutex :: Layer s t a -> Mutex
+lMutex (Layer (m,_)) = m
+
 withLockedLayerPtr
   :: Layer s t a -> (Ptr (Layer s t a) -> IO b) -> IO b
 withLockedLayerPtr (Layer (m,p)) f = withMutex m $ f p
+
+withLockedLayerPtrs
+  :: [Layer s t a] -> ([Ptr (Layer s t a)] -> IO b) -> IO b
+withLockedLayerPtrs ls f
+  = withMutexes (map lMutex ls) (f (map unLayer ls))
 
 type ROLayer s = Layer s ReadOnly
 type RWLayer s = Layer s ReadWrite
