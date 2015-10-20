@@ -141,7 +141,7 @@ instance Default (GenImgProjTransformer3 s a b) where
 
 instance Transformer GenImgProjTransformer3 where
   transformerFunc _ = c_GDALGenImgProjTransform
-  createTransformer dsPtr GenImgProjTransformer3{..}
+  createTransformer _ GenImgProjTransformer3{..}
     = throwIfError "GDALCreateGenImgProjTransformer3" $
       withMaybeSRAsCString gipt3SrcSrs $ \sSr ->
       withMaybeSRAsCString gipt3DstSrs $ \dSr ->

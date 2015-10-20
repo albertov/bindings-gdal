@@ -126,7 +126,7 @@ spec = setupAndTeardown $ do
   describe "createWarpedVRT" $ do
 
     forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
-      it ("handles nodata (GenImgProjTransformer)" ++ show algo) $ ((do
+      it ("handles nodata (GenImgProjTransformer) " ++ show algo) $ ((do
         let sz  = XY 100 100
             sz2 = XY 200 200
             gt  = Geotransform 0 10 0 0 0 (-10)
