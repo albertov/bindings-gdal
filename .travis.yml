@@ -20,10 +20,12 @@ before_install:
 - mkdir -p ~/.local/bin
 - export PATH=$HOME/.local/bin:$PATH
 - travis_retry curl -L https://github.com/commercialhaskell/stack/releases/download/v0.1.5.0/stack-0.1.5.0-x86_64-linux.tar.gz | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
+- stack $ARGS --no-terminal --install-ghc setup
+- stack exec c2hs --version
 - gdalinfo --version
 
 script:
-- stack $ARGS --no-terminal --install-ghc test --haddock
+- stack $ARGS --no-terminal test --haddock
 - find .stack-work -type f -name spec -exec valgrind --leak-check=full {} ';'
 
 cache:
