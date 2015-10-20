@@ -31,7 +31,6 @@ import Foreign.Ptr (
   , FunPtr
   , nullPtr
   , castPtr
-  , castFunPtr
   , nullFunPtr
   )
 import Foreign.Marshal.Utils (with)
@@ -159,8 +158,7 @@ withWarpOptionsPtr ds wo@WarpOptions{..}
         listToArray (map (fromIntegral . biDst) woBands)
       case woTransfomer of
         Just t -> do
-          {#set GDALWarpOptions.pfnTransformer #} p
-            (castFunPtr (transformerFunc t))
+          {#set GDALWarpOptions.pfnTransformer #} p (transformerFunc t)
           tArg <- fmap castPtr (createTransformer dsPtr t)
           {#set GDALWarpOptions.pTransformerArg #} p tArg
         Nothing -> do

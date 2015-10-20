@@ -26,9 +26,10 @@ import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 
 import Foreign.C.Types (CDouble(..), CInt(..))
+import qualified Foreign.C.Types as C2HSImp -- workaround c2hs 0.26
 import Foreign.C.String (CString)
 import Foreign.Marshal.Utils (fromBool)
-import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr, nullFunPtr)
+import Foreign.Ptr (Ptr, nullPtr, castPtr, nullFunPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (withArrayLen)
 import Foreign.Marshal.Utils (with)
