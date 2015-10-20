@@ -24,6 +24,7 @@ import Control.Exception (Exception(..), bracket)
 import Data.Maybe (isJust, fromMaybe)
 import Data.Typeable (Typeable)
 import Data.Default (Default(..))
+import Data.Proxy (Proxy)
 import Foreign.C.String (CString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (
@@ -62,41 +63,42 @@ instance Exception GDALWarpException where
 {# enum GDALResampleAlg as ResampleAlg {upcaseFirstLetter} with prefix = "GRA_"
      deriving (Eq,Read,Show,Bounded) #}
 
-data BandOptions a b
-  = BandOptions {
-      biSrc       :: !Int
-    , biDst       :: !Int
-    , biSrcNoData :: !(Maybe a)
-    , biDstNoData :: !(Maybe b)
-    } deriving Show
+data BandOptions = forall a b. (GDALType a, GDALType b)
+  => BandOptions {
+       biSrc       :: !Int
+     , biDst       :: !Int
+     , biSrcNoData :: !(Maybe a)
+     , biDstNoData :: !(Maybe b)
+     }
+
+deriving instance Show BandOptions
 
 
-data WarpOptions s a b
-  = forall t. (Transformer t, GDALType a, GDALType b)
+data WarpOptions s = forall t. Transformer t
   => WarpOptions {
       woResampleAlg     :: ResampleAlg
     , woWarpOptions     :: OptionList
     , woMemoryLimit     :: Double
     , woWorkingDatatype :: Datatype
-    , woBands           :: [BandOptions a b]
-    , woTransfomer      :: Maybe (t s a b)
+    , woBands           :: [BandOptions]
+    , woTransfomer      :: Maybe (t s)
     }
 
-instance (GDALType a, GDALType b) => Default (WarpOptions s a b) where
+instance Default (WarpOptions s) where
   def = WarpOptions {
           woResampleAlg     = NearestNeighbour
         , woWarpOptions     = []
         , woMemoryLimit     = 0
         , woWorkingDatatype = GDT_Unknown
         , woBands           = []
-        , woTransfomer      = Nothing :: Maybe (GenImgProjTransformer s a b)
+        , woTransfomer      = Nothing :: Maybe (GenImgProjTransformer s)
         }
 
 -- Avoids "Record update for insufficiently polymorphic field" when doigs
 -- opts { woTransfomer = Just ...}
 setTransformer
-  :: forall t s a b. (Transformer t, GDALType a, GDALType b)
-  => t s a b -> WarpOptions s a b -> WarpOptions s a b
+  :: forall t s. Transformer t
+  => t s -> WarpOptions s -> WarpOptions s
 setTransformer t opts = WarpOptions {
     woResampleAlg     = woResampleAlg opts
   , woWarpOptions     = woWarpOptions opts
@@ -109,35 +111,37 @@ setTransformer t opts = WarpOptions {
 
 
 setOptionDefaults
-  :: (GDALType a, GDALType b)
-  => RODataset s a -> Maybe (Dataset s t b) -> WarpOptions s a b
-  -> GDAL s (WarpOptions s a b)
+  :: forall s t. RODataset s -> Maybe (Dataset s t) -> WarpOptions s
+  -> GDAL s (WarpOptions s)
 setOptionDefaults ds moDs wo@WarpOptions{..} = do
   bands <- if null woBands
             then forM [1..datasetBandCount ds] $ \i -> do
-              srcNd <- getBand i ds >>= bandNodataValue
-              dstNd <- case moDs of
-                         Just oDs -> getBand i oDs >>= bandNodataValue
-                         Nothing  -> return (fmap (fromNodata . toNodata) srcNd)
-              return (BandOptions i i srcNd dstNd)
+              b <- getBand i ds
+              reifyBandDatatype b $ \(_ :: Proxy a) -> do
+                srcNd <- bandNodataValue b :: GDAL s (Maybe a)
+                case moDs of
+                  Just oDs -> do
+                    b' <- getBand i oDs
+                    reifyBandDatatype b' $ \(_ :: Proxy a') -> do
+                      dstNd <- bandNodataValue b' :: GDAL s (Maybe a')
+                      return (BandOptions i i srcNd dstNd)
+                  Nothing  -> return (BandOptions i i srcNd srcNd)
             else return woBands
   let warpOptions
-        | any (isJust . biDstNoData) bands
-        = ("INIT_DEST","NO_DATA") : woWarpOptions
-        | otherwise = woWarpOptions
-  return (wo { woWarpOptions = warpOptions, woBands = bands})
+        | anyBandHasDstNoData wo' = ("INIT_DEST","NO_DATA") : woWarpOptions
+        | otherwise               = woWarpOptions
+      wo' = wo {woBands = bands}
+  return wo' {woWarpOptions = warpOptions}
 
-anyBandHasNoData :: WarpOptions s a b -> Bool
+anyBandHasNoData :: WarpOptions s -> Bool
 anyBandHasNoData wo
   = any (\BandOptions{..} -> isJust biSrcNoData || isJust biDstNoData) (woBands wo)
 
-anyBandHasDstNoData :: WarpOptions s a b -> Bool
+anyBandHasDstNoData :: WarpOptions s -> Bool
 anyBandHasDstNoData wo = any (\BandOptions{..} -> isJust biDstNoData) (woBands wo)
 
 withWarpOptionsPtr
-  :: (GDALType a, GDALType b)
-  => RODataset s a -> WarpOptions s a b -> (Ptr (WarpOptions s a b) -> IO c)
-  -> IO c
+  :: RODataset s -> WarpOptions s -> (Ptr (WarpOptions s) -> IO c) -> IO c
 withWarpOptionsPtr ds wo@WarpOptions{..}
   = bracket createWarpOptions destroyWarpOptions
   where
@@ -161,10 +165,12 @@ withWarpOptionsPtr ds wo@WarpOptions{..}
       {#set GDALWarpOptions.pTransformerArg #} p (castPtr tArg)
       when (anyBandHasNoData wo) $ do
         vPtrSrcR <- listToArray
-                      (map (toNodata . fromMaybe nodata . biSrcNoData) woBands)
+                      (map (\BandOptions{..} ->
+                              toCDouble (fromMaybe nodata biSrcNoData)) woBands)
         vPtrSrcI <- listToArray (replicate (length woBands) 0)
         vPtrDstR <- listToArray
-                      (map (toNodata . fromMaybe nodata . biDstNoData) woBands)
+                      (map (\BandOptions{..} ->
+                              toCDouble (fromMaybe nodata biDstNoData)) woBands)
         vPtrDstI <- listToArray (replicate (length woBands) 0)
         {#set GDALWarpOptions.padfDstNoDataReal #} p vPtrDstR
         {#set GDALWarpOptions.padfDstNoDataImag #} p vPtrDstI
@@ -175,16 +181,15 @@ withWarpOptionsPtr ds wo@WarpOptions{..}
     destroyWarpOptions = c_destroyWarpOptions
 
 foreign import ccall unsafe "gdalwarper.h GDALCreateWarpOptions"
-  c_createWarpOptions :: IO (Ptr (WarpOptions s a b))
+  c_createWarpOptions :: IO (Ptr (WarpOptions s))
 
 foreign import ccall unsafe "gdalwarper.h GDALDestroyWarpOptions"
-  c_destroyWarpOptions :: Ptr (WarpOptions s a b) -> IO ()
+  c_destroyWarpOptions :: Ptr (WarpOptions s) -> IO ()
 
 reprojectImage
-  :: (GDALType a, GDALType b)
-  => RODataset s a
+  :: RODataset s
   -> Maybe SpatialReference
-  -> RWDataset s b
+  -> RWDataset s
   -> Maybe SpatialReference
   -> ResampleAlg
   -> Double
@@ -212,25 +217,24 @@ reprojectImage srcDs srcSrs dstDs dstSrs algo memLimit maxError progressFun opts
     memLimit' = realToFrac memLimit
 
 foreign import ccall safe "gdalwarper.h GDALReprojectImage" c_reprojectImage
-  :: Ptr (Dataset s t a)     -- ^Source dataset
-  -> CString                 -- ^Source proj (WKT)
-  -> Ptr (RWDataset s b)     -- ^Dest dataset
-  -> CString                 -- ^Dest proj (WKT)
-  -> CInt                    -- ^Resample alg
-  -> CDouble                 -- ^Memory limit
-  -> CDouble                 -- ^Max error
-  -> ProgressFunPtr          -- ^Progress func
-  -> Ptr ()                  -- ^Progress arg (unused)
-  -> Ptr (WarpOptions s a b) -- ^warp options
+  :: Ptr (Dataset s t)   -- ^Source dataset
+  -> CString             -- ^Source proj (WKT)
+  -> Ptr (RWDataset s)   -- ^Dest dataset
+  -> CString             -- ^Dest proj (WKT)
+  -> CInt                -- ^Resample alg
+  -> CDouble             -- ^Memory limit
+  -> CDouble             -- ^Max error
+  -> ProgressFunPtr      -- ^Progress func
+  -> Ptr ()              -- ^Progress arg (unused)
+  -> Ptr (WarpOptions s) -- ^warp options
   -> IO CInt
 
 createWarpedVRT
-  :: forall s a b. (GDALType a, GDALType b)
-  => RODataset s a
+  :: forall s. RODataset s
   -> Size
   -> Geotransform
-  -> WarpOptions s a b
-  -> GDAL s (RODataset s b)
+  -> WarpOptions s
+  -> GDAL s (RODataset s)
 createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
   options'' <- setOptionDefaults srcDs Nothing options'
   newDsPtr <- liftIO $
@@ -249,11 +253,10 @@ createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
     nLines'  = fromIntegral nLines
     dsPtr    = unDataset srcDs
     options' = case woTransfomer of
-                 Nothing -> setTransformer (def :: GenImgProjTransformer s a b)
-                                           wo
+                 Nothing -> setTransformer (def :: GenImgProjTransformer s) wo
                  Just _  -> wo
 
-setDstNodata :: GDALType b => RWDataset s b -> WarpOptions s a b -> GDAL s ()
+setDstNodata :: RWDataset s -> WarpOptions s -> GDAL s ()
 setDstNodata oDs options
   = when (anyBandHasDstNoData options) $
       forM_ (woBands options) $ \BandOptions{..} ->
@@ -264,9 +267,9 @@ setDstNodata oDs options
           Nothing -> return ()
 
 foreign import ccall safe "gdalwarper.h GDALCreateWarpedVRT" c_createWarpedVRT
-  :: Ptr (RODataset s a)     -- ^Source dataset
-  -> CInt                    -- ^nPixels
-  -> CInt                    -- ^nLines
-  -> Ptr CDouble             -- ^geotransform
-  -> Ptr (WarpOptions s a b) -- ^warp options
-  -> IO (Ptr (RWDataset s b))
+  :: Ptr (RODataset s)    -- ^Source dataset
+  -> CInt                 -- ^nPixels
+  -> CInt                 -- ^nLines
+  -> Ptr CDouble          -- ^geotransform
+  -> Ptr (WarpOptions s)  -- ^warp options
+  -> IO (Ptr (RWDataset s))

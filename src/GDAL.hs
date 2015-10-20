@@ -1,6 +1,6 @@
 module GDAL (
     GDAL
-  , GDALType
+  , GDALType (..)
   , Datatype (..)
   , XY (..)
   , Window (..)
@@ -48,6 +48,7 @@ module GDAL (
   , datatypeByName
   , datatypeUnion
   , datatypeIsComplex
+  , reifyDatatype
 
   , datasetSize
   , datasetProjection
@@ -57,6 +58,7 @@ module GDAL (
   , datasetBandCount
 
   , bandDatatype
+  , reifyBandDatatype
   , bandBlockSize
   , bandBlockCount
   , bandBlockLen
@@ -72,7 +74,6 @@ module GDAL (
   , readBandBlock
   , writeBand
   , writeBandBlock
-  , fillBand
 
   , foldl'
   , foldlM'
