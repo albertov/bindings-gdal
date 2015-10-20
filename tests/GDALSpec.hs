@@ -11,7 +11,7 @@ import Data.Complex (Complex(..))
 import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Int (Int16, Int32)
 import Data.Proxy (Proxy(Proxy))
-import Data.Typeable (Typeable, typeOf)
+import Data.Typeable (typeOf)
 import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
 
@@ -157,133 +157,140 @@ spec = setupAndTeardown $ do
     b <- getBand 1 ds
     bandSize b `shouldBe` (XY 10 10)
 
-  it "can write block and read band with automatic conversion" $ do
-    ds <- createMem (XY 100 100) 1 GDT_Int16 []
-    band <- getBand 1 ds
-    let len = bandBlockLen band
-        vec = U.generate len (Value . fromIntegral) :: (U.Vector (Value Int16))
-        bs  = bandBlockSize band
-    writeBandBlock band (pure 0) vec
-    vec2 <- readBand band (Window (pure 0) bs) bs
-    vec `shouldBe` U.map (fmap round) (vec2 :: U.Vector (Value Double))
+  describe "band and block IO" $ do
 
-  it "can write band and read band with automatic conversion" $ do
-    ds <- createMem (XY 100 100) 1 GDT_Int16 []
-    band <- getBand 1 ds
-    let vec = U.generate 10000 (Value . fromIntegral) :: U.Vector (Value Double)
-    writeBand band (allBand band) (bandSize band) vec
-    vec2 <- readBand band (allBand band) (bandSize band)
-    vec `shouldBe` vec2
+    it "can write block and read band with automatic conversion" $ do
+      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      band <- getBand 1 ds
+      let len = bandBlockLen band
+          vec :: (U.Vector (Value Int16))
+          vec = U.generate len (Value . fromIntegral)
+          bs  = bandBlockSize band
+      writeBandBlock band (pure 0) vec
+      vec2 <- readBand band (Window (pure 0) bs) bs
+      vec `shouldBe` U.map (fmap round) (vec2 :: U.Vector (Value Double))
 
-  it "can fill and read band" $ do
-    forM_ ([-10..10] :: [Int16]) $ \value -> do
-      band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
-      fillBand value  band
-      v <- readBand band (allBand band) (bandSize band)
-      U.length v `shouldBe` 10000
-      let allEqual = U.foldl' f True v
-          f True (Value a) = a == value
-          f _ _            = False
-      allEqual `shouldBe` True
+    it "can write band and read band with automatic conversion" $ do
+      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      band <- getBand 1 ds
+      let vec :: U.Vector (Value Double)
+          vec = U.generate 10000 (Value . fromIntegral)
+      writeBand band (allBand band) (bandSize band) vec
+      vec2 <- readBand band (allBand band) (bandSize band)
+      vec `shouldBe` vec2
 
-  withDir "throws GDALException when reading block with wrong type" $ \dir -> do
-    let p = joinPath [dir, "test.tif"]
-    ds <- create GTIFF p (pure 100) 1 GDT_Int16 []
-    flushCache ds
-    ds2 <- openReadOnly p
-    band <- getBand 1 ds2
-    let badAction =  do
-          (_ :: U.Vector (Value Word8)) <- readBandBlock band (pure 0)
-          return ()
-    badAction `shouldThrow` isGDALException
-    badAction `shouldThrow` (== (InvalidDatatype GDT_Int16))
+    it "can fill and read band" $ do
+      forM_ ([-10..10] :: [Int16]) $ \value -> do
+        band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
+        fillBand value  band
+        v <- readBand band (allBand band) (bandSize band)
+        U.length v `shouldBe` 10000
+        let allEqual = U.foldl' f True v
+            f True (Value a) = a == value
+            f _ _            = False
+        allEqual `shouldBe` True
 
-  withDir "throws GDALException when writing block with wrong type" $ \dir -> do
-    let p = joinPath [dir, "test.tif"]
-    ds <- create GTIFF p (pure 100) 1 GDT_Int32 []
-    flushCache ds
-    ds2 <- openReadWrite p
-    band <- getBand 1 ds2
-    let v = U.replicate (bandBlockLen band) (Value 0) :: U.Vector (Value Word8)
-    writeBandBlock band (pure 0) v `shouldThrow` isGDALException
-    writeBandBlock band (pure 0) v `shouldThrow` (== (InvalidDatatype GDT_Int32))
+    withDir "throws GDALException when reading block with wrong type" $ \d -> do
+      let p = joinPath [d, "test.tif"]
+      ds <- create GTIFF p (pure 100) 1 GDT_Int16 []
+      flushCache ds
+      ds2 <- openReadOnly p
+      band <- getBand 1 ds2
+      let badAction =  do
+            (_ :: U.Vector (Value Word8)) <- readBandBlock band (pure 0)
+            return ()
+      badAction `shouldThrow` isGDALException
+      badAction `shouldThrow` (== (InvalidDatatype GDT_Int16))
 
-  let fWord8 = (Value . fromIntegral) :: Int -> Value Word8
-  it_can_write_and_read_band  fWord8
-  it_can_write_and_read_block fWord8
-  it_can_foldl                fWord8 (+) 0 []
-  it_can_foldl                fWord8 (+) 0 [("TILED", "YES")]
+    withDir "throws GDALException when writing block with wrong type" $ \d -> do
+      let p = joinPath [d, "test.tif"]
+      ds <- create GTIFF p (pure 100) 1 GDT_Int32 []
+      flushCache ds
+      ds2 <- openReadWrite p
+      band <- getBand 1 ds2
+      let v :: U.Vector (Value Word8)
+          v = U.replicate (bandBlockLen band) (Value 0)
 
-  let fWord16 = (Value . fromIntegral) :: Int -> Value Word16
-  it_can_write_and_read_band  fWord16
-  it_can_write_and_read_block fWord16
-  it_can_foldl                fWord16 (+) 0 []
-  it_can_foldl                fWord16 (+) 0 [("TILED", "YES")]
+      writeBandBlock band (pure 0) v `shouldThrow` isGDALException
+      writeBandBlock band (pure 0) v
+        `shouldThrow` (==(InvalidDatatype GDT_Int32))
 
-  let fWord32 = (Value . fromIntegral) :: Int -> Value Word32
-  it_can_write_and_read_band  fWord32
-  it_can_write_and_read_block fWord32
-  it_can_foldl                fWord32 (+) 0 []
-  it_can_foldl                fWord32 (+) 0 [("TILED", "YES")]
+    let fWord8 = (Value . fromIntegral) :: Int -> Value Word8
+    it_can_write_and_read_band  fWord8
+    it_can_write_and_read_block fWord8
+    it_can_foldl                fWord8 (+) 0 []
+    it_can_foldl                fWord8 (+) 0 [("TILED", "YES")]
 
-  let fInt16 = (Value . fromIntegral) :: Int -> Value Int16
-  it_can_write_and_read_band  fInt16
-  it_can_write_and_read_block fInt16
-  it_can_foldl                fInt16 (+) 0 []
-  it_can_foldl                fInt16 (+) 0 [("TILED", "YES")]
+    let fWord16 = (Value . fromIntegral) :: Int -> Value Word16
+    it_can_write_and_read_band  fWord16
+    it_can_write_and_read_block fWord16
+    it_can_foldl                fWord16 (+) 0 []
+    it_can_foldl                fWord16 (+) 0 [("TILED", "YES")]
 
-  let fInt32 = (Value . fromIntegral) :: Int -> Value Int32
-  it_can_write_and_read_band  fInt32
-  it_can_write_and_read_block fInt32
-  it_can_foldl                fInt32 (+) 0 []
-  it_can_foldl                fInt32 (+) 0 [("TILED", "YES")]
+    let fWord32 = (Value . fromIntegral) :: Int -> Value Word32
+    it_can_write_and_read_band  fWord32
+    it_can_write_and_read_block fWord32
+    it_can_foldl                fWord32 (+) 0 []
+    it_can_foldl                fWord32 (+) 0 [("TILED", "YES")]
 
-  let fFloat = (Value . (*1.1) . fromIntegral) :: Int -> Value Float
-  it_can_write_and_read_band  fFloat
-  it_can_write_and_read_block fFloat
-  it_can_foldl                fFloat (+) 0 []
-  it_can_foldl                fFloat (+) 0 [("TILED", "YES")]
+    let fInt16 = (Value . fromIntegral) :: Int -> Value Int16
+    it_can_write_and_read_band  fInt16
+    it_can_write_and_read_block fInt16
+    it_can_foldl                fInt16 (+) 0 []
+    it_can_foldl                fInt16 (+) 0 [("TILED", "YES")]
 
-  let fDouble = (Value . (*1.1) . fromIntegral) :: Int -> Value Double
-  it_can_write_and_read_band  fDouble
-  it_can_write_and_read_block fDouble
-  it_can_foldl                fDouble (+) 0 []
-  it_can_foldl                fDouble (+) 0 [("TILED", "YES")]
+    let fInt32 = (Value . fromIntegral) :: Int -> Value Int32
+    it_can_write_and_read_band  fInt32
+    it_can_write_and_read_block fInt32
+    it_can_foldl                fInt32 (+) 0 []
+    it_can_foldl                fInt32 (+) 0 [("TILED", "YES")]
+
+    let fFloat = (Value . (*1.1) . fromIntegral) :: Int -> Value Float
+    it_can_write_and_read_band  fFloat
+    it_can_write_and_read_block fFloat
+    it_can_foldl                fFloat (+) 0 []
+    it_can_foldl                fFloat (+) 0 [("TILED", "YES")]
+
+    let fDouble = (Value . (*1.1) . fromIntegral) :: Int -> Value Double
+    it_can_write_and_read_band  fDouble
+    it_can_write_and_read_block fDouble
+    it_can_foldl                fDouble (+) 0 []
+    it_can_foldl                fDouble (+) 0 [("TILED", "YES")]
 
 
 #ifdef STORABLE_COMPLEX
-  let fCInt16 i = Value ((fromIntegral i  :+ fromIntegral (i + i)))
-      fCInt16 :: Int -> Value (Complex Int16)
-      f2C :: Num a
-          => Value (Complex a) -> Value (Complex a) -> Value (Complex a)
-      f2C (Value (ra :+ ia)) (Value (rb :+ ib)) = Value ((ra + rb) :+ (ia + ib))
-      zC :: Num a => Value (Complex a)
-      zC = Value (0 :+ 0)
-  it_can_write_and_read_block fCInt16
-  it_can_write_and_read_band  fCInt16
-  it_can_foldl                fCInt16 f2C zC []
-  it_can_foldl                fCInt16 f2C zC [("TILED", "YES")]
+    let fCInt16 i = Value ((fromIntegral i  :+ fromIntegral (i + i)))
+        fCInt16 :: Int -> Value (Complex Int16)
+        f2C :: Num a
+            => Value (Complex a) -> Value (Complex a) -> Value (Complex a)
+        f2C (Value (ra :+ ia)) (Value (rb :+ ib)) = Value ((ra+rb) :+ (ia+ib))
+        zC :: Num a => Value (Complex a)
+        zC = Value (0 :+ 0)
+    it_can_write_and_read_block fCInt16
+    it_can_write_and_read_band  fCInt16
+    it_can_foldl                fCInt16 f2C zC []
+    it_can_foldl                fCInt16 f2C zC [("TILED", "YES")]
 
-  let fCInt32 i = Value ((fromIntegral i  :+ fromIntegral (i + i)))
-      fCInt32 :: Int -> Value (Complex Int32)
-  it_can_write_and_read_block fCInt32
-  it_can_write_and_read_band  fCInt32
-  it_can_foldl                fCInt32 f2C zC []
-  it_can_foldl                fCInt32 f2C zC [("TILED", "YES")]
+    let fCInt32 i = Value ((fromIntegral i  :+ fromIntegral (i + i)))
+        fCInt32 :: Int -> Value (Complex Int32)
+    it_can_write_and_read_block fCInt32
+    it_can_write_and_read_band  fCInt32
+    it_can_foldl                fCInt32 f2C zC []
+    it_can_foldl                fCInt32 f2C zC [("TILED", "YES")]
 
-  let fCFloat i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
-      fCFloat :: Int -> Value (Complex Float)
-  it_can_write_and_read_block fCFloat
-  it_can_write_and_read_band  fCFloat
-  it_can_foldl                fCFloat f2C zC []
-  it_can_foldl                fCFloat f2C zC [("TILED", "YES")]
+    let fCFloat i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
+        fCFloat :: Int -> Value (Complex Float)
+    it_can_write_and_read_block fCFloat
+    it_can_write_and_read_band  fCFloat
+    it_can_foldl                fCFloat f2C zC []
+    it_can_foldl                fCFloat f2C zC [("TILED", "YES")]
 
-  let fCDouble i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
-      fCDouble :: Int -> Value (Complex Double)
-  it_can_write_and_read_block fCDouble
-  it_can_write_and_read_band  fCDouble
-  it_can_foldl                fCDouble f2C zC []
-  it_can_foldl                fCDouble f2C zC [("TILED", "YES")]
+    let fCDouble i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
+        fCDouble :: Int -> Value (Complex Double)
+    it_can_write_and_read_block fCDouble
+    it_can_write_and_read_band  fCDouble
+    it_can_foldl                fCDouble f2C zC []
+    it_can_foldl                fCDouble f2C zC [("TILED", "YES")]
 #endif
 
 
@@ -337,7 +344,6 @@ it_can_foldl f f2 z options = withDir name $ \tmpDir -> do
   writeBand band (allBand band) sz vec
   flushCache ds
   value <- GDAL.foldl' f2 z band
-  let expected = U.foldl' f2 z vec
-  value `shouldBe` expected
+  value `shouldBe` U.foldl' f2 z vec
   where name = "can foldl with options " ++ show options ++ " " ++ typeName
         typeName = show (typeOf (undefined :: a))
