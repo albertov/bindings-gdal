@@ -59,7 +59,6 @@ import Foreign.Storable (peek, poke)
 import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
-{#import GDAL.Internal.OGRFeature#}
 {#import GDAL.Internal.OGRError#}
 import GDAL.Internal.OSR
 import GDAL.Internal.CPLError hiding (None)

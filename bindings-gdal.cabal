@@ -33,10 +33,10 @@ library
                    , GDAL.Internal.CPLProgress
                    , GDAL.Internal.CPLConv
                    , GDAL.Internal.GDAL
+                   , GDAL.Internal.OGRError
                    , GDAL.Internal.OGRGeometry
                    , GDAL.Internal.OGRFeature
                    , GDAL.Internal.OGR
-                   , GDAL.Internal.OGRError
                    , GDAL.Internal.OSR
                    , GDAL.Internal.Util
                    , GDAL.Internal.Algorithms
