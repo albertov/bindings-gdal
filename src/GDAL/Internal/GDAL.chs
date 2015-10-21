@@ -425,11 +425,11 @@ setDatasetGeotransform ds gt = liftIO $
 foreign import ccall unsafe "gdal.h GDALSetGeoTransform" setGeoTransform
   :: Ptr (Dataset s t) -> Ptr Geotransform -> IO CInt
 
-datasetBandCount :: Dataset s t -> Int
-datasetBandCount = fromIntegral . bandCount_ . unDataset
+datasetBandCount :: Dataset s t -> GDAL s Int
+datasetBandCount = liftM fromIntegral . liftIO . bandCount_ . unDataset
 
 foreign import ccall unsafe "gdal.h GDALGetRasterCount" bandCount_
-  :: Ptr (Dataset s t) -> CInt
+  :: Ptr (Dataset s t) -> IO CInt
 
 getBand :: Int -> Dataset s t -> GDAL s (Band s t)
 getBand band (Dataset (m,dp)) = liftIO $ do
@@ -439,6 +439,7 @@ getBand band (Dataset (m,dp)) = liftIO $ do
 reifyDatatype :: Datatype -> (forall a. GDALType a => Proxy a -> b) -> b
 reifyDatatype dt f =
   case dt of
+    GDT_Unknown  -> throw (bindingExceptionToException UnknownRasterDatatype)
     GDT_Byte     -> f (Proxy :: Proxy Word8)
     GDT_UInt16   -> f (Proxy :: Proxy Word16)
     GDT_UInt32   -> f (Proxy :: Proxy Word32)
@@ -451,10 +452,10 @@ reifyDatatype dt f =
     GDT_CInt32   -> f (Proxy :: Proxy (Complex Int32))
     GDT_CFloat32 -> f (Proxy :: Proxy (Complex Float))
     GDT_CFloat64 -> f (Proxy :: Proxy (Complex Double))
-#endif
-    GDT_Unknown  -> throw (bindingExceptionToException UnknownRasterDatatype)
+#else
     d            -> throw
                     (bindingExceptionToException (UnsupportedRasterDatatype d))
+#endif
 
 
 

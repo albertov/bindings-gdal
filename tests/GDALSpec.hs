@@ -105,7 +105,8 @@ spec = setupAndTeardown $ do
 
   it "can get band count" $ do
     ds <- createMem (XY 10 10) 5 GDT_Int16 []
-    datasetBandCount ds `shouldBe` 5
+    nBands <- datasetBandCount ds
+    nBands `shouldBe` 5
 
   it "can get existing raster band" $ do
     ds <- createMem (XY 10 10) 1 GDT_Int16 []

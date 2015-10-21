@@ -115,17 +115,19 @@ setOptionDefaults
   -> GDAL s (WarpOptions s)
 setOptionDefaults ds moDs wo@WarpOptions{..} = do
   bands <- if null woBands
-            then forM [1..datasetBandCount ds] $ \i -> do
-              b <- getBand i ds
-              reifyBandDatatype b $ \(_ :: Proxy a) -> do
-                srcNd <- bandNodataValue b :: GDAL s (Maybe a)
-                case moDs of
-                  Just oDs -> do
-                    b' <- getBand i oDs
-                    reifyBandDatatype b' $ \(_ :: Proxy a') -> do
-                      dstNd <- bandNodataValue b' :: GDAL s (Maybe a')
-                      return (BandOptions i i srcNd dstNd)
-                  Nothing  -> return (BandOptions i i srcNd srcNd)
+            then do
+              nBands <- datasetBandCount ds
+              forM [1..nBands] $ \i -> do
+                b <- getBand i ds
+                reifyBandDatatype b $ \(_ :: Proxy a) -> do
+                  srcNd <- bandNodataValue b :: GDAL s (Maybe a)
+                  case moDs of
+                    Just oDs -> do
+                      b' <- getBand i oDs
+                      reifyBandDatatype b' $ \(_ :: Proxy a') -> do
+                        dstNd <- bandNodataValue b' :: GDAL s (Maybe a')
+                        return (BandOptions i i srcNd dstNd)
+                    Nothing  -> return (BandOptions i i srcNd srcNd)
             else return woBands
   let warpOptions
         | anyBandHasDstNoData wo' = ("INIT_DEST","NO_DATA") : woWarpOptions
