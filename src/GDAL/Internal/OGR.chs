@@ -39,6 +39,7 @@ module GDAL.Internal.OGR (
 
   , layerCount
   , layerName
+  , layerFeatureDef
 
   , registerAll
   , cleanupAll
@@ -206,7 +207,6 @@ createLayer ds fd@FeatureDef{..} approxOk options = liftIO $
     srs   = geom >>= gdSrs
     gType = fromEnumC (maybe WkbUnknown gdType geom)
 
-
 getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
 getLayer layer ds = liftIO $
   newLayerHandle ds (InvalidLayerIndex layer) <=<
@@ -269,6 +269,12 @@ executeSQL dialect query mSpatialFilter ds@(DataSource (m,dsP)) = do
 layerName :: Layer s t a -> GDAL s Text
 layerName =
   liftIO . (peekEncodedCString <=< {#call unsafe OGR_L_GetName as ^#} . unLayer)
+
+layerFeatureDef :: Layer s t a -> GDAL s FeatureDef
+layerFeatureDef =
+  liftIO . (featureDefFromHandle <=<
+              {#call unsafe OGR_L_GetLayerDefn as ^#} . unLayer)
+
 
 getSpatialFilter :: Layer s t a -> GDAL s (Maybe Geometry)
 getSpatialFilter l = liftIO $ withLockedLayerPtr l $ \lPtr -> do

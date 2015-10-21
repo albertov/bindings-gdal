@@ -8,7 +8,7 @@ module GDAL.Internal.OGRFeature (
   , Feature (..)
   , FeatureH
   , FieldDefnH (..)
-  , FeatureDefnH
+  , FeatureDefnH (..)
   , Justification (..)
 
   , FeatureDef (..)
@@ -27,12 +27,13 @@ module GDAL.Internal.OGRFeature (
   , withFeatureH
   , withFieldDefnH
   , fieldDefFromHandle
+  , featureDefFromHandle
 ) where
 
 {#context lib = "gdal" prefix = "OGR" #}
 
 import Control.Applicative ((<$>), (<*>), pure)
-import Control.Monad (liftM, (>=>), when)
+import Control.Monad (liftM, (>=>), (<=<), when)
 import Control.Monad.Catch (bracket)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -172,6 +173,18 @@ fieldDefFromHandle p =
     iToMaybe = (\v -> if v==0 then Nothing else Just (fromIntegral v))
     jToMaybe = (\j -> if j==0 then Nothing else Just (toEnumC j))
 
+featureDefFromHandle :: FeatureDefnH -> IO FeatureDef
+featureDefFromHandle p =
+  FeatureDef
+    <$> ({#call unsafe OGR_FD_GetName as ^#} p >>= peekEncodedCString)
+    <*> getFields
+    <*> pure V.empty
+  where
+    getFields = do
+      nFields <- {#call unsafe OGR_FD_GetFieldCount as ^#} p
+      V.generateM (fromIntegral nFields) $
+        fieldDefFromHandle <=<
+          ({#call OGR_FD_GetFieldDefn as ^#} p . fromIntegral)
 
 
 featureToHandle :: FeatureDefnH -> Feature -> GDAL s FeatureH
@@ -185,7 +198,7 @@ fieldByName = undefined
 
 fieldByIndex :: FeatureDefnH -> FeatureH -> Int -> GDAL s Field
 fieldByIndex ftDef feature ix = liftIO $ do
-  fDef <- {#call unsafe OGR_FD_GetFieldDefn as ^#} ftDef (fromIntegral ix)
+  fDef <- {#call OGR_FD_GetFieldDefn as ^#} ftDef (fromIntegral ix)
   typ <- liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} fDef)
   withFeatureH feature (getFieldBy typ  fDef (fromIntegral ix))
 

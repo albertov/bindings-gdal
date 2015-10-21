@@ -94,8 +94,7 @@ spec = setupAndTeardown $ do
             lName = "Barça Players"
         ds <- createMem []
         l <- createLayer ds fd StrictOK []
-        name <- layerName l
-        name `shouldBe` lName
+        layerFeatureDef l >>= (`shouldBe` fd)
 
       it "with unicode named fields" $ do
         let fd = FeatureDef { fdName   = lName
@@ -106,8 +105,7 @@ spec = setupAndTeardown $ do
             lName = "Barça Players"
         ds <- createMem []
         l <- createLayer ds fd StrictOK []
-        name <- layerName l
-        name `shouldBe` lName
+        layerFeatureDef l >>= (`shouldBe` fd)
 
 
   describe "getSpatialFilter" $ do
