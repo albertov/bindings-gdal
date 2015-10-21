@@ -50,6 +50,10 @@ spec = setupAndTeardown $ do
   it "cannot open non-existent file" $ do
     openReadOnly "foo.tif" `shouldThrow` ((==OpenFailed) . gdalErrNum)
 
+  it "cannot create GDT_Unknown dataset" $
+    createMem (XY 100 100) 1 GDT_Unknown []
+      `shouldThrow` (==UnknownRasterDataType)
+
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("compress","deflate"), ("zlevel", "9"), ("predictor", "2")]
@@ -116,12 +120,19 @@ spec = setupAndTeardown $ do
     ds <- createMem (XY 10 10) 1 GDT_Int16 []
     getBand 2 ds `shouldThrow` ((== IllegalArg) . gdalErrNum)
 
-  it "can set and get geotransform" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
-    let gt = Geotransform 5.0 4.0 3.0 2.0 1.0 0.0
-    setDatasetGeotransform ds gt
-    gt2 <- datasetGeotransform ds
-    gt `shouldBe` gt2
+  describe "datasetGeotransform" $ do
+
+    it "can set and get" $ do
+      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      let gt = Geotransform 5.0 4.0 3.0 2.0 1.0 0.0
+      setDatasetGeotransform ds gt
+      gt2 <- datasetGeotransform ds
+      Just gt `shouldBe` gt2
+
+    it "if not set get returns Nothing" $ do
+      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      gt <- datasetGeotransform ds
+      gt `shouldSatisfy` isNothing
 
   describe "datasetProjection" $ do
 
@@ -201,7 +212,7 @@ spec = setupAndTeardown $ do
             (_ :: U.Vector (Value Word8)) <- readBandBlock band (pure 0)
             return ()
       badAction `shouldThrow` isGDALException
-      badAction `shouldThrow` (== (InvalidDatatype GDT_Int16))
+      badAction `shouldThrow` (== (InvalidDataType GDT_Int16))
 
     withDir "throws GDALException when writing block with wrong type" $ \d -> do
       let p = joinPath [d, "test.tif"]
@@ -214,7 +225,7 @@ spec = setupAndTeardown $ do
 
       writeBandBlock band (pure 0) v `shouldThrow` isGDALException
       writeBandBlock band (pure 0) v
-        `shouldThrow` (==(InvalidDatatype GDT_Int32))
+        `shouldThrow` (==(InvalidDataType GDT_Int32))
 
     let fWord8 = (Value . fromIntegral) :: Int -> Value Word8
     it_can_write_and_read_band  fWord8
@@ -300,15 +311,14 @@ spec = setupAndTeardown $ do
 --   collection to force (really?) the finalizers to run.
 setupAndTeardown :: SpecWith a -> SpecWith a
 setupAndTeardown
-  = before_ (registerAllDrivers)
-  . after_  (performMajorGC >> destroyDriverManager)
+  = before_ allRegister . after_  (performMajorGC >> destroyDriverManager)
 
 
 it_can_write_and_read_band
   :: forall a. (Eq a , GDALType a)
   => (Int -> Value a) -> SpecWith (Arg (IO ()))
 it_can_write_and_read_band f = it ("can write and read band " ++ typeName) $ do
-  ds <- createMem (XY 100 100) 1 (datatype (Proxy :: Proxy a)) []
+  ds <- createMem (XY 100 100) 1 (dataType (Proxy :: Proxy a)) []
   band <- getBand 1 ds
   writeBand band (allBand band) (bandSize band) vec
   vec2 <- readBand band (allBand band) (bandSize band)
@@ -323,7 +333,7 @@ it_can_write_and_read_block
   :: forall a. (Eq a , GDALType a)
   => (Int -> Value a) -> SpecWith (Arg (IO ()))
 it_can_write_and_read_block f = it ("can write and read block "++typeName) $ do
-  ds <- createMem (XY (U.length vec) 1) 1 (datatype (Proxy :: Proxy a)) []
+  ds <- createMem (XY (U.length vec) 1) 1 (dataType (Proxy :: Proxy a)) []
   band <- getBand 1 ds
   writeBandBlock band (pure 0) vec
   vec2 <- readBandBlock band (pure 0)
@@ -339,7 +349,7 @@ it_can_foldl
 it_can_foldl f f2 z options = withDir name $ \tmpDir -> do
   let p = joinPath [tmpDir, "test.tif"]
       sz = XY 200 205
-  ds <- create GTIFF p sz 1 (datatype (Proxy :: Proxy a)) options
+  ds <- create GTIFF p sz 1 (dataType (Proxy :: Proxy a)) options
   let vec = U.generate (sizeLen sz) f
   band <- getBand 1 ds
   writeBand band (allBand band) sz vec

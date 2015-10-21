@@ -22,25 +22,25 @@ source-repository head
 library
   build-tools:       c2hs >= 0.25
   hs-source-dirs:    src
-  exposed-modules:   GDAL
-                   , GDAL.OGR
-                   , GDAL.OSR
-                   , GDAL.Warper
-                   , GDAL.Algorithms
-                   , GDAL.Internal.Types
+  exposed-modules:   GDAL.Internal.Types
+                   , GDAL.Internal.Util
                    , GDAL.Internal.CPLString
                    , GDAL.Internal.CPLError
                    , GDAL.Internal.CPLProgress
                    , GDAL.Internal.CPLConv
-                   , GDAL.Internal.GDAL
                    , GDAL.Internal.OGRError
                    , GDAL.Internal.OGRGeometry
                    , GDAL.Internal.OGRFeature
                    , GDAL.Internal.OGR
                    , GDAL.Internal.OSR
-                   , GDAL.Internal.Util
+                   , GDAL.Internal.GDAL
                    , GDAL.Internal.Algorithms
                    , GDAL.Internal.Warper
+                   , GDAL.OGR
+                   , GDAL.OSR
+                   , GDAL.Algorithms
+                   , GDAL.Warper
+                   , GDAL
   build-depends:     base >=4.5 && < 5
                    , vector
                    , bytestring

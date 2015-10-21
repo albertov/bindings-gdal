@@ -16,6 +16,8 @@ module GDAL.Internal.Warper (
   , def
 ) where
 
+{#context lib = "gdal" prefix = "GDAL" #}
+
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (when, void, forM_, forM)
 import Control.Monad.IO.Class (liftIO)
@@ -25,7 +27,6 @@ import Data.Maybe (isJust, fromMaybe)
 import Data.Typeable (Typeable)
 import Data.Default (Default(..))
 import Data.Proxy (Proxy)
-import Foreign.C.String (CString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (
     Ptr
@@ -46,7 +47,6 @@ import GDAL.Internal.CPLConv
 {#import GDAL.Internal.OSR #}
 {#import GDAL.Internal.GDAL #}
 
-#include "gdal.h"
 #include "gdalwarper.h"
 
 data GDALWarpException
@@ -79,17 +79,19 @@ data WarpOptions s = forall t. Transformer t
       woResampleAlg     :: ResampleAlg
     , woWarpOptions     :: OptionList
     , woMemoryLimit     :: Double
-    , woWorkingDatatype :: Datatype
+    , woWorkingDataType :: DataType
     , woBands           :: [BandOptions]
     , woTransfomer      :: Maybe (t s)
     }
+
+{#pointer *GDALWarpOptions as WarpOptionsH newtype #}
 
 instance Default (WarpOptions s) where
   def = WarpOptions {
           woResampleAlg     = NearestNeighbour
         , woWarpOptions     = []
         , woMemoryLimit     = 0
-        , woWorkingDatatype = GDT_Unknown
+        , woWorkingDataType = GDT_Unknown
         , woBands           = []
         , woTransfomer      = Nothing :: Maybe (GenImgProjTransformer s)
         }
@@ -103,7 +105,7 @@ setTransformer t opts = WarpOptions {
     woResampleAlg     = woResampleAlg opts
   , woWarpOptions     = woWarpOptions opts
   , woMemoryLimit     = woMemoryLimit opts
-  , woWorkingDatatype = woWorkingDatatype opts
+  , woWorkingDataType = woWorkingDataType opts
   , woBands           = woBands opts
   , woTransfomer      = Just t
   }
@@ -119,12 +121,12 @@ setOptionDefaults ds moDs wo@WarpOptions{..} = do
               nBands <- datasetBandCount ds
               forM [1..nBands] $ \i -> do
                 b <- getBand i ds
-                reifyBandDatatype b $ \(_ :: Proxy a) -> do
+                reifyBandDataType b $ \(_ :: Proxy a) -> do
                   srcNd <- bandNodataValue b :: GDAL s (Maybe a)
                   case moDs of
                     Just oDs -> do
                       b' <- getBand i oDs
-                      reifyBandDatatype b' $ \(_ :: Proxy a') -> do
+                      reifyBandDataType b' $ \(_ :: Proxy a') -> do
                         dstNd <- bandNodataValue b' :: GDAL s (Maybe a')
                         return (BandOptions i i srcNd dstNd)
                     Nothing  -> return (BandOptions i i srcNd srcNd)
@@ -142,29 +144,29 @@ anyBandHasNoData wo
 anyBandHasDstNoData :: WarpOptions s -> Bool
 anyBandHasDstNoData wo = any (\BandOptions{..} -> isJust biDstNoData) (woBands wo)
 
-withWarpOptionsPtr
-  :: RODataset s -> WarpOptions s -> (Ptr (WarpOptions s) -> IO c) -> IO c
-withWarpOptionsPtr ds wo@WarpOptions{..}
-  = bracket createWarpOptions destroyWarpOptions
+withWarpOptionsH
+  :: RODataset s -> WarpOptions s -> (WarpOptionsH -> IO c) -> IO c
+withWarpOptionsH ds wo@WarpOptions{..}
+  = bracket createWarpOptions {#call unsafe GDALDestroyWarpOptions as ^#}
   where
-    dsPtr = unDataset ds
+    DatasetH dsPtr = unDataset ds
     createWarpOptions = do
-      p <- c_createWarpOptions
-      {#set GDALWarpOptions.hSrcDS #} p (castPtr dsPtr)
-      {#set GDALWarpOptions.eResampleAlg #} p (fromEnumC woResampleAlg)
+      p <- {#call unsafe GDALCreateWarpOptions as ^#}
+      {#set GDALWarpOptions->hSrcDS #} p (castPtr dsPtr)
+      {#set GDALWarpOptions->eResampleAlg #} p (fromEnumC woResampleAlg)
       oListPtr <- toOptionListPtr woWarpOptions
-      {#set GDALWarpOptions.papszWarpOptions #} p oListPtr
-      {#set GDALWarpOptions.dfWarpMemoryLimit #} p (realToFrac woMemoryLimit)
-      {#set GDALWarpOptions.eWorkingDataType #} p (fromEnumC woWorkingDatatype)
-      {#set GDALWarpOptions.nBandCount #} p (fromIntegral (length woBands))
-      {#set GDALWarpOptions.panSrcBands #} p =<<
+      {#set GDALWarpOptions->papszWarpOptions #} p oListPtr
+      {#set GDALWarpOptions->dfWarpMemoryLimit #} p (realToFrac woMemoryLimit)
+      {#set GDALWarpOptions->eWorkingDataType #} p (fromEnumC woWorkingDataType)
+      {#set GDALWarpOptions->nBandCount #} p (fromIntegral (length woBands))
+      {#set GDALWarpOptions->panSrcBands #} p =<<
         listToArray (map (fromIntegral . biSrc) woBands)
-      {#set GDALWarpOptions.panDstBands #} p =<<
+      {#set GDALWarpOptions->panDstBands #} p =<<
         listToArray (map (fromIntegral . biDst) woBands)
       -- ignores finalizer since destroyWarpOptions takes care of it
       (t, tArg, _) <- createTransformerAndArg woTransfomer
-      {#set GDALWarpOptions.pfnTransformer #} p (getTransformerFunPtr t)
-      {#set GDALWarpOptions.pTransformerArg #} p (castPtr tArg)
+      {#set GDALWarpOptions->pfnTransformer #} p (getTransformerFunPtr t)
+      {#set GDALWarpOptions->pTransformerArg #} p (castPtr tArg)
       when (anyBandHasNoData wo) $ do
         vPtrSrcR <- listToArray
                       (map (\BandOptions{..} ->
@@ -174,19 +176,11 @@ withWarpOptionsPtr ds wo@WarpOptions{..}
                       (map (\BandOptions{..} ->
                               toCDouble (fromMaybe nodata biDstNoData)) woBands)
         vPtrDstI <- listToArray (replicate (length woBands) 0)
-        {#set GDALWarpOptions.padfDstNoDataReal #} p vPtrDstR
-        {#set GDALWarpOptions.padfDstNoDataImag #} p vPtrDstI
-        {#set GDALWarpOptions.padfSrcNoDataReal #} p vPtrSrcR
-        {#set GDALWarpOptions.padfSrcNoDataImag #} p vPtrSrcI
+        {#set GDALWarpOptions->padfDstNoDataReal #} p vPtrDstR
+        {#set GDALWarpOptions->padfDstNoDataImag #} p vPtrDstI
+        {#set GDALWarpOptions->padfSrcNoDataReal #} p vPtrSrcR
+        {#set GDALWarpOptions->padfSrcNoDataImag #} p vPtrSrcI
       return p
-
-    destroyWarpOptions = c_destroyWarpOptions
-
-foreign import ccall unsafe "gdalwarper.h GDALCreateWarpOptions"
-  c_createWarpOptions :: IO (Ptr (WarpOptions s))
-
-foreign import ccall unsafe "gdalwarper.h GDALDestroyWarpOptions"
-  c_destroyWarpOptions :: Ptr (WarpOptions s) -> IO ()
 
 reprojectImage
   :: RODataset s
@@ -209,27 +203,15 @@ reprojectImage srcDs srcSrs dstDs dstSrs algo memLimit maxError progressFun opts
           withLockedDatasetPtr dstDs $ \dstPtr ->
           withMaybeSRAsCString srcSrs $ \srcSrs' ->
           withMaybeSRAsCString dstSrs $ \dstSrs' ->
-          withWarpOptionsPtr srcDs options' $ \wopts ->
-            void $ c_reprojectImage srcPtr srcSrs' dstPtr dstSrs' algo'
-                     memLimit' maxError' pFun nullPtr wopts
+          withWarpOptionsH srcDs options' $ \wopts ->
+            void $ {#call GDALReprojectImage as ^#}
+               srcPtr srcSrs' dstPtr dstSrs' algo' memLimit' maxError' pFun
+               nullPtr wopts
        maybe (throwBindingException WarpStopped) return ret
   where
     algo'     = fromEnumC algo
     maxError' = realToFrac maxError
     memLimit' = realToFrac memLimit
-
-foreign import ccall safe "gdalwarper.h GDALReprojectImage" c_reprojectImage
-  :: Ptr (Dataset s t)   -- ^Source dataset
-  -> CString             -- ^Source proj (WKT)
-  -> Ptr (RWDataset s)   -- ^Dest dataset
-  -> CString             -- ^Dest proj (WKT)
-  -> CInt                -- ^Resample alg
-  -> CDouble             -- ^Memory limit
-  -> CDouble             -- ^Max error
-  -> ProgressFunPtr      -- ^Progress func
-  -> Ptr ()              -- ^Progress arg (unused)
-  -> Ptr (WarpOptions s) -- ^warp options
-  -> IO CInt
 
 createWarpedVRT
   :: forall s. RODataset s
@@ -240,13 +222,14 @@ createWarpedVRT
 createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
   options'' <- setOptionDefaults srcDs Nothing options'
   newDsPtr <- liftIO $
-    withWarpOptionsPtr srcDs options'' $ \opts ->
+    throwIfError "createWarpedVRT" $
+    withWarpOptionsH srcDs options'' $ \opts ->
     with geotransform $ \gt -> do
-      pArg <- {#get GDALWarpOptions.pTransformerArg #} opts
+      pArg <- {#get GDALWarpOptions->pTransformerArg #} opts
       when (pArg /= nullPtr) $
         {#call GDALSetGenImgProjTransformerDstGeoTransform as ^#} pArg
           (castPtr gt)
-      c_createWarpedVRT dsPtr nPixels' nLines' (castPtr gt) opts
+      {#call GDALCreateWarpedVRT as ^#} dsPtr nPixels' nLines' (castPtr gt) opts
   oDs <- newDerivedDatasetHandle srcDs newDsPtr
   setDstNodata oDs options''
   unsafeToReadOnly oDs
@@ -267,11 +250,3 @@ setDstNodata oDs options
             b <- getBand biDst oDs
             setBandNodataValue b nd
           Nothing -> return ()
-
-foreign import ccall safe "gdalwarper.h GDALCreateWarpedVRT" c_createWarpedVRT
-  :: Ptr (RODataset s)    -- ^Source dataset
-  -> CInt                 -- ^nPixels
-  -> CInt                 -- ^nLines
-  -> Ptr CDouble          -- ^geotransform
-  -> Ptr (WarpOptions s)  -- ^warp options
-  -> IO (Ptr (RWDataset s))

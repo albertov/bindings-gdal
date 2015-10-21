@@ -1,7 +1,7 @@
 module GDAL (
     GDAL
   , GDALType (..)
-  , Datatype (..)
+  , DataType (..)
   , XY (..)
   , Window (..)
   , Size
@@ -33,7 +33,7 @@ module GDAL (
   , gdalForkIO
   , isNoData
   , fromValue
-  , registerAllDrivers
+  , allRegister
   , destroyDriverManager
   , setQuietErrorHandler
   , create
@@ -44,11 +44,11 @@ module GDAL (
   , unsafeToReadOnly
   , createCopy
 
-  , datatypeSize
-  , datatypeByName
-  , datatypeUnion
-  , datatypeIsComplex
-  , reifyDatatype
+  , dataTypeSize
+  , dataTypeByName
+  , dataTypeUnion
+  , dataTypeIsComplex
+  , reifyDataType
 
   , datasetSize
   , datasetProjection
@@ -57,8 +57,8 @@ module GDAL (
   , setDatasetGeotransform
   , datasetBandCount
 
-  , bandDatatype
-  , reifyBandDatatype
+  , bandDataType
+  , reifyBandDataType
   , bandBlockSize
   , bandBlockCount
   , bandBlockLen

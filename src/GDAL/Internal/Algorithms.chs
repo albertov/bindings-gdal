@@ -19,6 +19,8 @@ module GDAL.Internal.Algorithms (
   , rasterizeLayersBufIO
 ) where
 
+{#context lib = "gdal" prefix = "GDAL" #}
+
 import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), bracket)
 import Control.Monad (liftM)
@@ -41,8 +43,8 @@ import Foreign.Storable (poke)
 
 import GDAL.Internal.Util (fromEnumC)
 import GDAL.Internal.Types
-import GDAL.Internal.CPLString
-import GDAL.Internal.OSR (SpatialReference, withMaybeSRAsCString)
+{#import GDAL.Internal.CPLString#}
+{#import GDAL.Internal.OSR #}
 {#import GDAL.Internal.CPLProgress#}
 {#import GDAL.Internal.OGR#}
 {#import GDAL.Internal.CPLError#}
@@ -128,9 +130,9 @@ instance Transformer GenImgProjTransformer where
       withMaybeSRAsCString giptSrcSrs $ \sSr ->
       withMaybeSRAsCString giptDstSrs $ \dSr ->
         c_createGenImgProjTransformer
-          (maybe nullPtr unDataset giptSrcDs)
+          (maybe nullDatasetH unDataset giptSrcDs)
           sSr
-          (maybe nullPtr unDataset giptDstDs)
+          (maybe nullDatasetH unDataset giptDstDs)
           dSr
           (fromBool giptUseGCP)
           (realToFrac giptMaxError)
@@ -142,7 +144,7 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
 
 foreign import ccall safe "gdal_alg.h GDALCreateGenImgProjTransformer"
   c_createGenImgProjTransformer
-    :: Ptr (RODataset s) -> CString -> Ptr (Dataset s m) -> CString -> CInt
+    :: DatasetH -> CString -> DatasetH -> CString -> CInt
     -> CDouble -> CInt -> IO (Ptr (GenImgProjTransformer s))
 
 -- ############################################################################
@@ -169,8 +171,8 @@ instance Transformer GenImgProjTransformer2 where
     = throwIfError "GDALCreateGenImgProjTransformer2" $
       withOptionList gipt2Options $ \opts ->
         c_createGenImgProjTransformer2
-          (maybe nullPtr unDataset gipt2SrcDs)
-          (maybe nullPtr unDataset gipt2DstDs)
+          (maybe nullDatasetH unDataset gipt2SrcDs)
+          (maybe nullDatasetH unDataset gipt2DstDs)
           opts
 
 foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
@@ -178,8 +180,7 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
 
 foreign import ccall safe "gdal_alg.h GDALCreateGenImgProjTransformer2"
   c_createGenImgProjTransformer2
-    :: Ptr (RODataset s) -> Ptr (RWDataset s) -> Ptr CString
-    -> IO (Ptr (GenImgProjTransformer2 s))
+    :: DatasetH -> DatasetH -> Ptr CString -> IO (Ptr (GenImgProjTransformer2 s))
 
 -- ############################################################################
 -- GenImgProjTransformer3
@@ -278,7 +279,7 @@ rasterizeLayersBufIO
           (liftM (stToUValue . St.map toValue) . St.unsafeFreeze) ret
   where
     toValue v = if toCDouble v == ndValue then NoData else Value v
-    dt        = fromEnumC (datatype (Proxy :: Proxy a))
+    dt        = fromEnumC (dataType (Proxy :: Proxy a))
     bValue    = toCDouble burnValue
     ndValue   = toCDouble nodataValue
     XY nx ny  = fmap fromIntegral size
