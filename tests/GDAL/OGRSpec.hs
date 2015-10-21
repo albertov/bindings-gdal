@@ -8,14 +8,15 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Either (isRight)
 import Data.Maybe (isNothing)
+import Data.Monoid (mempty)
 
 import System.Mem (performMajorGC)
+import System.FilePath (joinPath)
 
 import Test.Hspec (Spec, SpecWith, hspec, describe, before_, after_, afterAll_)
 
 import GDAL (
     GDAL
-  , setQuietErrorHandler
   , ErrorNum(..)
   , GDALException(..)
   )
@@ -30,6 +31,7 @@ import TestUtils (
   , shouldContain
   , shouldSatisfy
   , it
+  , withDir
   )
 
 main :: IO ()
@@ -38,13 +40,17 @@ main = hspec spec
 spec :: Spec
 spec = setupAndTeardown $ do
 
-  describe "Datasource and Layer" $ do
+  describe "DataSource and layer" $ do
 
     it "cannot open a non-existent file" $ do
       openReadOnly "foo.shp" `shouldThrow` ((==OpenFailed) . gdalErrNum)
 
     it "can open a shape file" $ do
       void $ getShapePath >>= openReadOnly
+
+    it "can get datasource name" $ do
+      n <- getShapePath >>= openReadOnly >>= datasourceName
+      n `shouldContain` "fondo.shp"
 
     it "can get a layer by index" $ do
       void $ getShapePath >>= openReadOnly >>= getLayer 0
@@ -64,13 +70,30 @@ spec = setupAndTeardown $ do
       n <- getShapePath >>= openReadOnly >>= layerCount
       n `shouldBe` 1
 
-    it "can get datasource name" $ do
-      n <- getShapePath >>= openReadOnly >>= datasourceName
-      n `shouldContain` "fondo.shp"
-
     it "can get layer name" $ do
       n <- getShapePath >>= openReadOnly >>= getLayer 0 >>= layerName
       n `shouldBe` "fondo"
+
+    withDir "can create ShapeFile" $ \d -> do
+      let p = joinPath [d, "test.shp"]
+      void $ create "ESRI Shapefile" p []
+
+    it "create throws on invalid driver name" $
+      create "foo" "" [] `shouldThrow` (==(UnknownDriver "foo"))
+
+    describe "createLayer" $ do
+
+      it "with no fields or geometries unicode name" $ do
+        let fd = FeatureDef { fdName   = lName
+                            , fdFields = mempty
+                            , fdGeoms  = mempty
+                            }
+            lName = "Barça Players"
+        ds <- createMem []
+        l <- createLayer ds fd []
+        name <- layerName l
+        name `shouldBe` lName
+
 
   describe "getSpatialFilter" $ do
 
@@ -142,7 +165,5 @@ getShapePath = liftIO $ getDataFileName "tests/fixtures/fondo.shp"
 --   the driver manager after every test and peformimg a major garbage
 --   collection to force (really?) the finalizers to run.
 setupAndTeardown :: SpecWith a -> SpecWith a
-setupAndTeardown
-  = before_ (setQuietErrorHandler >> OGR.registerAllDrivers)
-  . after_  performMajorGC
-  . afterAll_ OGR.cleanupAll
+setupAndTeardown =
+  before_ OGR.registerAll . after_  performMajorGC . afterAll_ OGR.cleanupAll

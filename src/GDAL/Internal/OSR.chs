@@ -23,6 +23,7 @@ module GDAL.Internal.OSR (
 
   , withSpatialReference
   , withMaybeSRAsCString
+  , withMaybeSpatialReference
 ) where
 
 {# context lib = "gdal" prefix = "OSR" #}
@@ -167,3 +168,8 @@ getUnitsWith fun s = unsafePerformIO $
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
 withMaybeSRAsCString Nothing    = ($ nullPtr)
 withMaybeSRAsCString (Just srs) = withCString (toWkt srs)
+
+withMaybeSpatialReference
+  :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a
+withMaybeSpatialReference Nothing  = ($ nullPtr)
+withMaybeSpatialReference (Just s) = withSpatialReference s

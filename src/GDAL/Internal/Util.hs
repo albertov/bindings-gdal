@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE BangPatterns #-}
 module GDAL.Internal.Util (
     Mutex
   , newMutex
@@ -7,11 +8,21 @@ module GDAL.Internal.Util (
   , fromEnumC
   , toEnumC
   , createEnum
+  , useAsEncodedCString
+  , peekEncodedCString
 ) where
 
 import Control.Concurrent (newMVar, takeMVar, putMVar, MVar)
 import Control.Exception (finally)
+
+import Data.ByteString.Char8 (useAsCString)
+import Data.Text (Text)
+import Data.Text.Encoding (encodeUtf8)
+import Data.Text.Foreign (peekCStringLen)
+
 import Foreign.C.Types (CInt)
+import Foreign.C.String (CString)
+import Foreign.Storable (peekElemOff)
 import Language.Haskell.TH
 
 fromEnumC :: Enum a => a -> CInt
@@ -44,3 +55,11 @@ withMutexes ms action = finally (acquireMutexes >> action) releaseMutexes
   where
     acquireMutexes = mapM_ (takeMVar . unMutex) ms
     releaseMutexes = mapM_ (flip putMVar () . unMutex) ms
+
+useAsEncodedCString :: Text -> (CString -> IO a) -> IO a
+useAsEncodedCString = useAsCString . encodeUtf8
+
+peekEncodedCString :: CString -> IO Text
+peekEncodedCString p = len 0 >>= (\l -> peekCStringLen (p,l))
+  where
+    len !n = peekElemOff p n >>= (\v -> if v==0 then return n else len (n+1))

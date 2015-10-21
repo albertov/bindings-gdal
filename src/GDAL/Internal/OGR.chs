@@ -19,19 +19,17 @@ module GDAL.Internal.OGR (
   , RWDataSource
   , ROLayer
   , RWLayer
+  , Driver
 
-  , unDataSource
-  , unLayer
-  , withLockedDataSourcePtr
   , openReadOnly
   , openReadWrite
-  , withLockedLayerPtr
-  , withLockedLayerPtrs
-
+  , create
+  , createMem
 
   , datasourceName
   , executeSQL
 
+  , createLayer
   , getLayer
   , getLayerByName
 
@@ -41,11 +39,19 @@ module GDAL.Internal.OGR (
   , layerCount
   , layerName
 
-  , registerAllDrivers
+  , registerAll
   , cleanupAll
+
+  , withLockedLayerPtr
+  , withLockedLayerPtrs
+  , unDataSource
+  , unLayer
+  , withLockedDataSourcePtr
 ) where
 
 {#context lib = "gdal" prefix = "OGR"#}
+
+import Data.Text (Text)
 
 import Control.Applicative ((<$>))
 import Control.Monad (liftM, when, void, (<=<))
@@ -58,19 +64,26 @@ import Foreign.Ptr (Ptr, nullPtr)
 
 import Foreign.Storable (Storable)
 
-import GDAL.Internal.Types
+{#import GDAL.Internal.OSR#}
 {#import GDAL.Internal.OGRGeometry#}
 {#import GDAL.Internal.OGRFeature#}
 {#import GDAL.Internal.OGRError#}
-import GDAL.Internal.OSR
+{#import GDAL.Internal.CPLString#}
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLConv (cplFree)
 import GDAL.Internal.Util
+import GDAL.Internal.Types
 
 #include "ogr_api.h"
 
-{#fun OGRRegisterAll as registerAllDrivers {} -> `()'  #}
-{#fun OGRCleanupAll  as cleanupAll {} -> `()'  #}
+{#fun RegisterAll as ^ {} -> `()'  #}
+{#fun CleanupAll  as ^ {} -> `()'  #}
+
+{#pointer OGRSFDriverH as DriverH newtype#}
+deriving instance Eq DriverH
+
+nullDriverH :: DriverH
+nullDriverH = DriverH nullPtr
 
 
 {#pointer DataSourceH newtype#}
@@ -150,22 +163,61 @@ newDataSourceHandle p
       m <- liftIO newMutex
       return $ DataSource (m,p)
 
+type Driver = String
+
+create :: Driver -> String -> OptionList -> GDAL s (RWDataSource s)
+create driverName name options = newDataSourceHandle <=<
+  liftIO $ throwIfError "create" $ do
+    pDr <- driverByName driverName
+    withCString name $ \pName ->
+      withOptionList options $ {#call OGR_Dr_CreateDataSource as ^#} pDr pName
+
+createMem :: OptionList -> GDAL s (RWDataSource s)
+createMem = create "Memory" ""
+
+driverByName :: String -> IO DriverH
+driverByName name = withCString name $ \pName -> do
+  drv <- {#call unsafe GetDriverByName as ^#} pName
+  if drv == nullDriverH
+    then throwBindingException (UnknownDriver name)
+    else return drv
+
+
+createLayer
+  :: RWDataSource s -> FeatureDef -> OptionList -> GDAL s (RWLayer s a)
+createLayer ds fd@FeatureDef{..} options = liftIO $
+  useAsEncodedCString fdName $ \pName ->
+  withMaybeSpatialReference srs $ \pSrs ->
+  withOptionList options $
+    newLayerHandle ds NullLayer <=<
+      throwIfError "createLayer" .
+        {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType
+  where
+    pDs   = unDataSource ds
+    geom  = fdGeom fd
+    srs   = geom >>= gdSrs
+    gType = fromEnumC (maybe WkbUnknown gdType geom)
+
 
 getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
-getLayer layer (DataSource (m,dp)) = liftIO $ do
-  p <- throwIfError "getLayer" $
-         {#call OGR_DS_GetLayer as ^#} dp (fromIntegral layer)
-  when (p==nullLayerH) $ throwBindingException (InvalidLayerIndex layer)
-  return (Layer (m, p))
+getLayer layer ds = liftIO $
+  newLayerHandle ds (InvalidLayerIndex layer) <=<
+    throwIfError "getLayer" $ {#call OGR_DS_GetLayer as ^#} dsH lyr
+  where
+    dsH = unDataSource ds
+    lyr = fromIntegral layer
 
 getLayerByName :: String -> DataSource s t -> GDAL s (Layer s t a)
-getLayerByName layer (DataSource (m,dp)) = liftIO $
-  withCString layer $ \lyr -> do
-    p <- throwIfError "getLayerByName" $
-          {#call OGR_DS_GetLayerByName as ^#} dp lyr
-    when (p==nullLayerH) $ throwBindingException (InvalidLayerName layer)
-    return (Layer (m,p))
+getLayerByName layer ds = liftIO $ withCString layer $
+  newLayerHandle ds (InvalidLayerName layer) <=<
+    throwIfError "getLayerByName" .
+      {#call OGR_DS_GetLayerByName as ^#} (unDataSource ds)
 
+newLayerHandle
+  :: DataSource s t -> OGRException -> LayerH -> IO (Layer s t a)
+newLayerHandle (DataSource (m,_)) exc p
+  | p==nullLayerH = throwBindingException exc
+  | otherwise     = return (Layer (m,p))
 
 layerCount :: DataSource s t -> GDAL s Int
 layerCount = liftM fromIntegral
@@ -206,9 +258,9 @@ executeSQL dialect query mSpatialFilter ds@(DataSource (m,dsP)) = do
       throwIfError "executeSQL" $
         {#call OGR_DS_ExecuteSQL as ^#} dsPtr sQuery sFilter sDialect
 
-layerName :: Layer s t a -> GDAL s String
+layerName :: Layer s t a -> GDAL s Text
 layerName =
-  liftIO . (peekCString <=< {#call unsafe OGR_L_GetName as ^#} . unLayer)
+  liftIO . (peekEncodedCString <=< {#call unsafe OGR_L_GetName as ^#} . unLayer)
 
 getSpatialFilter :: Layer s t a -> GDAL s (Maybe Geometry)
 getSpatialFilter l = liftIO $ withLockedLayerPtr l $ \lPtr -> do

@@ -7,6 +7,10 @@ module GDAL.Internal.OGRFeature (
   , Feature (..)
   , FeatureH
 
+  , FeatureDef (..)
+  , GeometryDef (..)
+
+  , fdGeom
   , featureToHandle
   , featureFromHandle
   , fieldByName
@@ -18,12 +22,13 @@ module GDAL.Internal.OGRFeature (
 
 ) where
 
+{#context lib = "gdal" prefix = "OGR" #}
+
 import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (liftM, (>=>), when)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Text (Text)
-import Data.Text.Foreign (peekCStringLen)
 import Data.Time.LocalTime (
     LocalTime(..)
   , TimeOfDay(..)
@@ -32,6 +37,7 @@ import Data.Time.LocalTime (
   , minutesToTimeZone
   , utc
   )
+import Data.Time ()
 import Data.Time.Calendar (Day, fromGregorian)
 import Data.Int (Int64)
 import Data.ByteString (ByteString)
@@ -52,7 +58,8 @@ import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (Storable, sizeOf, peek, peekElemOff)
 
 import GDAL.Internal.Types
-import GDAL.Internal.Util (toEnumC)
+import GDAL.Internal.Util (toEnumC, peekEncodedCString)
+{#import GDAL.Internal.OSR #}
 {#import GDAL.Internal.CPLError #}
 {#import GDAL.Internal.OGRGeometry #}
 {#import GDAL.Internal.OGRError #}
@@ -61,8 +68,9 @@ import GDAL.Internal.Util (toEnumC)
 #include "ogr_api.h"
 #include "cpl_string.h"
 
-{#enum OGRFieldType as FieldType {} omit (OFTMaxType)
-    deriving (Eq,Show,Read,Bounded) #}
+{#enum FieldType {} omit (OFTMaxType) deriving (Eq,Show,Read,Bounded) #}
+
+{#enum Justification  {} deriving (Eq,Show,Read,Bounded) #}
 
 data Field
   = OGRInteger     {-# UNPACK #-} !Int
@@ -77,34 +85,54 @@ data Field
   | OGRTime        {-# UNPACK #-} !TimeOfDay
   deriving (Show)
 
+data FieldDef
+  = FieldDef {
+      fldName  :: {-# UNPACK #-} !Text
+    , fldType  :: {-# UNPACK #-} !FieldType
+    , fldWidth :: {-# UNPACK #-} !(Maybe Int)
+    , fldPrec  :: {-# UNPACK #-} !(Maybe Int)
+    , fldJust  :: {-# UNPACK #-} !Justification
+    } deriving Show
+
 data Feature
   = Feature {
-      fId         :: Int64
-    , fFields     :: V.Vector (ByteString, Field)
-    , fGeometries :: V.Vector (ByteString, Geometry)
+      fId      :: {-# UNPACK #-} !Int64
+    , fFields  :: {-# UNPACK #-} !(V.Vector Field)
+    , fGeoms   :: {-# UNPACK #-} !(V.Vector Geometry)
     } deriving (Show)
 
-{#pointer OGRFeatureH as FeatureH foreign finalizer OGR_F_Destroy as ^ newtype#}
+data FeatureDef
+  = FeatureDef {
+      fdName    :: {-# UNPACK #-} !Text
+    , fdFields  :: {-# UNPACK #-} !(V.Vector FieldDef)
+    , fdGeoms   :: {-# UNPACK #-} !(V.Vector GeometryDef)
+    } deriving Show
 
-newtype FieldDefn s = FieldDefn FieldDefnH
+fdGeom :: FeatureDef -> Maybe GeometryDef
+fdGeom = (V.!? 0) . fdGeoms
 
-{#pointer OGRFieldDefnH as FieldDefnH newtype #}
+data GeometryDef
+  = GeometryDef {
+      gdName  :: {-# UNPACK #-} !Text
+    , gdType  :: {-# UNPACK #-} !GeometryType
+    , gdSrs   :: {-# UNPACK #-} !(Maybe SpatialReference)
+    } deriving Show
 
-newtype FeatureDefn s = FeatureDefn FeatureDefnH
-{#pointer OGRFeatureDefnH as FeatureDefnH newtype #}
+{#pointer FeatureH foreign finalizer OGR_F_Destroy as ^ newtype#}
+{#pointer FieldDefnH   newtype#}
+{#pointer FeatureDefnH newtype#}
 
-
-featureToHandle :: FeatureDefn s -> Feature -> GDAL s FeatureH
+featureToHandle :: FeatureDefnH -> Feature -> GDAL s FeatureH
 featureToHandle = undefined
 
-featureFromHandle :: FeatureDefn s -> FeatureH -> GDAL s Feature
+featureFromHandle :: FeatureDefnH -> FeatureH -> GDAL s Feature
 featureFromHandle = undefined
 
-fieldByName :: FeatureDefn s -> FeatureH -> ByteString -> GDAL s Field
+fieldByName :: FeatureDefnH -> FeatureH -> ByteString -> GDAL s Field
 fieldByName = undefined
 
-fieldByIndex :: FeatureDefn s -> FeatureH -> Int -> GDAL s Field
-fieldByIndex (FeatureDefn ftDef) feature ix = liftIO $ do
+fieldByIndex :: FeatureDefnH -> FeatureH -> Int -> GDAL s Field
+fieldByIndex ftDef feature ix = liftIO $ do
   fDef <- {#call unsafe OGR_FD_GetFieldDefn as ^#} ftDef (fromIntegral ix)
   typ <- liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} fDef)
   withFeatureH feature (getFieldBy typ  fDef (fromIntegral ix))
@@ -136,14 +164,14 @@ getFieldBy OFTRealList _ ix f = alloca $ \lenP -> do
   liftM OGRRealList (St.unsafeFreeze (Stm.unsafeCast vec))
 
 getFieldBy OFTString _ ix f = liftM OGRString
-  (({#call unsafe OGR_F_GetFieldAsString as ^#} f ix) >>= peekCString)
+  (({#call unsafe OGR_F_GetFieldAsString as ^#} f ix) >>= peekEncodedCString)
 
 getFieldBy OFTWideString fDef ix f = getFieldBy OFTString fDef ix f
 
 getFieldBy OFTStringList _ ix f = liftM OGRStringList $ do
   ptr <- {#call unsafe OGR_F_GetFieldAsStringList as ^#} f ix
   nElems <- liftM fromIntegral ({#call unsafe CSLCount as ^#} ptr)
-  V.generateM nElems (peekElemOff ptr >=> peekCString)
+  V.generateM nElems (peekElemOff ptr >=> peekEncodedCString)
 
 getFieldBy OFTWideStringList fDef ix f = getFieldBy OFTStringList fDef ix f
 
@@ -192,10 +220,6 @@ peekIntegral = liftM fromIntegral . peek
 getFieldName :: FieldDefnH -> IO ByteString
 getFieldName = {#call unsafe OGR_Fld_GetNameRef as ^#} >=> packCString
 
-peekCString :: Ptr CChar -> IO Text
-peekCString p = len 0 >>= (\l -> peekCStringLen (p,l))
-  where
-    len !n = peekElemOff p n >>= (\v -> if v==0 then return n else len (n+1))
 
 geometryByName :: FeatureH -> ByteString -> GDAL s Geometry
 geometryByName = undefined

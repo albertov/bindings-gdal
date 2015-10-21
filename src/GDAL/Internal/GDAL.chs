@@ -288,7 +288,7 @@ createCopy driver path ds strict options progressFun = do
       withProgressFun progressFun $ \pFunc ->
       withOptionList options $ \o -> do
         validateCreationOptions d o
-        withLockedDatasetPtr ds $ \dsPtr -> 
+        withLockedDatasetPtr ds $ \dsPtr ->
           {#call GDALCreateCopy as ^#}
             d p dsPtr (fromBool strict) o pFunc (castPtr nullPtr)
   maybe (throwBindingException CopyStopped) newDatasetHandle mPtr

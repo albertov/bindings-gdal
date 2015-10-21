@@ -30,6 +30,7 @@ data OGRException
   | NullGeometry
   | NullSpatialReference
   | NullLayer
+  | UnknownDriver     !String
   | InvalidLayerIndex !Int
   | InvalidLayerName  !String
   | SQLQueryError     !String

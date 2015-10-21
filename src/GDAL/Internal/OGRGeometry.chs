@@ -122,11 +122,6 @@ createFromWktIO mSrs bs =
       (poke spp sp >> {#call unsafe OGR_G_CreateFromWkt as ^#} spp srs gPtr)
       (peek gPtr >>= newGeometryHandle)
 
-withMaybeSpatialReference
-  :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a
-withMaybeSpatialReference Nothing  = ($ nullPtr)
-withMaybeSpatialReference (Just s) = withSpatialReference s
-
 peekAndPack :: Ptr CString -> IO ByteString
 peekAndPack pptr = do
   p <- liftM castPtr (peek pptr) :: IO (Ptr Word8)
@@ -165,7 +160,7 @@ instance Show Geometry where
 instance Eq Geometry where
   a == b = unsafePerformIO (geomEqIO a b)
 
-{#enum OGRwkbGeometryType as GeometryType {underscoreToCase}#}
+{#enum OGRwkbGeometryType as GeometryType {upcaseFirstLetter}#}
 
 instance Show GeometryType where
   show s = unsafePerformIO $
