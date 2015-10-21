@@ -54,6 +54,7 @@ module GDAL.Internal.OGR (
 {#context lib = "gdal" prefix = "OGR"#}
 
 import Data.Text (Text)
+import qualified Data.Vector as V
 
 import Control.Applicative ((<$>))
 import Control.Monad (liftM, when, void, forM_, (<=<))
@@ -198,7 +199,7 @@ createLayer ds fd@FeatureDef{..} approxOk options = liftIO $
   withOptionList options $ \pOpts ->
   throwIfError "createLayer" $ do
     pL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts
-    forM_ fdFields $ \f -> withFieldDefnH f $ \pFld ->
+    V.forM_ fdFields $ \f -> withFieldDefnH f $ \pFld ->
       {#call OGR_L_CreateField as ^#} pL pFld (fromEnumC approxOk)
     newLayerHandle ds NullLayer pL
   where
