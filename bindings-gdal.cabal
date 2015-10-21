@@ -80,6 +80,7 @@ test-suite spec
                   , GDAL.OSRSpec
                   , GDAL.OGRSpec
                   , GDAL.WarperSpec
+                  , GDAL.Internal.OGRFeatureSpec
                   , Paths_bindings_gdal
   default-language: Haskell2010
   ghc-options:     -Wall -rtsopts -threaded -with-rtsopts=-N

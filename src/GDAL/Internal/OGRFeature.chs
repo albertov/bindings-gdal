@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 
 module GDAL.Internal.OGRFeature (
@@ -6,10 +7,15 @@ module GDAL.Internal.OGRFeature (
   , Field
   , Feature (..)
   , FeatureH
+  , FieldDefnH (..)
+  , FeatureDefnH
+  , Justification (..)
 
   , FeatureDef (..)
   , GeometryDef (..)
+  , FieldDef (..)
 
+  , fieldDef
   , fdGeom
   , featureToHandle
   , featureFromHandle
@@ -19,13 +25,15 @@ module GDAL.Internal.OGRFeature (
   , geometryByIndex
 
   , withFeatureH
-
+  , withFieldDefnH
+  , fieldDefFromHandle
 ) where
 
 {#context lib = "gdal" prefix = "OGR" #}
 
 import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (liftM, (>=>), when)
+import Control.Monad.Catch (bracket)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Text (Text)
@@ -58,7 +66,12 @@ import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (Storable, sizeOf, peek, peekElemOff)
 
 import GDAL.Internal.Types
-import GDAL.Internal.Util (toEnumC, peekEncodedCString)
+import GDAL.Internal.Util (
+    toEnumC
+  , fromEnumC
+  , peekEncodedCString
+  , useAsEncodedCString
+  )
 {#import GDAL.Internal.OSR #}
 {#import GDAL.Internal.CPLError #}
 {#import GDAL.Internal.OGRGeometry #}
@@ -70,7 +83,11 @@ import GDAL.Internal.Util (toEnumC, peekEncodedCString)
 
 {#enum FieldType {} omit (OFTMaxType) deriving (Eq,Show,Read,Bounded) #}
 
-{#enum Justification  {} deriving (Eq,Show,Read,Bounded) #}
+{#enum Justification  {}
+    omit (JustifyUndefined)
+    with prefix = "OJ"
+    add  prefix = "Justify"
+    deriving (Eq,Show,Read,Bounded) #}
 
 data Field
   = OGRInteger     {-# UNPACK #-} !Int
@@ -91,8 +108,11 @@ data FieldDef
     , fldType  :: {-# UNPACK #-} !FieldType
     , fldWidth :: {-# UNPACK #-} !(Maybe Int)
     , fldPrec  :: {-# UNPACK #-} !(Maybe Int)
-    , fldJust  :: {-# UNPACK #-} !Justification
-    } deriving Show
+    , fldJust  :: {-# UNPACK #-} !(Maybe Justification)
+    } deriving (Show, Eq)
+
+fieldDef :: FieldType -> Text -> FieldDef
+fieldDef ftype name = FieldDef name ftype Nothing Nothing Nothing
 
 data Feature
   = Feature {
@@ -106,7 +126,7 @@ data FeatureDef
       fdName    :: {-# UNPACK #-} !Text
     , fdFields  :: {-# UNPACK #-} !(V.Vector FieldDef)
     , fdGeoms   :: {-# UNPACK #-} !(V.Vector GeometryDef)
-    } deriving Show
+    } deriving (Show, Eq)
 
 fdGeom :: FeatureDef -> Maybe GeometryDef
 fdGeom = (V.!? 0) . fdGeoms
@@ -116,16 +136,48 @@ data GeometryDef
       gdName  :: {-# UNPACK #-} !Text
     , gdType  :: {-# UNPACK #-} !GeometryType
     , gdSrs   :: {-# UNPACK #-} !(Maybe SpatialReference)
-    } deriving Show
+    } deriving (Show, Eq)
 
 {#pointer FeatureH foreign finalizer OGR_F_Destroy as ^ newtype#}
 {#pointer FieldDefnH   newtype#}
 {#pointer FeatureDefnH newtype#}
 
+
+withFieldDefnH :: FieldDef -> (FieldDefnH -> IO a) -> IO a
+withFieldDefnH FieldDef{..} f =
+  useAsEncodedCString fldName $ \pName ->
+  bracket ({#call unsafe OGR_Fld_Create as ^#} pName (fromEnumC fldType))
+          ({#call unsafe OGR_Fld_Destroy as ^#}) (\p -> populate p >> f p)
+  where
+    populate h = do
+      case fldWidth of
+        Just w  -> {#call unsafe OGR_Fld_SetWidth as ^#} h (fromIntegral w)
+        Nothing -> return ()
+      case fldPrec of
+        Just p  -> {#call unsafe OGR_Fld_SetPrecision as ^#} h (fromIntegral p)
+        Nothing -> return ()
+      case fldJust of
+        Just j  -> {#call unsafe OGR_Fld_SetJustify as ^#} h (fromEnumC j)
+        Nothing -> return ()
+
+fieldDefFromHandle :: FieldDefnH -> IO FieldDef
+fieldDefFromHandle p =
+  FieldDef
+    <$> ({#call unsafe OGR_Fld_GetNameRef as ^#} p >>= peekEncodedCString)
+    <*> (liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} p))
+    <*> (liftM iToMaybe ({#call unsafe OGR_Fld_GetWidth as ^#} p))
+    <*> (liftM iToMaybe ({#call unsafe OGR_Fld_GetPrecision as ^#} p))
+    <*> (liftM jToMaybe ({#call unsafe OGR_Fld_GetJustify as ^#} p))
+  where
+    iToMaybe = (\v -> if v==0 then Nothing else Just (fromIntegral v))
+    jToMaybe = (\j -> if j==0 then Nothing else Just (toEnumC j))
+
+
+
 featureToHandle :: FeatureDefnH -> Feature -> GDAL s FeatureH
 featureToHandle = undefined
 
-featureFromHandle :: FeatureDefnH -> FeatureH -> GDAL s Feature
+featureFromHandle :: FeatureH -> GDAL s Feature
 featureFromHandle = undefined
 
 fieldByName :: FeatureDefnH -> FeatureH -> ByteString -> GDAL s Field

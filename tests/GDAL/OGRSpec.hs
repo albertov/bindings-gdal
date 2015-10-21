@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module GDAL.OGRSpec (main, spec) where
+module GDAL.OGRSpec (main, spec, setupAndTeardown) where
 
 import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -82,6 +83,8 @@ spec = setupAndTeardown $ do
       create "foo" "" [] `shouldThrow` (==(UnknownDriver "foo"))
 
     describe "createLayer" $ do
+      let strField  = fieldDef OFTString
+          realField = fieldDef OFTReal
 
       it "with no fields or geometries unicode name" $ do
         let fd = FeatureDef { fdName   = lName
@@ -90,7 +93,19 @@ spec = setupAndTeardown $ do
                             }
             lName = "Barça Players"
         ds <- createMem []
-        l <- createLayer ds fd []
+        l <- createLayer ds fd StrictOK []
+        name <- layerName l
+        name `shouldBe` lName
+
+      it "with unicode named fields" $ do
+        let fd = FeatureDef { fdName   = lName
+                            , fdFields = [ strField "contraseña"
+                                         , realField "año"]
+                            , fdGeoms  = mempty
+                            }
+            lName = "Barça Players"
+        ds <- createMem []
+        l <- createLayer ds fd StrictOK []
         name <- layerName l
         name `shouldBe` lName
 

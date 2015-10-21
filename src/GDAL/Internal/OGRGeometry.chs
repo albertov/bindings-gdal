@@ -69,6 +69,9 @@ import GDAL.Internal.Util
 
 #include "ogr_api.h"
 
+{#enum OGRwkbGeometryType as GeometryType {upcaseFirstLetter}
+  deriving (Eq,Show)#}
+
 {#enum define WkbByteOrder
   { wkbXDR  as WkbXDR
   , wkbNDR  as WkbNDR
@@ -159,10 +162,3 @@ instance Show Geometry where
 
 instance Eq Geometry where
   a == b = unsafePerformIO (geomEqIO a b)
-
-{#enum OGRwkbGeometryType as GeometryType {upcaseFirstLetter}#}
-
-instance Show GeometryType where
-  show s = unsafePerformIO $
-            {#call unsafe OGRGeometryTypeToName as ^#} s' >>= peekCString
-    where s' = fromEnumC s

@@ -13,6 +13,7 @@ module GDAL.Internal.OGR (
     DataSource
   , DataSourceH
   , SQLDialect (..)
+  , ApproxOK (..)
   , Layer
   , LayerH (..)
   , RODataSource
@@ -54,7 +55,7 @@ module GDAL.Internal.OGR (
 import Data.Text (Text)
 
 import Control.Applicative ((<$>))
-import Control.Monad (liftM, when, void, (<=<))
+import Control.Monad (liftM, when, void, forM_, (<=<))
 import Control.Monad.Catch(throwM, catch, catchJust)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -182,16 +183,23 @@ driverByName name = withCString name $ \pName -> do
     then throwBindingException (UnknownDriver name)
     else return drv
 
+{#enum define ApproxOK
+  { TRUE as ApproxOK
+  , FALSE as StrictOK
+  } deriving (Eq, Show) #}
 
 createLayer
-  :: RWDataSource s -> FeatureDef -> OptionList -> GDAL s (RWLayer s a)
-createLayer ds fd@FeatureDef{..} options = liftIO $
+  :: RWDataSource s -> FeatureDef -> ApproxOK -> OptionList
+  -> GDAL s (RWLayer s a)
+createLayer ds fd@FeatureDef{..} approxOk options = liftIO $
   useAsEncodedCString fdName $ \pName ->
   withMaybeSpatialReference srs $ \pSrs ->
-  withOptionList options $
-    newLayerHandle ds NullLayer <=<
-      throwIfError "createLayer" .
-        {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType
+  withOptionList options $ \pOpts ->
+  throwIfError "createLayer" $ do
+    pL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts
+    forM_ fdFields $ \f -> withFieldDefnH f $ \pFld ->
+      {#call OGR_L_CreateField as ^#} pL pFld (fromEnumC approxOk)
+    newLayerHandle ds NullLayer pL
   where
     pDs   = unDataSource ds
     geom  = fdGeom fd
