@@ -27,6 +27,8 @@ module GDAL.Internal.OGRGeometry (
   , cloneGeometry
 ) where
 
+{#context lib = "gdal" prefix = "OGR_G_"#}
+
 import Control.Applicative ((<$>))
 import Control.Monad (liftM, when, void, (<=<), (>=>))
 import Control.Monad.Catch(throwM, catch, catchJust)
@@ -60,7 +62,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
 {#import GDAL.Internal.OGRError#}
-import GDAL.Internal.OSR
+{#import GDAL.Internal.OSR#}
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLConv (cplFree)
 import GDAL.Internal.Util
@@ -75,10 +77,7 @@ import GDAL.Internal.Util
 {#pointer OGRGeometryH as Geometry foreign newtype#}
 
 cloneGeometry :: Ptr Geometry -> IO Geometry
-cloneGeometry = (c_cloneGeometry >=> newGeometryHandle)
-
-foreign import ccall safe "ogr_api.h OGR_G_Clone"
-  c_cloneGeometry :: Ptr Geometry -> IO (Ptr Geometry)
+cloneGeometry = ({#call unsafe Clone as ^#} >=> newGeometryHandle)
 
 
 withMaybeGeometry :: Maybe Geometry -> (Ptr Geometry -> IO a) -> IO a
@@ -101,16 +100,12 @@ createFromWkbIO
   :: Maybe SpatialReference -> ByteString -> IO (Either OGRError Geometry)
 createFromWkbIO mSrs bs =
   alloca $ \gPtr ->
-  unsafeUseAsCStringLen bs $ \(sPtr, len) ->
+  unsafeUseAsCStringLen bs $ \(sp, len) ->
   withMaybeSpatialReference mSrs $ \srs ->
     checkOGRError
-      (c_createFromWkb sPtr srs gPtr (fromIntegral len))
+      ({#call unsafe OGR_G_CreateFromWkb as ^#}
+        (castPtr sp) srs gPtr (fromIntegral len))
       (peek gPtr >>= newGeometryHandle)
-
-foreign import ccall unsafe "ogr_api.h OGR_G_CreateFromWkb"
-  c_createFromWkb ::
-    CString -> Ptr SpatialReference -> Ptr (Ptr Geometry) -> CInt -> IO CInt
-
 
 createFromWkt
   :: Maybe SpatialReference -> ByteString -> Either OGRError Geometry
@@ -120,16 +115,12 @@ createFromWktIO
   :: Maybe SpatialReference -> ByteString -> IO (Either OGRError Geometry)
 createFromWktIO mSrs bs =
   alloca $ \gPtr ->
-  alloca $ \sPtrPtr ->
-  unsafeUseAsCString bs $ \sPtr ->
+  alloca $ \spp ->
+  unsafeUseAsCString bs $ \sp ->
   withMaybeSpatialReference mSrs $ \srs ->
     checkOGRError
-      (poke sPtrPtr sPtr >> c_createFromWkt sPtrPtr srs gPtr)
+      (poke spp sp >> {#call unsafe OGR_G_CreateFromWkt as ^#} spp srs gPtr)
       (peek gPtr >>= newGeometryHandle)
-
-foreign import ccall unsafe "ogr_api.h OGR_G_CreateFromWkt"
-  c_createFromWkt ::
-    Ptr CString -> Ptr SpatialReference -> Ptr (Ptr Geometry) -> IO CInt
 
 withMaybeSpatialReference
   :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a

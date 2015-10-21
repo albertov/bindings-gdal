@@ -29,10 +29,10 @@ library
                    , GDAL.Internal.CPLProgress
                    , GDAL.Internal.CPLConv
                    , GDAL.Internal.OGRError
+                   , GDAL.Internal.OSR
                    , GDAL.Internal.OGRGeometry
                    , GDAL.Internal.OGRFeature
                    , GDAL.Internal.OGR
-                   , GDAL.Internal.OSR
                    , GDAL.Internal.GDAL
                    , GDAL.Internal.Algorithms
                    , GDAL.Internal.Warper

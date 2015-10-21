@@ -17,6 +17,8 @@ module GDAL.Internal.CPLError (
   , bindingExceptionFromException
 ) where
 
+{# context lib = "gdal" prefix = "CPL" #}
+
 import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
 import Control.Exception (Exception(..), SomeException, bracket, throw)
 import Control.DeepSeq (NFData(rnf))
@@ -27,14 +29,19 @@ import Data.Maybe (isJust)
 import Data.Typeable (Typeable, cast)
 
 import Foreign.C.String (CString, peekCString)
-import Foreign.C.Types (CInt(..))
-import Foreign.Ptr (FunPtr, freeHaskellFunPtr)
+import Foreign.C.Types (CInt(..), CChar(..))
+import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr)
 
 import GDAL.Internal.Util (toEnumC)
 
 #include "cpl_error.h"
 
-type ErrorHandler = CInt -> CInt -> CString -> IO ()
+{# enum CPLErr as ErrorType {upcaseFirstLetter} deriving (Eq, Show) #}
+
+
+type CErrorHandler = CInt -> CInt -> CString -> IO ()
+
+{#pointer ErrorHandler#}
 
 data GDALException
   = forall e. Exception e =>
@@ -73,8 +80,6 @@ isBindingException e
       Just (GDALBindingException _) -> True
       _                             -> False
 
-{# enum CPLErr as ErrorType {upcaseFirstLetter} deriving (Eq, Show) #}
-
 {#enum define ErrorNum {
     CPLE_None            as None
   , CPLE_AppDefined      as AppDefined
@@ -94,22 +99,13 @@ instance NFData ErrorType where
 
 
 foreign import ccall "cpl_error.h &CPLQuietErrorHandler"
-  c_quietErrorHandler :: FunPtr ErrorHandler
+  c_quietErrorHandler :: ErrorHandler
 
-foreign import ccall "cpl_error.h CPLSetErrorHandler"
-  setErrorHandler :: FunPtr ErrorHandler -> IO (FunPtr ErrorHandler)
-
-setQuietErrorHandler :: IO (FunPtr ErrorHandler)
-setQuietErrorHandler = setErrorHandler c_quietErrorHandler
-
-foreign import ccall "cpl_error.h CPLPushErrorHandler"
-  c_pushErrorHandler :: FunPtr ErrorHandler -> IO ()
-
-foreign import ccall "cpl_error.h CPLPopErrorHandler"
-  c_popErrorHandler :: IO ()
+setQuietErrorHandler :: IO ErrorHandler
+setQuietErrorHandler = {#call unsafe SetErrorHandler as ^#} c_quietErrorHandler
 
 foreign import ccall safe "wrapper"
-  mkErrorHandler :: ErrorHandler -> IO (FunPtr ErrorHandler)
+  mkErrorHandler :: CErrorHandler -> IO ErrorHandler
 
 throwIfError_ :: String -> IO a -> IO ()
 throwIfError_ prefix act = throwIfError prefix act >> return ()
@@ -122,9 +118,9 @@ throwIfError prefix act = do
           writeIORef ref $ Just $ GDALException (toEnumC err)
                                                 (toEnumC errno)
                                                 (prefix ++ ": " ++ msg)
-    bracket mkHandler freeHaskellFunPtr $ \handler -> do
-      ret <- runBounded $ bracket (c_pushErrorHandler handler)
-                                  (const c_popErrorHandler)
+    bracket mkHandler freeHaskellFunPtr $ \h -> do
+      ret <- runBounded $ bracket ({#call unsafe PushErrorHandler as ^#} h)
+                                  (const {#call unsafe PopErrorHandler as ^#})
                                   (const act)
       readIORef ref >>= maybe (return ret) throw
   where

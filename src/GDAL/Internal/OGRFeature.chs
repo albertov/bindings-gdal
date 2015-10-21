@@ -86,30 +86,30 @@ data Feature
 
 {#pointer OGRFeatureH as FeatureH foreign finalizer OGR_F_Destroy as ^ newtype#}
 
-newtype FieldDefnH s = FieldDefnH (Ptr (FieldDefnH s))
+newtype FieldDefn s = FieldDefn FieldDefnH
 
-{#pointer OGRFieldDefnH as FieldDefnH newtype nocode #}
+{#pointer OGRFieldDefnH as FieldDefnH newtype #}
 
-newtype FeatureDefnH s = FeatureDefnH (Ptr (FeatureDefnH s))
-{#pointer OGRFeatureDefnH as FeatureDefnH newtype nocode #}
+newtype FeatureDefn s = FeatureDefn FeatureDefnH
+{#pointer OGRFeatureDefnH as FeatureDefnH newtype #}
 
 
-featureToHandle :: FeatureDefnH s -> Feature -> GDAL s FeatureH
+featureToHandle :: FeatureDefn s -> Feature -> GDAL s FeatureH
 featureToHandle = undefined
 
-featureFromHandle :: FeatureDefnH s -> FeatureH -> GDAL s Feature
+featureFromHandle :: FeatureDefn s -> FeatureH -> GDAL s Feature
 featureFromHandle = undefined
 
-fieldByName :: FeatureDefnH s -> FeatureH -> ByteString -> GDAL s Field
+fieldByName :: FeatureDefn s -> FeatureH -> ByteString -> GDAL s Field
 fieldByName = undefined
 
-fieldByIndex :: FeatureDefnH s -> FeatureH -> Int -> GDAL s Field
-fieldByIndex ftDef feature ix = liftIO $ do
-  fDef <- c_getFieldDefn ftDef (fromIntegral ix)
-  typ <- liftM toEnumC (c_getFieldType fDef)
+fieldByIndex :: FeatureDefn s -> FeatureH -> Int -> GDAL s Field
+fieldByIndex (FeatureDefn ftDef) feature ix = liftIO $ do
+  fDef <- {#call unsafe OGR_FD_GetFieldDefn as ^#} ftDef (fromIntegral ix)
+  typ <- liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} fDef)
   withFeatureH feature (getFieldBy typ  fDef (fromIntegral ix))
 
-getFieldBy :: FieldType -> FieldDefnH s -> CInt -> Ptr FeatureH -> IO Field
+getFieldBy :: FieldType -> FieldDefnH -> CInt -> Ptr FeatureH -> IO Field
 
 getFieldBy OFTInteger _ ix f
   = liftM (OGRInteger . fromIntegral)
@@ -189,17 +189,8 @@ unDateTime _               = error "GDAL.Internal.OGRFeature.unDateTime"
 peekIntegral :: (Storable a, Integral a, Num b) => Ptr a -> IO b
 peekIntegral = liftM fromIntegral . peek
 
-foreign import ccall unsafe "OGR_Fld_GetType"
-  c_getFieldType :: FieldDefnH s -> IO CInt
-
-foreign import ccall unsafe "OGR_Fld_GetNameRef"
-  c_getFieldName :: FieldDefnH s -> IO (Ptr CChar)
-
-getFieldName :: FieldDefnH s -> IO ByteString
-getFieldName = c_getFieldName >=> packCString
-
-foreign import ccall unsafe "OGR_FD_GetFieldDefn"
-  c_getFieldDefn :: FeatureDefnH s -> CInt -> IO (FieldDefnH s)
+getFieldName :: FieldDefnH -> IO ByteString
+getFieldName = {#call unsafe OGR_Fld_GetNameRef as ^#} >=> packCString
 
 peekCString :: Ptr CChar -> IO Text
 peekCString p = len 0 >>= (\l -> peekCStringLen (p,l))

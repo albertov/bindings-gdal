@@ -15,7 +15,7 @@ module GDAL.Internal.OSR (
   , isGeographic
   , isLocal
   , isProjected
-  , isSameGeoCS
+  , isSameGeogCS
   , isSame
 
   , getAngularUnits
@@ -24,6 +24,8 @@ module GDAL.Internal.OSR (
   , withSpatialReference
   , withMaybeSRAsCString
 ) where
+
+{# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Exception (catch)
@@ -54,15 +56,15 @@ instance Show SpatialReference where
 toWkt :: SpatialReference -> String
 toWkt s = exportWith fun s
   where
-    fun s' p = {#call unsafe OSRExportToPrettyWkt as ^#} s' p 1
+    fun s' p = {#call unsafe ExportToPrettyWkt as ^#} s' p 1
 
 toProj4 :: SpatialReference -> String
-toProj4 = exportWith {#call unsafe OSRExportToProj4 as ^#}
+toProj4 = exportWith {#call unsafe ExportToProj4 as ^#}
 
 toXML :: SpatialReference -> String
 toXML = exportWith fun
   where
-    fun s' p = {#call unsafe OSRExportToXML as ^#} s' p (castPtr nullPtr)
+    fun s' p = {#call unsafe ExportToXML as ^#} s' p (castPtr nullPtr)
 
 exportWith
   :: (Ptr SpatialReference -> Ptr CString -> IO CInt)
@@ -78,9 +80,6 @@ exportWith fun s = unsafePerformIO $ alloca $ \ptr ->
         return wkt)
 
 
-foreign import ccall unsafe "ogr_srs_api.h OSRNewSpatialReference"
-  c_newSpatialRef :: CString -> IO (Ptr SpatialReference)
-
 foreign import ccall "ogr_srs_api.h &OSRDestroySpatialReference"
   c_destroySpatialReference :: FunPtr (Ptr SpatialReference -> IO ())
 
@@ -91,12 +90,15 @@ newSpatialRefHandle p
   | otherwise  = SpatialReference <$> newForeignPtr c_destroySpatialReference p
 
 emptySpatialRef :: IO SpatialReference
-emptySpatialRef = c_newSpatialRef (castPtr nullPtr) >>= newSpatialRefHandle
+emptySpatialRef =
+  {#call unsafe NewSpatialReference as ^#} nullPtr >>= newSpatialRefHandle
 
 fromWkt, fromProj4, fromXML :: String -> Either OGRException SpatialReference
 fromWkt s = unsafePerformIO $
-  (withCString s $ \a -> fmap Right (c_newSpatialRef a >>= newSpatialRefHandle))
-    `catch` (return . Left)
+  (withCString s $ \a ->
+    fmap Right
+      ({#call unsafe NewSpatialReference as ^#} a >>= newSpatialRefHandle))
+        `catch` (return . Left)
 
 fromProj4 = fromImporter importFromProj4
 fromXML = fromImporter importFromXML
@@ -116,29 +118,29 @@ fromImporter f s = unsafePerformIO $ do
         e    -> return $ Left (OGRException e "")) `catch` (return . Left)
 
 
-{#fun OSRImportFromProj4 as importFromProj4
+{#fun ImportFromProj4 as ^
    {withSpatialReference* `SpatialReference', `String'} -> `CInt' id  #}
 
-{#fun OSRImportFromEPSG as importFromEPSG
+{#fun ImportFromEPSG as ^
    {withSpatialReference* `SpatialReference', `Int'} -> `CInt' id  #}
 
-{#fun OSRImportFromXML as importFromXML
+{#fun ImportFromXML as ^
    {withSpatialReference* `SpatialReference', `String'} -> `CInt' id  #}
 
-{#fun pure unsafe OSRIsGeographic as isGeographic
+{#fun pure unsafe IsGeographic as ^
    {withSpatialReference * `SpatialReference'} -> `Bool'#}
 
-{#fun pure unsafe OSRIsLocal as isLocal
+{#fun pure unsafe IsLocal as ^
    {withSpatialReference * `SpatialReference'} -> `Bool'#}
 
-{#fun pure unsafe OSRIsProjected as isProjected
+{#fun pure unsafe IsProjected as ^
    {withSpatialReference * `SpatialReference'} -> `Bool'#}
 
-{#fun pure unsafe OSRIsSameGeogCS as isSameGeoCS
+{#fun pure unsafe IsSameGeogCS as ^
    { withSpatialReference * `SpatialReference'
    , withSpatialReference * `SpatialReference'} -> `Bool'#}
 
-{#fun pure unsafe OSRIsSame as isSame
+{#fun pure unsafe IsSame as ^
    { withSpatialReference * `SpatialReference'
    , withSpatialReference * `SpatialReference'} -> `Bool'#}
 

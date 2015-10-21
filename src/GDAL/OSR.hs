@@ -13,7 +13,7 @@ module GDAL.OSR (
   , isGeographic
   , isLocal
   , isProjected
-  , isSameGeoCS
+  , isSameGeogCS
   , isSame
 
   , getAngularUnits
