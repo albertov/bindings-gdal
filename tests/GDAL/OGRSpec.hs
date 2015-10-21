@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module GDAL.OGRSpec (main, spec, setupAndTeardown) where
@@ -10,6 +9,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Data.Either (isRight)
 import Data.Maybe (isNothing)
 import Data.Monoid (mempty)
+import Data.Vector (fromList)
 
 import System.Mem (performMajorGC)
 import System.FilePath (joinPath)
@@ -98,8 +98,10 @@ spec = setupAndTeardown $ do
 
       it "with unicode named fields" $ do
         let fd = FeatureDef { fdName   = lName
-                            , fdFields = [ strField "contraseña"
-                                         , realField "año"]
+                            , fdFields = fromList
+                                [ strField "contraseña"
+                                , realField "año"
+                                ]
                             , fdGeoms  = mempty
                             }
             lName = "Barça Players"
