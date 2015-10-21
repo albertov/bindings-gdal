@@ -6,19 +6,23 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module GDAL.Internal.OGR (
-    Datasource
+    DataSource
+  , DataSourceH
   , SQLDialect (..)
   , Layer
-  , RODatasource
-  , RWDatasource
+  , LayerH (..)
+  , RODataSource
+  , RWDataSource
   , ROLayer
   , RWLayer
 
-  , unDatasource
+  , unDataSource
   , unLayer
-  , withLockedDatasourcePtr
+  , withLockedDataSourcePtr
   , openReadOnly
   , openReadWrite
   , withLockedLayerPtr
@@ -41,36 +45,18 @@ module GDAL.Internal.OGR (
   , cleanupAll
 ) where
 
+{#context lib = "gdal" prefix = "OGR"#}
+
 import Control.Applicative ((<$>))
-import Control.Monad (liftM, when, void, (<=<), (>=>))
+import Control.Monad (liftM, when, void, (<=<))
 import Control.Monad.Catch(throwM, catch, catchJust)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
-import Data.ByteString (ByteString)
-import Data.ByteString.Char8 (unpack)
-import Data.ByteString.Unsafe (
-    unsafeUseAsCString
-  , unsafeUseAsCStringLen
-  , unsafePackMallocCStringLen
-  , unsafePackCStringFinalizer
-  )
-import Data.Coerce (coerce)
-import Data.Word (Word8)
-
 import Foreign.C.String (CString, peekCString, withCString)
-import Foreign.C.Types (CInt(..), CChar(..), CUChar(..))
-import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr, plusPtr)
-import Foreign.ForeignPtr (
-    ForeignPtr
-  , withForeignPtr
-  , newForeignPtr
-  , newForeignPtr_
-  )
-import Foreign.Marshal.Alloc (alloca, mallocBytes)
-import Foreign.Marshal.Utils (toBool)
-import Foreign.Storable (peek, poke)
+import Foreign.C.Types (CInt(..), CChar(..))
+import Foreign.Ptr (Ptr, nullPtr)
 
-import System.IO.Unsafe (unsafePerformIO)
+import Foreign.Storable (Storable)
 
 import GDAL.Internal.Types
 {#import GDAL.Internal.OGRGeometry#}
@@ -87,21 +73,54 @@ import GDAL.Internal.Util
 {#fun OGRCleanupAll  as cleanupAll {} -> `()'  #}
 
 
-{#pointer OGRDataSourceH as Datasource foreign newtype nocode#}
+{#pointer DataSourceH newtype#}
+newtype DataSource s (t::AccessMode) = DataSource (Mutex, DataSourceH)
 
-newtype Datasource s (t::AccessMode)
-  = Datasource (Mutex, Ptr (Datasource s t))
+deriving instance Eq DataSourceH
 
-unDatasource :: Datasource s t -> Ptr (Datasource s t)
-unDatasource (Datasource (_,p)) = p
+nullDataSourceH :: DataSourceH
+nullDataSourceH = DataSourceH nullPtr
 
-type RODatasource s = Datasource s ReadOnly
-type RWDatasource s = Datasource s ReadWrite
+unDataSource :: DataSource s t -> DataSourceH
+unDataSource (DataSource (_,p)) = p
 
-withLockedDatasourcePtr
-  :: Datasource s t -> (Ptr (Datasource s t) -> IO b) -> IO b
-withLockedDatasourcePtr (Datasource (m,p)) f = withMutex m (f p)
+type RODataSource s = DataSource s ReadOnly
+type RWDataSource s = DataSource s ReadWrite
 
+withLockedDataSourcePtr
+  :: DataSource s t -> (DataSourceH -> IO b) -> IO b
+withLockedDataSourcePtr (DataSource (m,p)) f = withMutex m (f p)
+
+
+
+{#pointer LayerH newtype#}
+
+deriving instance Storable LayerH
+deriving instance Eq LayerH
+
+nullLayerH :: LayerH
+nullLayerH = LayerH nullPtr
+
+newtype (Layer s (t::AccessMode) a) = Layer (Mutex, LayerH)
+
+
+unLayer :: Layer s t a -> LayerH
+unLayer (Layer (_,p)) = p
+
+lMutex :: Layer s t a -> Mutex
+lMutex (Layer (m,_)) = m
+
+withLockedLayerPtr
+  :: Layer s t a -> (LayerH -> IO b) -> IO b
+withLockedLayerPtr (Layer (m,p)) f = withMutex m $ f p
+
+withLockedLayerPtrs
+  :: [Layer s t a] -> ([LayerH] -> IO b) -> IO b
+withLockedLayerPtrs ls f
+  = withMutexes (map lMutex ls) (f (map unLayer ls))
+
+type ROLayer s = Layer s ReadOnly
+type RWLayer s = Layer s ReadWrite
 
 {#enum define OGRAccess
   { FALSE  as OGR_ReadOnly
@@ -109,65 +128,53 @@ withLockedDatasourcePtr (Datasource (m,p)) f = withMutex m (f p)
   } deriving (Eq, Show) #}
 
 
-openReadOnly :: String -> GDAL s (RODatasource s)
+openReadOnly :: String -> GDAL s (RODataSource s)
 openReadOnly p = openWithMode OGR_ReadOnly p
 
-openReadWrite :: String -> GDAL s (RWDatasource s)
+openReadWrite :: String -> GDAL s (RWDataSource s)
 openReadWrite p = openWithMode OGR_Update p
 
-openWithMode :: OGRAccess -> String -> GDAL s (Datasource s t)
+openWithMode :: OGRAccess -> String -> GDAL s (DataSource s t)
 openWithMode m p = do
   ptr <- liftIO $ withCString p $ \p' ->
-           throwIfError "open" (c_open p' (fromEnumC m) nullPtr)
-  newDatasourceHandle ptr `catch` (\NullDatasource ->
+           throwIfError "open" ({#call OGROpen as ^#} p' (fromEnumC m) nullPtr)
+  newDataSourceHandle ptr `catch` (\NullDataSource ->
     throwM (GDALException CE_Failure OpenFailed "OGROpen returned a NULL ptr"))
 
-foreign import ccall safe "ogr_api.h OGROpen" c_open
-   :: CString -> CInt -> Ptr () -> IO (Ptr (Datasource s t))
 
-newDatasourceHandle :: Ptr (Datasource s t) -> GDAL s (Datasource s t)
-newDatasourceHandle p
-  | p==nullPtr  = throwBindingException NullDatasource
-  | otherwise   = do
-      registerFinalizer (c_releaseDatasource p)
+newDataSourceHandle :: DataSourceH -> GDAL s (DataSource s t)
+newDataSourceHandle p
+  | p==nullDataSourceH = throwBindingException NullDataSource
+  | otherwise          = do
+      registerFinalizer (void ({#call unsafe ReleaseDataSource as ^#} p))
       m <- liftIO newMutex
-      return $ Datasource (m,p)
-
-foreign import ccall safe "ogr_api.h OGRReleaseDataSource"
-  c_releaseDatasource :: Ptr (Datasource s t) -> IO ()
+      return $ DataSource (m,p)
 
 
-getLayer :: Int -> Datasource s t -> GDAL s (Layer s t a)
-getLayer layer (Datasource (m,dp)) = liftIO $ do
-  p <- throwIfError "getLayer" (c_getLayer dp (fromIntegral layer))
-  when (p==nullPtr) $ throwBindingException (InvalidLayerIndex layer)
+getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
+getLayer layer (DataSource (m,dp)) = liftIO $ do
+  p <- throwIfError "getLayer" $
+         {#call OGR_DS_GetLayer as ^#} dp (fromIntegral layer)
+  when (p==nullLayerH) $ throwBindingException (InvalidLayerIndex layer)
   return (Layer (m, p))
 
-foreign import ccall safe "ogr_api.h OGR_DS_GetLayer" c_getLayer
-  :: Ptr (Datasource s t) -> CInt -> IO (Ptr (Layer s t a))
-
-getLayerByName :: String -> Datasource s t -> GDAL s (Layer s t a)
-getLayerByName layer (Datasource (m,dp)) = liftIO $
+getLayerByName :: String -> DataSource s t -> GDAL s (Layer s t a)
+getLayerByName layer (DataSource (m,dp)) = liftIO $
   withCString layer $ \lyr -> do
-    p <- throwIfError "getLayerByName" (c_getLayerByName dp lyr)
-    when (p==nullPtr) $ throwBindingException (InvalidLayerName layer)
+    p <- throwIfError "getLayerByName" $
+          {#call OGR_DS_GetLayerByName as ^#} dp lyr
+    when (p==nullLayerH) $ throwBindingException (InvalidLayerName layer)
     return (Layer (m,p))
 
-foreign import ccall safe "ogr_api.h OGR_DS_GetLayerByName" c_getLayerByName
-  :: Ptr (Datasource s t) -> CString -> IO (Ptr (Layer s t a))
 
+layerCount :: DataSource s t -> GDAL s Int
+layerCount = liftM fromIntegral
+           . liftIO . {#call unsafe OGR_DS_GetLayerCount as ^#} . unDataSource
 
-layerCount :: Datasource s t -> GDAL s Int
-layerCount = liftM fromIntegral . liftIO . c_getLayerCount . unDatasource
+datasourceName :: DataSource s t -> GDAL s String
+datasourceName =
+  liftIO . (peekCString <=< {#call unsafe OGR_DS_GetName as ^#} . unDataSource)
 
-foreign import ccall unsafe "ogr_api.h OGR_DS_GetLayerCount" c_getLayerCount
-  :: Ptr (Datasource s t) -> IO CInt
-
-datasourceName :: Datasource s t -> GDAL s String
-datasourceName = liftIO . (peekCString <=< c_dsGeName . unDatasource)
-
-foreign import ccall unsafe "ogr_api.h OGR_DS_GetName" c_dsGeName
-  :: Ptr (Datasource s t) -> IO CString
 
 data SQLDialect
   = DefaultDialect
@@ -181,81 +188,36 @@ withSQLDialect SqliteDialect  = withCString "SQLITE"
 withSQLDialect OGRDialect     = withCString "OGRSQL"
 
 executeSQL
-  :: SQLDialect -> String -> Maybe Geometry -> RODatasource s
+  :: SQLDialect -> String -> Maybe Geometry -> RODataSource s
   -> GDAL s (ROLayer s a)
-executeSQL dialect query mSpatialFilter ds@(Datasource (m,dsP)) = do
+executeSQL dialect query mSpatialFilter ds@(DataSource (m,dsP)) = do
   p <- catchJust selectExc execute (throwBindingException . SQLQueryError)
-  when (p==nullPtr) $ throwBindingException NullLayer
-  registerFinalizer (c_releaseResultSet dsP p)
+  when (p==nullLayerH) $ throwBindingException NullLayer
+  registerFinalizer ({#call unsafe OGR_DS_ReleaseResultSet as ^#} dsP p)
   return (Layer (m, p))
   where
     selectExc GDALException{..} | gdalErrNum==AppDefined = Just gdalErrMsg
     selectExc _                                          = Nothing
     execute = liftIO $
-      withLockedDatasourcePtr ds $ \dsPtr ->
+      withLockedDataSourcePtr ds $ \dsPtr ->
       withMaybeGeometry mSpatialFilter $ \sFilter ->
       withSQLDialect dialect $ \sDialect ->
       withCString query $ \sQuery ->
-        throwIfError "executeSQL" (c_executeSQL dsPtr sQuery sFilter sDialect)
-
-foreign import ccall safe "ogr_api.h OGR_DS_ExecuteSQL"
-  c_executeSQL
-    :: Ptr (RODatasource s) -> CString -> Ptr Geometry -> CString
-    -> IO (Ptr (ROLayer s a))
-
-foreign import ccall safe "ogr_api.h OGR_DS_ReleaseResultSet"
-  c_releaseResultSet
-    :: Ptr (RODatasource s) -> Ptr (ROLayer s a) -> IO ()
-
-
-
-
-
-
-{#pointer OGRLayerH as Layer newtype nocode#}
-
-newtype (Layer s (t::AccessMode) a)
-  = Layer (Mutex, Ptr (Layer s t a))
-
-unLayer :: Layer s t a -> Ptr (Layer s t a)
-unLayer (Layer (_,p)) = p
-
-lMutex :: Layer s t a -> Mutex
-lMutex (Layer (m,_)) = m
-
-withLockedLayerPtr
-  :: Layer s t a -> (Ptr (Layer s t a) -> IO b) -> IO b
-withLockedLayerPtr (Layer (m,p)) f = withMutex m $ f p
-
-withLockedLayerPtrs
-  :: [Layer s t a] -> ([Ptr (Layer s t a)] -> IO b) -> IO b
-withLockedLayerPtrs ls f
-  = withMutexes (map lMutex ls) (f (map unLayer ls))
-
-type ROLayer s = Layer s ReadOnly
-type RWLayer s = Layer s ReadWrite
+      throwIfError "executeSQL" $
+        {#call OGR_DS_ExecuteSQL as ^#} dsPtr sQuery sFilter sDialect
 
 layerName :: Layer s t a -> GDAL s String
-layerName = liftIO . (peekCString <=< c_lGetName . unLayer)
-
-foreign import ccall unsafe "ogr_api.h OGR_L_GetName" c_lGetName
-  :: Ptr (Layer s t a) -> IO CString
-
+layerName =
+  liftIO . (peekCString <=< {#call unsafe OGR_L_GetName as ^#} . unLayer)
 
 getSpatialFilter :: Layer s t a -> GDAL s (Maybe Geometry)
 getSpatialFilter l = liftIO $ withLockedLayerPtr l $ \lPtr -> do
-  p <- c_getSpatialFilter lPtr
+  p <- {#call unsafe OGR_L_GetSpatialFilter as ^#} lPtr
   if p == nullPtr
     then return Nothing
     else liftM Just (cloneGeometry p)
 
-foreign import ccall unsafe "ogr_api.h OGR_L_GetSpatialFilter"
-  c_getSpatialFilter :: Ptr (Layer s t a) -> IO (Ptr Geometry)
-
 setSpatialFilter :: Layer s t a -> Geometry -> GDAL s ()
 setSpatialFilter l g = liftIO $
   withLockedLayerPtr l $ \lPtr -> withGeometry g$ \gPtr ->
-    c_setSpatialFilter lPtr gPtr
-
-foreign import ccall unsafe "ogr_api.h OGR_L_SetSpatialFilter"
-  c_setSpatialFilter :: Ptr (Layer s t a) -> Ptr Geometry -> IO ()
+    {#call unsafe OGR_L_SetSpatialFilter as ^#} lPtr gPtr

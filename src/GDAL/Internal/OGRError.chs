@@ -26,7 +26,7 @@ import GDAL.Internal.Util
 
 data OGRException
   = OGRException !OGRError !String
-  | NullDatasource
+  | NullDataSource
   | NullGeometry
   | NullSpatialReference
   | NullLayer
