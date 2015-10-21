@@ -30,6 +30,10 @@ import Data.Typeable (Typeable, cast)
 
 import Foreign.C.String (CString, peekCString)
 import Foreign.C.Types (CInt(..), CChar(..))
+
+-- work around  https://github.com/haskell/c2hs/issues/151
+import qualified Foreign.C.Types as C2HSImp
+
 import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr)
 
 import GDAL.Internal.Util (toEnumC)
