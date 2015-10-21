@@ -131,6 +131,7 @@ data GDALRasterException
   | NullDataset
   | CopyStopped
   | UnknownRasterDatatype
+  | UnsupportedRasterDatatype !Datatype
   deriving (Typeable, Show, Eq)
 
 instance NFData GDALRasterException where
@@ -438,7 +439,6 @@ getBand band (Dataset (m,dp)) = liftIO $ do
 reifyDatatype :: Datatype -> (forall a. GDALType a => Proxy a -> b) -> b
 reifyDatatype dt f =
   case dt of
-    GDT_Unknown  -> throw (bindingExceptionToException UnknownRasterDatatype)
     GDT_Byte     -> f (Proxy :: Proxy Word8)
     GDT_UInt16   -> f (Proxy :: Proxy Word16)
     GDT_UInt32   -> f (Proxy :: Proxy Word32)
@@ -452,6 +452,9 @@ reifyDatatype dt f =
     GDT_CFloat32 -> f (Proxy :: Proxy (Complex Float))
     GDT_CFloat64 -> f (Proxy :: Proxy (Complex Double))
 #endif
+    GDT_Unknown  -> throw (bindingExceptionToException UnknownRasterDatatype)
+    d            -> throw
+                    (bindingExceptionToException (UnsupportedRasterDatatype d))
 
 
 

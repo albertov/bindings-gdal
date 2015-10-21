@@ -27,11 +27,16 @@ import qualified Test.Hspec as Hspec
 import GDAL (GDAL, runGDAL)
 
 it :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
-it n a = Hspec.it n (runGDAL a)
+it n a = Hspec.it n (runGDAL' a)
 
 withDir :: String -> (forall s. FilePath -> GDAL s ()) -> SpecWith (Arg (IO ()))
-withDir n a = Hspec.it n (withSystemTempDirectory "test." (\f -> runGDAL (a f)))
+withDir n a =
+  Hspec.it n (withSystemTempDirectory "test." (\f -> runGDAL' (a f)))
 
+runGDAL' :: (forall s. GDAL s ()) -> IO ()
+runGDAL' a = runGDAL a >>= either exc return
+  where
+    exc = Hspec.expectationFailure . ("Unexpected GDALException: " ++) . show
 
 existsAndSizeIsGreaterThan :: FilePath -> Integer -> GDAL s ()
 existsAndSizeIsGreaterThan p s = do
@@ -69,7 +74,5 @@ shouldBe a  = liftIO . Hspec.shouldBe a
 shouldNotBe :: (Show a, Eq a) => a -> a -> GDAL s ()
 shouldNotBe a  = liftIO . flip Hspec.shouldSatisfy (/=a)
 
-
 expectationFailure :: String -> GDAL s ()
 expectationFailure = liftIO . Hspec.expectationFailure
-

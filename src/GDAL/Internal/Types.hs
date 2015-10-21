@@ -33,7 +33,7 @@ module GDAL.Internal.Types (
 import Control.Applicative (Applicative(..), liftA2)
 import Control.Concurrent (ThreadId)
 import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar, newEmptyMVar)
-import Control.Exception (evaluate)
+import Control.Exception (evaluate, catchJust, fromException)
 import Control.DeepSeq (NFData(rnf), force)
 import Control.Monad (liftM, void)
 import Control.Monad.Trans.Resource (
@@ -57,6 +57,8 @@ import qualified Data.Vector.Unboxed.Base as U
 
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (Storable(..))
+
+import GDAL.Internal.CPLError (GDALException)
 
 data AccessMode = ReadOnly | ReadWrite
 
@@ -277,14 +279,17 @@ deriving instance MonadThrow (GDAL s)
 deriving instance MonadCatch (GDAL s)
 deriving instance MonadMask (GDAL s)
 
-runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
-runGDAL (GDAL a) = do
-  children <- newMVar []
-  runReaderT (runResourceT (finally (a >>= liftIO . evaluate . force)
-                                    (liftIO (waitForChildren children))))
-             children
-
+runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
+runGDAL (GDAL a) =
+  catchJust fromException (liftM Right run) (evaluate . Left . force)
   where
+    run = do
+      children <- newMVar []
+      runReaderT
+        (runResourceT (finally (a >>= liftIO . evaluate . force)
+                               (liftIO (waitForChildren children))))
+        children
+
     waitForChildren children = do
       cs <- takeMVar children
       case cs of
