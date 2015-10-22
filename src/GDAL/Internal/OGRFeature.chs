@@ -57,7 +57,7 @@ import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector as V
 
-import Foreign.C.Types (CInt(..), CDouble(..), CChar(..), CUChar(..))
+import Foreign.C.Types (CInt(..), CLong(..), CDouble(..), CChar(..), CUChar(..))
 import Foreign.ForeignPtr (
     ForeignPtr
   , FinalizerPtr
