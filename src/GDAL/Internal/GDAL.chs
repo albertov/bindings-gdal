@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE BangPatterns #-}
@@ -242,7 +243,7 @@ driverCreationOptionList driver = unsafePerformIO $ do
 
 validateCreationOptions :: DriverH -> Ptr CString -> IO ()
 validateCreationOptions d o = do
-  valid <- liftM toBool ({#call unsafe GDALValidateCreationOptions as ^ #} d o)
+  valid <- liftM toBool ({#call GDALValidateCreationOptions as ^ #} d o)
   when (not valid) (throwBindingException InvalidDriverOptions)
 
 create
@@ -257,7 +258,7 @@ create drv path (XY nx ny) bands dtype       options = do
         bands' = fromIntegral bands
         dtype' = fromEnumC dtype
     d <- driverByName drv
-    withOptionList options $ \opts -> do
+    throwIfError "create" $ withOptionList options $ \opts -> do
       validateCreationOptions d opts
       {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' opts
   newDatasetHandle ptr

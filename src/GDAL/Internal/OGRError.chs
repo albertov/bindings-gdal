@@ -33,7 +33,7 @@ data OGRException
   | UnknownDriver     !String
   | InvalidLayerIndex !Int
   | InvalidLayerName  !Text
-  | SQLQueryError     !String
+  | SQLQueryError     !Text
   | FieldParseError   !Text
   | CantCreateMultipleGeomFields
   deriving (Show, Eq, Typeable)

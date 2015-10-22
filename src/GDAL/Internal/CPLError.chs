@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
@@ -7,14 +8,16 @@ module GDAL.Internal.CPLError (
     GDALException (..)
   , ErrorType (..)
   , ErrorNum (..)
+  , CErrorHandler
   , isGDALException
   , isBindingException
-  , setQuietErrorHandler
   , throwIfError
   , throwIfError_
   , throwBindingException
   , bindingExceptionToException
   , bindingExceptionFromException
+  , collectMessages
+  , withErrorHandler
 ) where
 
 {# context lib = "gdal" prefix = "CPL" #}
@@ -24,11 +27,13 @@ import Control.Exception (Exception(..), SomeException, bracket, throw)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad.Catch (MonadThrow(throwM))
 
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Maybe (isJust)
+import Data.Text (Text)
 import Data.Typeable (Typeable, cast)
+import Data.Monoid (mconcat)
 
-import Foreign.C.String (CString, peekCString)
+import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CChar(..))
 
 -- work around  https://github.com/haskell/c2hs/issues/151
@@ -36,7 +41,7 @@ import qualified Foreign.C.Types as C2HSImp
 
 import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr)
 
-import GDAL.Internal.Util (toEnumC)
+import GDAL.Internal.Util (toEnumC, peekEncodedCString)
 
 #include "cpl_error.h"
 
@@ -52,7 +57,7 @@ data GDALException
     GDALBindingException !e
   | GDALException        { gdalErrType :: !ErrorType
                          , gdalErrNum  :: !ErrorNum
-                         , gdalErrMsg  :: !String
+                         , gdalErrMsg  :: !Text
                          }
   deriving Typeable
 
@@ -101,32 +106,35 @@ isBindingException e
 instance NFData ErrorType where
   rnf a = a `seq` ()
 
-
-foreign import ccall "cpl_error.h &CPLQuietErrorHandler"
-  c_quietErrorHandler :: ErrorHandler
-
-setQuietErrorHandler :: IO ErrorHandler
-setQuietErrorHandler = {#call unsafe SetErrorHandler as ^#} c_quietErrorHandler
-
 foreign import ccall safe "wrapper"
   mkErrorHandler :: CErrorHandler -> IO ErrorHandler
 
-throwIfError_ :: String -> IO a -> IO ()
+throwIfError_ :: Text -> IO a -> IO ()
 throwIfError_ prefix act = throwIfError prefix act >> return ()
 
-throwIfError :: String -> IO a -> IO a
+throwIfError :: Text -> IO a -> IO a
 throwIfError prefix act = do
-    ref <- newIORef Nothing
-    let mkHandler = mkErrorHandler $ \err errno cmsg -> do
-          msg <- peekCString cmsg
-          writeIORef ref $ Just $ GDALException (toEnumC err)
-                                                (toEnumC errno)
-                                                (prefix ++ ": " ++ msg)
-    bracket mkHandler freeHaskellFunPtr $ \h -> do
-      ret <- runBounded $ bracket ({#call unsafe PushErrorHandler as ^#} h)
-                                  (const {#call unsafe PopErrorHandler as ^#})
-                                  (const act)
-      readIORef ref >>= maybe (return ret) throw
+  (ret, msgs) <- collectMessages act
+  case msgs of
+    []          -> return ret
+    ((a,b,c):_) -> throw (GDALException a b (mconcat [prefix,": ", c]))
+
+collectMessages :: IO a -> IO (a, [(ErrorType,ErrorNum,Text)])
+collectMessages act = do
+  msgsRef <- newIORef []
+  let handler err errno cmsg = do
+        msg <- peekEncodedCString cmsg
+        modifyIORef' msgsRef ((:) (toEnumC err, toEnumC errno, msg))
+  ret <- withErrorHandler handler act
+  msgs <- readIORef msgsRef
+  return (ret, msgs)
+
+withErrorHandler :: CErrorHandler -> IO a -> IO a
+withErrorHandler eh act =
+  bracket (mkErrorHandler eh) freeHaskellFunPtr $ \h -> do
+    runBounded $ bracket ({#call unsafe PushErrorHandler as ^#} h)
+                         (const {#call unsafe PopErrorHandler as ^#})
+                         (const act)
   where
     runBounded
       | rtsSupportsBoundThreads = runInBoundThread

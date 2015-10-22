@@ -35,7 +35,6 @@ module GDAL (
   , fromValue
   , allRegister
   , destroyDriverManager
-  , setQuietErrorHandler
   , create
   , createMem
   , flushCache
