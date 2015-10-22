@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
 module GDAL.WarperSpec (main, spec) where
 
 import Control.Monad (void, forM_)

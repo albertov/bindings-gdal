@@ -1,4 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
@@ -8,6 +9,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
+#include "bindings.h"
 
 module GDAL.Internal.OGR (
     DataSource
@@ -26,6 +29,7 @@ module GDAL.Internal.OGR (
   , openReadWrite
   , create
   , createMem
+  , canCreateMultipleGeometryFields
 
   , datasourceName
   , executeSQL
@@ -64,8 +68,11 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Foreign.C.String (CString, peekCString, withCString)
 import Foreign.C.Types (CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, nullPtr)
+import Foreign.Marshal.Utils (toBool)
 
 import Foreign.Storable (Storable)
+
+import System.IO.Unsafe (unsafePerformIO)
 
 {#import GDAL.Internal.OSR#}
 {#import GDAL.Internal.OGRGeometry#}
@@ -193,20 +200,44 @@ driverByName name = withCString name $ \pName -> do
 createLayer
   :: RWDataSource s -> FeatureDef -> ApproxOK -> OptionList
   -> GDAL s (RWLayer s a)
-createLayer ds fd@FeatureDef{..} approxOk options = liftIO $
+createLayer ds FeatureDef{..} approxOk options = liftIO $
   useAsEncodedCString fdName $ \pName ->
-  withMaybeSpatialReference srs $ \pSrs ->
-  withOptionList options $ \pOpts ->
+  withMaybeSpatialReference (gfdSrs fdGeom) $ \pSrs ->
+  withOptionList extendedOptions $ \pOpts ->
   throwIfError "createLayer" $ do
-    pL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts
-    V.forM_ fdFields $ \f -> withFieldDefnH f $ \pFld ->
-      {#call OGR_L_CreateField as ^#} pL pFld (fromEnumC approxOk)
-    newLayerHandle ds NullLayer pL
+    fpL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts >>=
+              newLayerHandle ds NullLayer
+    withLockedLayerPtr fpL $ \pL -> do
+      V.forM_ fdFields $ \f -> withFieldDefnH f $ \pFld ->
+        {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
+      when (not (V.null fdGeoms)) $
+        if supportsMultiGeomFields pL
+          then
+#if MULTI_GEOM_FIELDS
+            V.forM_ fdGeoms $ \f -> withGeomFieldDefnH f $ \pGFld ->
+              {#call OGR_L_CreateGeomField as ^#} pL pGFld iApproxOk
+#endif
+          else throwBindingException CantCreateMultipleGeomFields
+      return fpL
   where
+    supportsMultiGeomFields pL =
+      layerHasCapability pL CreateGeomField &&
+      dataSourceHasCapability pDs CreateGeomFieldAfterCreateLayer
+    iApproxOk = fromEnumC approxOk
     pDs   = unDataSource ds
-    geom  = fdGeom fd
-    srs   = geom >>= gdSrs
-    gType = fromEnumC (maybe WkbUnknown gdType geom)
+    gType = fromEnumC (gfdType fdGeom)
+    extendedOptions
+      | gfdName fdGeom /= "" = ("GEOMETRY_NAME", gfdName fdGeom):options
+      | otherwise            = options
+
+
+canCreateMultipleGeometryFields :: Bool
+canCreateMultipleGeometryFields =
+#if MULTI_GEOM_FIELDS
+  True
+#else
+  False
+#endif
 
 getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
 getLayer layer ds = liftIO $
@@ -221,6 +252,15 @@ getLayerByName layer ds = liftIO $ useAsEncodedCString layer $
   newLayerHandle ds (InvalidLayerName layer) <=<
     throwIfError "getLayerByName" .
       {#call OGR_DS_GetLayerByName as ^#} (unDataSource ds)
+
+-- | GDAL < 1.11 only supports 1 geometry field and associates it the layer
+layerGeomFieldDef :: LayerH -> IO GeomFieldDef
+layerGeomFieldDef p =
+  GeomFieldDef
+    <$> ({#call unsafe OGR_L_GetGeometryColumn as ^#} p >>= peekEncodedCString)
+    <*> liftM toEnumC ({#call unsafe OGR_L_GetGeomType	as ^#} p)
+    <*> ({#call unsafe OGR_L_GetSpatialRef as ^#} p >>=
+          maybeNewSpatialRefBorrowedHandle)
 
 newLayerHandle
   :: DataSource s t -> OGRException -> LayerH -> IO (Layer s t a)
@@ -272,9 +312,10 @@ layerName =
   liftIO . (peekEncodedCString <=< {#call unsafe OGR_L_GetName as ^#} . unLayer)
 
 layerFeatureDef :: Layer s t a -> GDAL s FeatureDef
-layerFeatureDef =
-  liftIO . (featureDefFromHandle <=<
-              {#call unsafe OGR_L_GetLayerDefn as ^#} . unLayer)
+layerFeatureDef l = liftIO $ do
+  let pL = unLayer l
+  gfd <- layerGeomFieldDef pL
+  featureDefFromHandle gfd =<< {#call unsafe OGR_L_GetLayerDefn as ^#} pL
 
 
 getSpatialFilter :: Layer s t a -> GDAL s (Maybe Geometry)
@@ -288,3 +329,48 @@ setSpatialFilter :: Layer s t a -> Geometry -> GDAL s ()
 setSpatialFilter l g = liftIO $
   withLockedLayerPtr l $ \lPtr -> withGeometry g$ \gPtr ->
     {#call unsafe OGR_L_SetSpatialFilter as ^#} lPtr gPtr
+
+data LayerCapability
+  = RandomRead
+  | SequentialWrite
+  | RandomWrite
+  | FastSpatialFilter
+  | FastFeatureCount
+  | FastGetExtent
+  | CreateField
+  | DeleteField
+  | ReorderFields
+  | AlterFieldDefn
+  | Transactions
+  | DeleteFeature
+  | FastSetNextByIndex
+  | StringsAsUTF8
+  | IgnoreFields
+  | CreateGeomField
+  deriving (Eq, Show, Enum, Bounded)
+
+layerHasCapability :: LayerH -> LayerCapability -> Bool
+layerHasCapability l c = unsafePerformIO $ do
+  withCString (show c)
+    (liftM toBool . {#call unsafe OGR_L_TestCapability as ^#} l)
+
+data DataSourceCapability
+  = CreateLayer
+  | DeleteLayer
+  | CreateGeomFieldAfterCreateLayer
+  deriving (Eq, Show, Enum, Bounded)
+
+dataSourceHasCapability :: DataSourceH -> DataSourceCapability -> Bool
+dataSourceHasCapability d c = unsafePerformIO $ do
+  withCString (show c)
+    (liftM toBool . {#call unsafe OGR_DS_TestCapability as ^#} d)
+
+data DriverCapability
+  = CreateDataSource
+  | DeleteDataSource
+  deriving (Eq, Show, Enum, Bounded)
+
+driverHasCapability :: DriverH -> DriverCapability -> Bool
+driverHasCapability d c = unsafePerformIO $ do
+  withCString (show c)
+    (liftM toBool . {#call unsafe OGR_Dr_TestCapability as ^#} d)

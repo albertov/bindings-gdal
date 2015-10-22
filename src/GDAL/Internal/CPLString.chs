@@ -9,13 +9,18 @@ module GDAL.Internal.CPLString (
 import Control.Exception (bracket)
 import Control.Monad (forM, foldM)
 
-import Foreign.C.String (withCString, CString, peekCString)
+import Data.Text (Text)
+import qualified Data.Text as T
+
+import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 
+import GDAL.Internal.Util (useAsEncodedCString, peekEncodedCString)
+
 #include "cpl_string.h"
 
-type OptionList = [(String,String)]
+type OptionList = [(Text,Text)]
 
 withOptionList :: OptionList -> (Ptr CString -> IO c) -> IO c
 withOptionList opts = bracket (toOptionListPtr opts) freeOptionList
@@ -24,12 +29,14 @@ withOptionList opts = bracket (toOptionListPtr opts) freeOptionList
 toOptionListPtr :: OptionList -> IO (Ptr CString)
 toOptionListPtr = foldM folder nullPtr
   where
-    folder acc (k,v) = withCString k $ \k' -> withCString v $ \v' ->
-                       {#call unsafe CSLSetNameValue as ^#} acc k' v'
+    folder acc (k,v) =
+      useAsEncodedCString k $ \k' ->
+      useAsEncodedCString v $ \v' ->
+        {#call unsafe CSLSetNameValue as ^#} acc k' v'
 
 fromOptionListPtr :: Ptr CString -> IO OptionList
 fromOptionListPtr ptr = do
   n <- {#call unsafe CSLCount as ^#} ptr
   forM [0..n-1] $ \ix -> do
-    s <- {#call unsafe CSLGetField as ^#} ptr ix >>= peekCString
-    return $ break (/='=') s
+    s <- {#call unsafe CSLGetField as ^#} ptr ix >>= peekEncodedCString
+    return $ T.break (/='=') s

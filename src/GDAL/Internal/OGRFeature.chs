@@ -2,6 +2,8 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 
+#include "bindings.h"
+
 module GDAL.Internal.OGRFeature (
     FieldType (..)
   , Field
@@ -12,11 +14,10 @@ module GDAL.Internal.OGRFeature (
   , Justification (..)
 
   , FeatureDef (..)
-  , GeometryDef (..)
+  , GeomFieldDef (..)
   , FieldDef (..)
 
   , fieldDef
-  , fdGeom
   , featureToHandle
   , featureFromHandle
   , fieldByName
@@ -28,6 +29,10 @@ module GDAL.Internal.OGRFeature (
   , withFieldDefnH
   , fieldDefFromHandle
   , featureDefFromHandle
+#if MULTI_GEOM_FIELDS
+  , GeomFieldDefnH (..)
+  , withGeomFieldDefnH
+#endif
 ) where
 
 {#context lib = "gdal" prefix = "OGR" #}
@@ -37,6 +42,10 @@ import Control.Monad (liftM, (>=>), (<=<), when)
 import Control.Monad.Catch (bracket)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
+import Data.ByteString (ByteString)
+import Data.ByteString.Char8 (packCStringLen)
+import Data.Int (Int64)
+import Data.Monoid (mempty)
 import Data.Text (Text)
 import Data.Time.LocalTime (
     LocalTime(..)
@@ -48,9 +57,6 @@ import Data.Time.LocalTime (
   )
 import Data.Time ()
 import Data.Time.Calendar (Day, fromGregorian)
-import Data.Int (Int64)
-import Data.ByteString (ByteString)
-import Data.ByteString.Char8 (packCStringLen, packCString)
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector as V
@@ -78,6 +84,7 @@ import GDAL.Internal.Util (
 {#import GDAL.Internal.OGRGeometry #}
 {#import GDAL.Internal.OGRError #}
 
+#include "gdal.h"
 #include "ogr_core.h"
 #include "ogr_api.h"
 #include "cpl_string.h"
@@ -126,22 +133,22 @@ data FeatureDef
   = FeatureDef {
       fdName    :: {-# UNPACK #-} !Text
     , fdFields  :: {-# UNPACK #-} !(V.Vector FieldDef)
-    , fdGeoms   :: {-# UNPACK #-} !(V.Vector GeometryDef)
+    , fdGeom    :: {-# UNPACK #-} !GeomFieldDef
+    , fdGeoms   :: {-# UNPACK #-} !(V.Vector GeomFieldDef)
     } deriving (Show, Eq)
 
-fdGeom :: FeatureDef -> Maybe GeometryDef
-fdGeom = (V.!? 0) . fdGeoms
-
-data GeometryDef
-  = GeometryDef {
-      gdName  :: {-# UNPACK #-} !Text
-    , gdType  :: {-# UNPACK #-} !GeometryType
-    , gdSrs   :: {-# UNPACK #-} !(Maybe SpatialReference)
+data GeomFieldDef
+  = GeomFieldDef {
+      gfdName  :: {-# UNPACK #-} !Text
+    , gfdType  :: {-# UNPACK #-} !GeometryType
+    , gfdSrs   :: {-# UNPACK #-} !(Maybe SpatialReference)
     } deriving (Show, Eq)
+
 
 {#pointer FeatureH foreign finalizer OGR_F_Destroy as ^ newtype#}
 {#pointer FieldDefnH   newtype#}
 {#pointer FeatureDefnH newtype#}
+
 
 
 withFieldDefnH :: FieldDef -> (FieldDefnH -> IO a) -> IO a
@@ -165,26 +172,64 @@ fieldDefFromHandle :: FieldDefnH -> IO FieldDef
 fieldDefFromHandle p =
   FieldDef
     <$> getFieldName p
-    <*> (liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} p))
-    <*> (liftM iToMaybe ({#call unsafe OGR_Fld_GetWidth as ^#} p))
-    <*> (liftM iToMaybe ({#call unsafe OGR_Fld_GetPrecision as ^#} p))
-    <*> (liftM jToMaybe ({#call unsafe OGR_Fld_GetJustify as ^#} p))
+    <*> liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} p)
+    <*> liftM iToMaybe ({#call unsafe OGR_Fld_GetWidth as ^#} p)
+    <*> liftM iToMaybe ({#call unsafe OGR_Fld_GetPrecision as ^#} p)
+    <*> liftM jToMaybe ({#call unsafe OGR_Fld_GetJustify as ^#} p)
   where
     iToMaybe = (\v -> if v==0 then Nothing else Just (fromIntegral v))
     jToMaybe = (\j -> if j==0 then Nothing else Just (toEnumC j))
 
-featureDefFromHandle :: FeatureDefnH -> IO FeatureDef
-featureDefFromHandle p =
+featureDefFromHandle :: GeomFieldDef -> FeatureDefnH -> IO FeatureDef
+featureDefFromHandle gfd p =
   FeatureDef
     <$> ({#call unsafe OGR_FD_GetName as ^#} p >>= peekEncodedCString)
-    <*> getFields
-    <*> pure V.empty
+    <*> fieldDefsFromFeatureDefnH p
+    <*> pure gfd
+    <*> geomFieldDefsFromFeatureDefnH p
   where
-    getFields = do
-      nFields <- {#call unsafe OGR_FD_GetFieldCount as ^#} p
-      V.generateM (fromIntegral nFields) $
-        fieldDefFromHandle <=<
-          ({#call unsafe OGR_FD_GetFieldDefn as ^#} p . fromIntegral)
+
+fieldDefsFromFeatureDefnH :: FeatureDefnH -> IO (V.Vector FieldDef)
+fieldDefsFromFeatureDefnH p = do
+  nFields <- {#call unsafe OGR_FD_GetFieldCount as ^#} p
+  V.generateM (fromIntegral nFields) $
+    fieldDefFromHandle <=<
+      ({#call unsafe OGR_FD_GetFieldDefn as ^#} p . fromIntegral)
+
+
+geomFieldDefsFromFeatureDefnH :: FeatureDefnH -> IO (V.Vector GeomFieldDef)
+
+#if MULTI_GEOM_FIELDS
+
+{#pointer GeomFieldDefnH newtype#}
+
+geomFieldDefsFromFeatureDefnH p = do
+  nFields <- {#call unsafe OGR_FD_GetGeomFieldCount as ^#} p
+  V.generateM (fromIntegral (nFields-1)) $
+    gFldDef <=< ( {#call unsafe OGR_FD_GetGeomFieldDefn as ^#} p
+                . (+1)
+                . fromIntegral
+                )
+  where
+    gFldDef g =
+      GeomFieldDef
+        <$> ({#call unsafe OGR_GFld_GetNameRef as ^#} g >>= peekEncodedCString)
+        <*> liftM toEnumC ({#call unsafe OGR_GFld_GetType as ^#} g)
+        <*> ({#call unsafe OGR_GFld_GetSpatialRef as ^#} g >>=
+          maybeNewSpatialRefBorrowedHandle)
+
+withGeomFieldDefnH :: GeomFieldDef -> (GeomFieldDefnH -> IO a) -> IO a
+withGeomFieldDefnH GeomFieldDef{..} f =
+  useAsEncodedCString gfdName $ \pName ->
+  bracket ({#call unsafe OGR_GFld_Create as ^#} pName (fromEnumC gfdType))
+          ({#call unsafe OGR_GFld_Destroy as ^#}) (\p -> populate p >> f p)
+  where
+    populate = withMaybeSpatialReference gfdSrs .
+                 {#call unsafe OGR_GFld_SetSpatialRef as ^#}
+#else
+-- | GDAL < 1.11 only supports 1 geometry field and associates it the layer
+geomFieldDefsFromFeatureDefnH = return V.empty
+#endif
 
 
 featureToHandle :: FeatureDefnH -> Feature -> GDAL s FeatureH

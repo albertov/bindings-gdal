@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
 module GDALSpec (main, spec, setupAndTeardown) where
 
 import Control.Applicative (liftA2, pure)

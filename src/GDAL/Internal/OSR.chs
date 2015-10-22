@@ -24,19 +24,28 @@ module GDAL.Internal.OSR (
   , withSpatialReference
   , withMaybeSRAsCString
   , withMaybeSpatialReference
+  , newSpatialRefHandle
+  , newSpatialRefBorrowedHandle
+  , maybeNewSpatialRefHandle
+  , maybeNewSpatialRefBorrowedHandle
 ) where
 
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Exception (catch)
-import Control.Monad (liftM)
+import Control.Monad (liftM, (>=>))
 
 import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CInt(..), CDouble(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr)
+import Foreign.ForeignPtr (
+    ForeignPtr
+  , withForeignPtr
+  , newForeignPtr
+  , newForeignPtr_
+  )
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (toBool)
 
@@ -84,11 +93,29 @@ exportWith fun s = unsafePerformIO $ alloca $ \ptr ->
 foreign import ccall "ogr_srs_api.h &OSRDestroySpatialReference"
   c_destroySpatialReference :: FunPtr (Ptr SpatialReference -> IO ())
 
-newSpatialRefHandle :: Ptr SpatialReference
-  -> IO SpatialReference
-newSpatialRefHandle p
-  | p==nullPtr = throwBindingException NullSpatialReference
-  | otherwise  = SpatialReference <$> newForeignPtr c_destroySpatialReference p
+newSpatialRefHandle
+  :: Ptr SpatialReference -> IO SpatialReference
+newSpatialRefHandle = maybeNewSpatialRefHandle >=> maybe exc return
+  where exc = throwBindingException NullSpatialReference
+
+maybeNewSpatialRefHandle
+  :: Ptr SpatialReference -> IO (Maybe SpatialReference)
+maybeNewSpatialRefHandle p
+  | p==nullPtr = return Nothing
+  | otherwise  = (Just . SpatialReference)
+             <$> newForeignPtr c_destroySpatialReference p
+
+newSpatialRefBorrowedHandle
+  :: Ptr SpatialReference -> IO SpatialReference
+newSpatialRefBorrowedHandle =
+  maybeNewSpatialRefBorrowedHandle >=> maybe exc return
+  where exc = throwBindingException NullSpatialReference
+
+maybeNewSpatialRefBorrowedHandle
+  :: Ptr SpatialReference -> IO (Maybe SpatialReference)
+maybeNewSpatialRefBorrowedHandle p
+  | p==nullPtr = return Nothing
+  | otherwise  = liftM (Just . SpatialReference) (newForeignPtr_ p)
 
 emptySpatialRef :: IO SpatialReference
 emptySpatialRef =

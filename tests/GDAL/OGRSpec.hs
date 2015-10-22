@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module GDAL.OGRSpec (main, spec, setupAndTeardown) where
 
-import Control.Monad (void)
+import Control.Monad (void, when)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Either (isRight)
@@ -22,6 +22,7 @@ import GDAL (
   , GDALException(..)
   )
 import GDAL.OGR as OGR
+import GDAL.OSR (fromEPSG)
 
 import Paths_bindings_gdal
 
@@ -83,30 +84,49 @@ spec = setupAndTeardown $ do
       create "foo" "" [] `shouldThrow` (==(UnknownDriver "foo"))
 
     describe "createLayer" $ do
-      let strField  = fieldDef OFTString
-          realField = fieldDef OFTReal
+      let strField    = fieldDef OFTString
+          realField   = fieldDef OFTReal
+          gfd         = GeomFieldDef "" WkbPoint Nothing
+          check fd = do
+            ds <- createMem []
+            l <- createLayer ds fd StrictOK []
+            layerFeatureDef l >>= (`shouldBe` fd)
 
-      it "with no fields or geometries unicode name" $ do
-        let fd = FeatureDef { fdName   = lName
+      it "works with unicode name and field names" $
+        check (FeatureDef { fdName   = "Barça Players"
+                          , fdFields = [ strField "contraseña", realField "año"]
+                          , fdGeom   = gfd
+                          , fdGeoms  = mempty})
+
+      it "works with a single geometry field with no srs" $
+        check (FeatureDef { fdName   = "Barça Players"
+                          , fdFields = mempty
+                          , fdGeom   = gfd
+                          , fdGeoms  = mempty})
+
+      it "works with a single geometry field with srs" $ do
+        let srs = either exc Just (fromEPSG 23030)
+            exc = error . ("Unexpected fromEPSG error: " ++) . show
+        check (FeatureDef { fdName   = "Barça Players"
+                          , fdFields = mempty
+                          , fdGeom   = gfd {gfdSrs = srs}
+                          , fdGeoms  = mempty})
+
+      when canCreateMultipleGeometryFields $ do
+        it "works with several geometry field with no srs" $ do
+          check (FeatureDef { fdName   = "Barça Players"
                             , fdFields = mempty
-                            , fdGeoms  = mempty
-                            }
-            lName = "Barça Players"
-        ds <- createMem []
-        l <- createLayer ds fd StrictOK []
-        layerFeatureDef l >>= (`shouldBe` fd)
+                            , fdGeom   = gfd
+                            , fdGeoms  = [gfd{gfdName="another_geom"}]})
 
-      it "with unicode named fields" $ do
-        let fd = FeatureDef { fdName   = lName
-                            , fdFields = [ strField "contraseña"
-                                         , realField "año"]
-                            , fdGeoms  = mempty
-                            }
-            lName = "Barça Players"
-        ds <- createMem []
-        l <- createLayer ds fd StrictOK []
-        layerFeatureDef l >>= (`shouldBe` fd)
-
+        it "works with several geometry field with srs" $ do
+          let srs = either exc Just (fromEPSG 23030)
+              exc = error . ("Unexpected fromEPSG error: " ++) . show
+          check (FeatureDef { fdName   = "Barça Players"
+                            , fdFields = mempty
+                            , fdGeom   = gfd
+                            , fdGeoms  = [gfd{ gfdName = "another_geom"
+                                             , gfdSrs  = srs}]})
 
   describe "getSpatialFilter" $ do
 
