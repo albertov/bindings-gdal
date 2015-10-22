@@ -20,10 +20,6 @@ module GDAL.Internal.OGRFeature (
   , fieldDef
   , featureToHandle
   , featureFromHandle
-  , fieldByName
-  , fieldByIndex
-  , geometryByName
-  , geometryByIndex
 
   , withFeatureH
   , withFieldDefnH
@@ -228,27 +224,18 @@ withGeomFieldDefnH GeomFieldDef{..} f =
                  {#call unsafe OGR_GFld_SetSpatialRef as ^#}
 #else
 -- | GDAL < 1.11 only supports 1 geometry field and associates it the layer
-geomFieldDefsFromFeatureDefnH = return V.empty
+geomFieldDefsFromFeatureDefnH = const (return V.empty)
 #endif
 
 
-featureToHandle :: FeatureDefnH -> Feature -> GDAL s FeatureH
+featureToHandle :: FeatureDef   -> Feature -> GDAL s FeatureH
 featureToHandle = undefined
 
-featureFromHandle :: FeatureH -> GDAL s Feature
+featureFromHandle :: FeatureDef -> FeatureH -> GDAL s Feature
 featureFromHandle = undefined
 
-fieldByName :: Text -> FeatureH -> GDAL s Field
-fieldByName = undefined
 
-fieldByIndex :: FeatureH -> Int -> GDAL s Field
-fieldByIndex feature ix = liftIO $ withFeatureH feature $ \pF -> do
-  ftDef <- {#call unsafe OGR_F_GetDefnRef	as ^#} pF
-  fDef <- {#call unsafe OGR_FD_GetFieldDefn as ^#} ftDef (fromIntegral ix)
-  typ <- liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} fDef)
-  getFieldBy typ  fDef (fromIntegral ix) pF
-
-getFieldBy :: FieldType -> FieldDefnH -> CInt -> Ptr FeatureH -> IO Field
+getFieldBy :: FieldType -> Text -> CInt -> Ptr FeatureH -> IO Field
 
 getFieldBy OFTInteger _ ix f
   = liftM (OGRInteger . fromIntegral)
@@ -277,26 +264,25 @@ getFieldBy OFTRealList _ ix f = alloca $ \lenP -> do
 getFieldBy OFTString _ ix f = liftM OGRString
   (({#call unsafe OGR_F_GetFieldAsString as ^#} f ix) >>= peekEncodedCString)
 
-getFieldBy OFTWideString fDef ix f = getFieldBy OFTString fDef ix f
+getFieldBy OFTWideString fname ix f = getFieldBy OFTString fname ix f
 
 getFieldBy OFTStringList _ ix f = liftM OGRStringList $ do
   ptr <- {#call unsafe OGR_F_GetFieldAsStringList as ^#} f ix
   nElems <- liftM fromIntegral ({#call unsafe CSLCount as ^#} ptr)
   V.generateM nElems (peekElemOff ptr >=> peekEncodedCString)
 
-getFieldBy OFTWideStringList fDef ix f = getFieldBy OFTStringList fDef ix f
+getFieldBy OFTWideStringList fname ix f = getFieldBy OFTStringList fname ix f
 
 getFieldBy OFTBinary _ ix f = alloca $ \lenP -> do
   buf <- liftM castPtr ({#call unsafe OGR_F_GetFieldAsBinary as ^#} f ix lenP)
   nElems <- peekIntegral lenP
   liftM OGRBinary (packCStringLen (buf, nElems))
 
-getFieldBy OFTDateTime fDef ix f
+getFieldBy OFTDateTime fname ix f
   = liftM OGRDateTime $ alloca $ \y -> alloca $ \m -> alloca $ \d ->
     alloca $ \h -> alloca $ \mn -> alloca $ \s -> alloca $ \tz -> do
       ret <- {#call unsafe OGR_F_GetFieldAsDateTime as ^#} f ix y m d h mn s tz
-      when (ret==0) $
-        getFieldName fDef >>= throwBindingException . FieldParseError
+      when (ret==0) $ throwBindingException (FieldParseError fname)
       day <- fromGregorian <$> peekIntegral y
                            <*> peekIntegral m
                            <*> peekIntegral d
@@ -312,13 +298,13 @@ getFieldBy OFTDateTime fDef ix f
         100 -> lt utc
         n   -> lt (minutesToTimeZone ((n-100) * 15))
 
-getFieldBy OFTDate fDef ix f
+getFieldBy OFTDate fname ix f
   = liftM (OGRDate . localDay . zonedTimeToLocalTime . unDateTime)
-          (getFieldBy OFTDateTime fDef ix f)
+          (getFieldBy OFTDateTime fname ix f)
 
-getFieldBy OFTTime fDef ix f
+getFieldBy OFTTime fname ix f
   = liftM (OGRTime . localTimeOfDay . zonedTimeToLocalTime. unDateTime)
-          (getFieldBy OFTDateTime fDef ix f)
+          (getFieldBy OFTDateTime fname ix f)
 
 unDateTime :: Field -> ZonedTime
 unDateTime (OGRDateTime f) = f
