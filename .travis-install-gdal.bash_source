@@ -11,7 +11,7 @@ if [ ! -f $GDAL_BIN/gdal-config ]; then
   mkdir -p $GDAL_PREFIX
   mkdir -p $GDAL_SRC
   curl -L $GDAL_URL | tar xz --strip-components=1 -C $GDAL_SRC
-  cd $GDAL_SRC
+  pushd $GDAL_SRC
   ./configure --prefix=$GDAL_PREFIX \
               --enable-debug \
               --without-libtool \
@@ -23,6 +23,7 @@ if [ ! -f $GDAL_BIN/gdal-config ]; then
               --without-odbc
   make -j3
   make install
+  popd
 fi;
 
 export PATH=$GDAL_BIN:$PATH
