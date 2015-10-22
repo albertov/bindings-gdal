@@ -95,6 +95,7 @@ import Data.Bits ((.&.))
 import Data.Complex (Complex(..), realPart)
 import Data.Coerce (coerce)
 import Data.Proxy (Proxy(..))
+import Data.Text (Text)
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
@@ -138,7 +139,7 @@ data GDALRasterException
   | InvalidBlockSize  !Int
   | InvalidDataType   !DataType
   | InvalidProjection !OGRException
-  | InvalidDriverOptions
+  | InvalidDriverOptions ![Text]
   | NullDataset
   | CopyStopped
   | UnknownRasterDataType
@@ -243,8 +244,10 @@ driverCreationOptionList driver = unsafePerformIO $ do
 
 validateCreationOptions :: DriverH -> Ptr CString -> IO ()
 validateCreationOptions d o = do
-  valid <- liftM toBool ({#call GDALValidateCreationOptions as ^ #} d o)
-  when (not valid) (throwBindingException InvalidDriverOptions)
+  (valid,errs) <- collectMessages $
+                  liftM toBool ({#call GDALValidateCreationOptions as ^ #} d o)
+  let msgs = map (\(_,_,m)->m) errs
+  when (not valid) (throwBindingException (InvalidDriverOptions msgs))
 
 create
   :: Driver -> String -> Size -> Int -> DataType -> OptionList

@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
 module GDALSpec (main, spec, setupAndTeardown) where
 
 import Control.Applicative (liftA2, pure)
@@ -66,7 +67,7 @@ spec = setupAndTeardown $ do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("zlevel", "bad level")]
         action = create GTIFF p (pure 3000) 1 GDT_Int16 o
-    action `shouldThrow` (==InvalidDriverOptions)
+    action `shouldThrow` (\case {InvalidDriverOptions _ ->True; _->False})
 
   withDir "can create and open dataset" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]

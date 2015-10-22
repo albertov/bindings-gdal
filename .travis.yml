@@ -55,7 +55,7 @@ script:
 - find .stack-work -type f -name spec -exec valgrind --leak-check=full {} ';'
 
 before_cache:
-  - find $HOME/.stack/snapshots -type d -name "nightly*" -exec rm -rf {} ';'
+  - find $HOME/.stack/snapshots -type d -name "nightly*" -exec rm -rf {} ';' || true
 
 cache:
   apt: true
