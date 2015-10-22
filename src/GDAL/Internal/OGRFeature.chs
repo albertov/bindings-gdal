@@ -164,7 +164,7 @@ withFieldDefnH FieldDef{..} f =
 fieldDefFromHandle :: FieldDefnH -> IO FieldDef
 fieldDefFromHandle p =
   FieldDef
-    <$> ({#call unsafe OGR_Fld_GetNameRef as ^#} p >>= peekEncodedCString)
+    <$> getFieldName p
     <*> (liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} p))
     <*> (liftM iToMaybe ({#call unsafe OGR_Fld_GetWidth as ^#} p))
     <*> (liftM iToMaybe ({#call unsafe OGR_Fld_GetPrecision as ^#} p))
@@ -184,7 +184,7 @@ featureDefFromHandle p =
       nFields <- {#call unsafe OGR_FD_GetFieldCount as ^#} p
       V.generateM (fromIntegral nFields) $
         fieldDefFromHandle <=<
-          ({#call OGR_FD_GetFieldDefn as ^#} p . fromIntegral)
+          ({#call unsafe OGR_FD_GetFieldDefn as ^#} p . fromIntegral)
 
 
 featureToHandle :: FeatureDefnH -> Feature -> GDAL s FeatureH
@@ -193,14 +193,15 @@ featureToHandle = undefined
 featureFromHandle :: FeatureH -> GDAL s Feature
 featureFromHandle = undefined
 
-fieldByName :: FeatureDefnH -> FeatureH -> ByteString -> GDAL s Field
+fieldByName :: Text -> FeatureH -> GDAL s Field
 fieldByName = undefined
 
-fieldByIndex :: FeatureDefnH -> FeatureH -> Int -> GDAL s Field
-fieldByIndex ftDef feature ix = liftIO $ do
-  fDef <- {#call OGR_FD_GetFieldDefn as ^#} ftDef (fromIntegral ix)
+fieldByIndex :: FeatureH -> Int -> GDAL s Field
+fieldByIndex feature ix = liftIO $ withFeatureH feature $ \pF -> do
+  ftDef <- {#call unsafe OGR_F_GetDefnRef	as ^#} pF
+  fDef <- {#call unsafe OGR_FD_GetFieldDefn as ^#} ftDef (fromIntegral ix)
   typ <- liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} fDef)
-  withFeatureH feature (getFieldBy typ  fDef (fromIntegral ix))
+  getFieldBy typ  fDef (fromIntegral ix) pF
 
 getFieldBy :: FieldType -> FieldDefnH -> CInt -> Ptr FeatureH -> IO Field
 
@@ -282,11 +283,12 @@ unDateTime _               = error "GDAL.Internal.OGRFeature.unDateTime"
 peekIntegral :: (Storable a, Integral a, Num b) => Ptr a -> IO b
 peekIntegral = liftM fromIntegral . peek
 
-getFieldName :: FieldDefnH -> IO ByteString
-getFieldName = {#call unsafe OGR_Fld_GetNameRef as ^#} >=> packCString
+getFieldName :: FieldDefnH -> IO Text
+getFieldName =
+  {#call unsafe OGR_Fld_GetNameRef as ^#} >=> peekEncodedCString
 
 
-geometryByName :: FeatureH -> ByteString -> GDAL s Geometry
+geometryByName :: Text -> FeatureH -> GDAL s Geometry
 geometryByName = undefined
 
 geometryByIndex :: FeatureH -> Int -> GDAL s Geometry

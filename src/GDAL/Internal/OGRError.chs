@@ -13,7 +13,7 @@ import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), SomeException, fromException)
 import Control.Monad (liftM)
 
-import Data.ByteString (ByteString)
+import Data.Text (Text)
 import Data.Typeable (Typeable)
 import Data.Maybe (isJust)
 
@@ -32,9 +32,9 @@ data OGRException
   | NullLayer
   | UnknownDriver     !String
   | InvalidLayerIndex !Int
-  | InvalidLayerName  !String
+  | InvalidLayerName  !Text
   | SQLQueryError     !String
-  | FieldParseError   !ByteString
+  | FieldParseError   !Text
   deriving (Show, Eq, Typeable)
 
 instance NFData OGRException where

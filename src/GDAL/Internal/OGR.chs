@@ -216,8 +216,8 @@ getLayer layer ds = liftIO $
     dsH = unDataSource ds
     lyr = fromIntegral layer
 
-getLayerByName :: String -> DataSource s t -> GDAL s (Layer s t a)
-getLayerByName layer ds = liftIO $ withCString layer $
+getLayerByName :: Text -> DataSource s t -> GDAL s (Layer s t a)
+getLayerByName layer ds = liftIO $ useAsEncodedCString layer $
   newLayerHandle ds (InvalidLayerName layer) <=<
     throwIfError "getLayerByName" .
       {#call OGR_DS_GetLayerByName as ^#} (unDataSource ds)
@@ -249,7 +249,7 @@ withSQLDialect SqliteDialect  = withCString "SQLITE"
 withSQLDialect OGRDialect     = withCString "OGRSQL"
 
 executeSQL
-  :: SQLDialect -> String -> Maybe Geometry -> RODataSource s
+  :: SQLDialect -> Text -> Maybe Geometry -> RODataSource s
   -> GDAL s (ROLayer s a)
 executeSQL dialect query mSpatialFilter ds@(DataSource (m,dsP)) = do
   p <- catchJust selectExc execute (throwBindingException . SQLQueryError)
@@ -260,11 +260,11 @@ executeSQL dialect query mSpatialFilter ds@(DataSource (m,dsP)) = do
     selectExc GDALException{..} | gdalErrNum==AppDefined = Just gdalErrMsg
     selectExc _                                          = Nothing
     execute = liftIO $
+      throwIfError "executeSQL" $
       withLockedDataSourcePtr ds $ \dsPtr ->
       withMaybeGeometry mSpatialFilter $ \sFilter ->
       withSQLDialect dialect $ \sDialect ->
-      withCString query $ \sQuery ->
-      throwIfError "executeSQL" $
+      useAsEncodedCString query $ \sQuery ->
         {#call OGR_DS_ExecuteSQL as ^#} dsPtr sQuery sFilter sDialect
 
 layerName :: Layer s t a -> GDAL s Text
