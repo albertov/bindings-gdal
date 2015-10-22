@@ -1,46 +1,45 @@
 sudo: false
 
-language: cpp
+language: c
 
 addons:
   apt:
     packages:
-      - libgmp
-      - libgmp-dev
-      - valgrind
-      - libarmadillo-dev
-      - libcurl-ssl-dev
-      - libcurl4-gnutls-dev
-      - libdap-dev
-      - libepsilon-dev
-      - libexpat1-dev
-      - libfreexl-dev
-      - libgeos-dev
-      - libgif-dev
-      - libhdf4-alt-dev
-      - libhdf5-dev
-      - libjasper-dev
-      - libjpeg-dev
-      - libkml-dev
-      - liblzma-dev
-      - libmysqlclient-dev
-      - libnetcdf-dev
-      - libogdi3.2-dev
-      - libopenjpeg-dev
-      - libpng-dev
-      - libpoppler-private-dev
-      - libpq-dev
-      - libproj-dev
-      - libspatialite-dev
-      - libsqlite3-dev
-      - liburiparser-dev
-      - libwebp-dev
-      - libxerces-c-dev
-      - libxml2-dev
-      - netcdf-bin
-      - patch
-      - unixodbc-dev
-      - zlib1g-dev
+    - libgmp-dev
+    - valgrind
+    - libarmadillo-dev
+    - libcurl-ssl-dev
+    - libcurl4-gnutls-dev
+    - libdap-dev
+    - libepsilon-dev
+    - libexpat1-dev
+    - libfreexl-dev
+    - libgeos-dev
+    - libgif-dev
+    - libhdf4-alt-dev
+    - libhdf5-dev
+    - libjasper-dev
+    - libjpeg-dev
+    - libkml-dev
+    - liblzma-dev
+    - libmysqlclient-dev
+    - libnetcdf-dev
+    - libogdi3.2-dev
+    - libopenjpeg-dev
+    - libpng-dev
+    - libpoppler-private-dev
+    - libpq-dev
+    - libproj-dev
+    - libspatialite-dev
+    - libsqlite3-dev
+    - liburiparser-dev
+    - libwebp-dev
+    - libxerces-c-dev
+    - libxml2-dev
+    - netcdf-bin
+    - patch
+    - unixodbc-dev
+    - zlib1g-dev
 
 env:
   - ARGS="--resolver lts-2"   GDAL="1.10.1"
