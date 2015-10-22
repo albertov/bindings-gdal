@@ -216,6 +216,8 @@ createLayer ds FeatureDef{..} approxOk options = liftIO $
 #if MULTI_GEOM_FIELDS
             V.forM_ fdGeoms $ \f -> withGeomFieldDefnH f $ \pGFld ->
               {#call OGR_L_CreateGeomField as ^#} pL pGFld iApproxOk
+#else
+            error "should never reach here"
 #endif
           else throwBindingException CantCreateMultipleGeomFields
       return fpL
