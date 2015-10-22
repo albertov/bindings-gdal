@@ -57,7 +57,13 @@ import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector as V
 
-import Foreign.C.Types (CInt(..), CLong(..), CDouble(..), CChar(..), CUChar(..))
+import Foreign.C.Types (
+    CInt(..)
+  , CLLong(..)
+  , CDouble(..)
+  , CChar(..)
+  , CUChar(..)
+  )
 import Foreign.ForeignPtr (
     ForeignPtr
   , FinalizerPtr
@@ -261,7 +267,7 @@ getFieldBy OFTInteger64List _ ix f = alloca $ \lenP -> do
   nElems <- peekIntegral lenP
   vec <- Stm.new nElems
   Stm.unsafeWith vec $ \vP ->
-    copyBytes vP (buf :: Ptr CLong) (nElems * sizeOf (undefined :: CLong))
+    copyBytes vP (buf :: Ptr CLLong) (nElems * sizeOf (undefined :: CLLong))
   liftM OGRInteger64List (St.unsafeFreeze (Stm.unsafeCast vec))
 #endif
 
