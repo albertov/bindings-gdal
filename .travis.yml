@@ -27,6 +27,10 @@ script:
 - stack $ARGS --no-terminal test --haddock
 - find .stack-work -type f -name spec -exec valgrind --leak-check=full {} ';'
 
+before_cache:
+  - rm -rf $HOME/.stack/snapshots/*/nightly*
 cache:
+  apt: true
   directories:
   - $HOME/.stack
+  - $HOME/.local
