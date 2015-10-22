@@ -66,7 +66,6 @@ before_cache:
   - find $HOME/.stack/snapshots -type d -name "nightly*" -exec rm -rf {} ';'
 
 cache:
-  apt: true
   directories:
   - $HOME/.stack
   - $HOME/.local
