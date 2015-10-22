@@ -1,27 +1,62 @@
 sudo: false
 
-language: c
+language: cpp
 
 addons:
   apt:
     packages:
-    - libgmp-dev
-    - libgdal1-dev
-    - gdal-bin
-    - valgrind
+      - libgmp-dev
+      - valgrind
+      - libarmadillo-dev
+      - libcurl-ssl-dev
+      - libcurl4-gnutls-dev
+      - libdap-dev
+      - libepsilon-dev
+      - libexpat1-dev
+      - libfreexl-dev
+      - libgeos-dev
+      - libgif-dev
+      - libhdf4-alt-dev
+      - libhdf5-dev
+      - libjasper-dev
+      - libjpeg-dev
+      - libkml-dev
+      - liblzma-dev
+      - libmysqlclient-dev
+      - libnetcdf-dev
+      - libogdi3.2-dev
+      - libopenjpeg-dev
+      - libpng-dev
+      - libpoppler-private-dev
+      - libpq-dev
+      - libproj-dev
+      - libspatialite-dev
+      - libsqlite3-dev
+      - liburiparser-dev
+      - libwebp-dev
+      - libxerces-c-dev
+      - libxml2-dev
+      - netcdf-bin
+      - patch
+      - unixodbc-dev
+      - zlib1g-dev
 
 env:
-  - ARGS="--resolver lts-2"
-  - ARGS="--resolver lts-3"
-  - ARGS="--resolver nightly"
+  - ARGS="--resolver lts-2"   GDAL="1.10.1"
+  - ARGS="--resolver lts-2"   GDAL="1.11.2"
+  - ARGS="--resolver lts-2"   GDAL="2.0.1"
+  - ARGS="--resolver lts-3"   GDAL="1.10.1"
+  - ARGS="--resolver lts-3"   GDAL="1.11.2"
+  - ARGS="--resolver lts-3"   GDAL="2.0.1"
+  - ARGS="--resolver nightly" GDAL="2.0.1"
 
 before_install:
-- mkdir -p ~/.local/bin
-- export PATH=$HOME/.local/bin:$PATH
+- mkdir -p $HOME/.local/bin
+- export PATH=$HOME/.local/bin
 - travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
 - stack $ARGS --no-terminal --install-ghc setup
-#- stack $ARGS exec c2hs -- --version
-- gdalinfo --version
+- source .travis-install-gdal.bash_source
+- gdal-config --version
 
 script:
 - stack $ARGS --no-terminal test --haddock
