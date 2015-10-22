@@ -5,6 +5,7 @@ language: cpp
 addons:
   apt:
     packages:
+      - libgmp
       - libgmp-dev
       - valgrind
       - libarmadillo-dev
@@ -63,7 +64,8 @@ script:
 - find .stack-work -type f -name spec -exec valgrind --leak-check=full {} ';'
 
 before_cache:
-  - rm -rf $HOME/.stack/snapshots/*/nightly*
+  - find $HOME/.stack/snapshots -type d -name "nightly*" -exec rm -rf {} ';'
+
 cache:
   apt: true
   directories:
