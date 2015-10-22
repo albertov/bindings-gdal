@@ -40,7 +40,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (packCStringLen)
-import Data.Int (Int64)
+import Data.Int (Int32, Int64)
 import Data.Monoid (mempty)
 import Data.Text (Text)
 import Data.Time.LocalTime (
@@ -94,16 +94,18 @@ import GDAL.Internal.Util (
     deriving (Eq,Show,Read,Bounded) #}
 
 data Field
-  = OGRInteger     {-# UNPACK #-} !Int
-  | OGRIntegerList {-# UNPACK #-} !(St.Vector Int)
-  | OGRReal        {-# UNPACK #-} !Double
-  | OGRRealList    {-# UNPACK #-} !(St.Vector Double)
-  | OGRString      {-# UNPACK #-} !Text
-  | OGRStringList  {-# UNPACK #-} !(V.Vector Text)
-  | OGRBinary      {-# UNPACK #-} !ByteString
-  | OGRDateTime    {-# UNPACK #-} !ZonedTime
-  | OGRDate        {-# UNPACK #-} !Day
-  | OGRTime        {-# UNPACK #-} !TimeOfDay
+  = OGRInteger       {-# UNPACK #-} !Int32
+  | OGRIntegerList   {-# UNPACK #-} !(St.Vector Int32)
+  | OGRInteger64     {-# UNPACK #-} !Int64
+  | OGRInteger64List {-# UNPACK #-} !(St.Vector Int64)
+  | OGRReal          {-# UNPACK #-} !Double
+  | OGRRealList      {-# UNPACK #-} !(St.Vector Double)
+  | OGRString        {-# UNPACK #-} !Text
+  | OGRStringList    {-# UNPACK #-} !(V.Vector Text)
+  | OGRBinary        {-# UNPACK #-} !ByteString
+  | OGRDateTime      {-# UNPACK #-} !ZonedTime
+  | OGRDate          {-# UNPACK #-} !Day
+  | OGRTime          {-# UNPACK #-} !TimeOfDay
   deriving (Show)
 
 data FieldDef
@@ -248,6 +250,20 @@ getFieldBy OFTIntegerList _ ix f = alloca $ \lenP -> do
   Stm.unsafeWith vec $ \vP ->
     copyBytes vP (buf :: Ptr CInt) (nElems * sizeOf (undefined :: CInt))
   liftM OGRIntegerList (St.unsafeFreeze (Stm.unsafeCast vec))
+
+#if (GDAL_VERSION_MAJOR >= 2)
+getFieldBy OFTInteger64 _ ix f
+  = liftM (OGRInteger64 . fromIntegral)
+    ({#call unsafe OGR_F_GetFieldAsInteger64 as ^#} f ix)
+
+getFieldBy OFTInteger64List _ ix f = alloca $ \lenP -> do
+  buf <- {#call unsafe OGR_F_GetFieldAsInteger64List as ^#} f ix lenP
+  nElems <- peekIntegral lenP
+  vec <- Stm.new nElems
+  Stm.unsafeWith vec $ \vP ->
+    copyBytes vP (buf :: Ptr CLong) (nElems * sizeOf (undefined :: CLong))
+  liftM OGRInteger64List (St.unsafeFreeze (Stm.unsafeCast vec))
+#endif
 
 getFieldBy OFTReal _ ix f
   = liftM (OGRReal . realToFrac)
