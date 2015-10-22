@@ -4,6 +4,7 @@ set -e
 
 export GDAL_PREFIX=$HOME/.local/gdal-$GDAL
 export GDAL_BIN=$GDAL_PREFIX/bin
+export GDAL_LIB=$GDAL_PREFIX/lib
 export GDAL_SRC=$HOME/gdal-$GDAL-src
 export GDAL_URL=http://download.osgeo.org/gdal/${GDAL}/gdal-${GDAL}.tar.gz
 
@@ -27,3 +28,4 @@ if [ ! -f $GDAL_BIN/gdal-config ]; then
 fi;
 
 export PATH=$GDAL_BIN:$PATH
+export LD_LIBRARY_PATH=$GDAL_LIB:$LD_LIBRARY_PATH
