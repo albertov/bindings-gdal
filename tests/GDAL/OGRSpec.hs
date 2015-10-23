@@ -129,14 +129,15 @@ spec = setupAndTeardown $ do
 
       it "can create and retrieve a feature" $ do
         let fDef = FeatureDef { fdName   = "Some Ñçüo"
-                              , fdFields = [strField "Stü" , intField "N´m"]
+                              , fdFields = [strField "str" , intField "int"]
                               , fdGeom   = pointDef
                               , fdGeoms  = mempty}
             fid  = Fid 66
             geom = either exc Just (createFromWkt Nothing "POINT (45 87)")
             exc  = error . ("Unexpected createFromWkt error: " ++) . show
             feat = Feature { fId     = Just fid
-                           , fFields = [OGRString "Avión", OGRInteger 34]
+                           , fFields = [ ("str", OGRString "Avión")
+                                       , ("int", OGRInteger 34)]
                            , fGeom   = geom
                            , fGeoms  = mempty}
         ds <- createMem []

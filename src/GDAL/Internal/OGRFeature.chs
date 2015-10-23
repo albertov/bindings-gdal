@@ -36,13 +36,14 @@ module GDAL.Internal.OGRFeature (
 {#context lib = "gdal" prefix = "OGR" #}
 
 import Control.Applicative ((<$>), (<*>), pure)
-import Control.Monad (liftM, liftM2, (>=>), (<=<), when, void)
+import Control.Monad (liftM, liftM2, (>=>), (<=<), when, void, join)
 import Control.Monad.Catch (bracket)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (packCStringLen)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
+import qualified Data.HashMap.Strict as HM
 import Data.Int (Int32, Int64)
 import Data.Monoid (mempty)
 import Data.Proxy (Proxy(Proxy))
@@ -153,12 +154,14 @@ data GeomFieldDef
     , gfdNullable :: !Bool
     } deriving (Show, Eq)
 
+type Map a = HM.HashMap Text a
+
 data Feature
   = Feature {
       fId      :: !(Maybe Fid)
-    , fFields  :: !(V.Vector Field)
+    , fFields  :: !(Map Field)
     , fGeom    :: !(Maybe Geometry)
-    , fGeoms   :: !(V.Vector Geometry)
+    , fGeoms   :: !(Map (Maybe Geometry))
     } deriving (Show, Eq)
 
 data FeatureDef
@@ -224,7 +227,7 @@ featureDefFromHandle gfd p = do
         -- info
         | otherwise      = (snd (V.unsafeHead gfields), V.unsafeTail gfields)
 #else
-  let (gfd', gfields') = (gfd, V.empty)
+  let (gfd', gfields') = (gfd, mempty)
 #endif
   FeatureDef
     <$> ({#call unsafe OGR_FD_GetName as ^#} p >>= peekEncodedCString)
@@ -291,14 +294,23 @@ featureToHandle fdH Feature{..} act =
     case fId of
       Just (Fid fid) -> void $ {#call OGR_F_SetFID as ^#} pF (fromIntegral fid)
       Nothing        -> return ()
-    imapM_ (\ix f -> setField f ix pF) fFields
+    fieldDefs <- fieldDefsFromFeatureDefnH fdH
+    flip imapM_ fieldDefs $ \ix (name, fd) -> do
+      case HM.lookup name fFields of
+        Just f  -> setField f ix pF
+        Nothing -> return ()
     case fGeom of
       Just g  -> void $ withGeometry g ({#call OGR_F_SetGeometry as ^#} pF)
       Nothing -> return ()
-    when (not (V.null fGeoms)) $
+    when (not (HM.null fGeoms)) $ do
 #if MULTI_GEOM_FIELDS
-      flip imapM_ (G.tail fGeoms) $ \ix g ->
-        void $ withGeometry g ({#call OGR_F_SetGeomField as ^#} pF (ix+1))
+      geomFieldDefs <- geomFieldDefsFromFeatureDefnH fdH
+      flip imapM_ (V.tail geomFieldDefs) $ \ix (name, gfd) -> do
+        case join (HM.lookup name fGeoms) of
+          Just g  ->
+            void $ withGeometry g ({#call OGR_F_SetGeomField as ^#} pF (ix+1))
+          Nothing ->
+            return ()
 #else
       throwBindingException MultipleGeomFieldsNotSupported
 #endif
@@ -318,22 +330,29 @@ featureFromHandle fdH act =
       isSet <- liftM toBool ({#call unsafe OGR_F_IsFieldSet as ^#} pF i)
       if isSet
         then getField (fldType f) i pF >>=
-              maybe (throwBindingException (FieldParseError fldName)) return
-        else return OGRNullField
+              maybe (throwBindingException (FieldParseError fldName))
+                    (\f -> return (fldName, f))
+        else return (fldName, OGRNullField)
     geomRef <- {#call unsafe OGR_F_StealGeometry as ^#} pF
     geom <- if geomRef /= nullPtr
               then liftM Just (newGeometryHandle geomRef)
               else return Nothing
 #if MULTI_GEOM_FIELDS
-    nGeoms <- liftM fromIntegral
-                ({#call unsafe OGR_FD_GetGeomFieldCount as ^#} fdH)
-    geoms <- V.generateM (nGeoms-1) $ \ix ->
-      {#call unsafe OGR_F_GetGeomFieldRef as ^#} pF (fromIntegral ix + 1) >>=
-        cloneGeometry
+    geomFieldDefs <- geomFieldDefsFromFeatureDefnH fdH
+    geoms <- flip imapM (V.tail geomFieldDefs) $ \ix (gfdName, _) -> do
+      pG <- {#call unsafe OGR_F_GetGeomFieldRef as ^#} pF (fromIntegral ix + 1)
+      g <- if pG /= nullPtr
+            then liftM Just (cloneGeometry pG)
+            else return Nothing
+      return (gfdName, g)
 #else
-    let geoms = V.empty
+    let geoms = mempty
 #endif
-    return Feature {fId=fid, fFields=fields, fGeom=geom, fGeoms=geoms}
+    return Feature { fId     = fid
+                   , fFields = HM.fromList (V.toList fields)
+                   , fGeom   = geom
+                   , fGeoms  = HM.fromList (V.toList geoms)
+                   }
 
 
 -- ############################################################################
