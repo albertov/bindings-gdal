@@ -315,11 +315,7 @@ newDerivedDatasetHandle (Dataset (m,_)) dh
       return $ Dataset (m,dh)
 
 safeCloseDataset :: DatasetH -> IO ()
-safeCloseDataset p = do
-  count <- {#call unsafe DereferenceDataset as ^#} p
-  when (count < 1) $ do
-    void ({#call unsafe ReferenceDataset as ^#} p)
-    {#call GDALClose as ^#} p
+safeCloseDataset = {#call GDALClose as ^#}
 
 createMem
   :: Size -> Int -> DataType -> OptionList -> GDAL s (Dataset s ReadWrite)
