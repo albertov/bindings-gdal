@@ -45,7 +45,11 @@ env:
 before_install:
 - mkdir -p $HOME/.local/bin
 - export PATH=$HOME/.local/bin:$PATH
-- travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
+- |
+    if [ ! -f $HOME/.local/bin/stack ]; then
+      travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 \
+        | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
+    fi
 - stack $ARGS --no-terminal --install-ghc setup
 - source .travis-install-gdal.bash_source
 - gdal-config --version
