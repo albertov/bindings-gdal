@@ -35,7 +35,7 @@ addons:
 
 env:
 - ARGS="--resolver lts-2"   GDAL="1.10.1"
-#- ARGS="--resolver lts-2"   GDAL="1.11.2"
+- ARGS="--resolver lts-2"   GDAL="1.11.2"
 #- ARGS="--resolver lts-2"   GDAL="2.0.1"
 #- ARGS="--resolver lts-3"   GDAL="1.10.1"
 #- ARGS="--resolver lts-3"   GDAL="1.11.2"
@@ -45,6 +45,7 @@ env:
 before_install:
 # Download, install and setup stack
 - |
+  echo "Installing Stack"
   set -e
 
   mkdir -p $HOME/.local/bin
@@ -59,6 +60,7 @@ before_install:
 # Download, configure, compile and install GDAL
 
 - |
+  echo "Installing GDAL"
   set -e
 
   export GDAL_URL=http://download.osgeo.org/gdal/${GDAL}/gdal-${GDAL}.tar.gz
@@ -94,10 +96,7 @@ before_install:
 
 script:
 - stack $ARGS --no-terminal test --haddock
-- find .stack-work -type f -name spec -exec valgrind --leak-check=full {} ';'
-
-before_cache:
-- find $HOME/.stack/snapshots -type d -name "nightly*" -exec rm -rf {} ';' || true
+- find .stack-work -type f -name spec -exec valgrind --leak-check=full --show-reachable=yes {} ';'
 
 cache:
   apt: true
