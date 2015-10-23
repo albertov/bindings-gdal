@@ -25,8 +25,9 @@ gdalConf (pkg0, pbi) flags = do
                      extraLibDirs = extraLibDirs libbi ++ gdalLibDirs
                    , extraLibs    = extraLibs    libbi ++ gdalLibs
                    , includeDirs  = includeDirs  libbi ++ gdalInclude
-                   , cppOptions   = [ "-DGDAL_VERSION_MAJOR="++gdalMajor
-                                    , "-DGDAL_VERSION_MINOR="++gdalMinor]
+                   , cppOptions   = cppOptions   libbi ++
+                                     [ "-DGDAL_VERSION_MAJOR=" ++ gdalMajor
+                                     , "-DGDAL_VERSION_MINOR=" ++ gdalMinor]
                    }
      lib'       = lib { libBuildInfo = libbi' }
      lpd'       = lpd { library = Just lib' }
