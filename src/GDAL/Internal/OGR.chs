@@ -70,7 +70,7 @@ import Control.Monad.Catch(throwM, catch, catchJust)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Foreign.C.String (CString, peekCString, withCString)
-import Foreign.C.Types (CInt(..), CChar(..), CLong(..))
+import Foreign.C.Types (CInt(..), CChar(..), CLong(..), CLLong(..))
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Marshal.Utils (toBool)
 
