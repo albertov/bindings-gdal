@@ -45,6 +45,9 @@ module GDAL.Internal.OGR (
   , layerName
   , layerFeatureDef
 
+  , createFeature
+  , getFeature
+
   , registerAll
   , cleanupAll
 
@@ -57,6 +60,7 @@ module GDAL.Internal.OGR (
 
 {#context lib = "gdal" prefix = "OGR"#}
 
+import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Vector as V
 
@@ -66,7 +70,7 @@ import Control.Monad.Catch(throwM, catch, catchJust)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Foreign.C.String (CString, peekCString, withCString)
-import Foreign.C.Types (CInt(..), CChar(..))
+import Foreign.C.Types (CInt(..), CChar(..), CLong(..))
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Marshal.Utils (toBool)
 
@@ -219,7 +223,7 @@ createLayer ds FeatureDef{..} approxOk options = liftIO $
 #else
             error "should never reach here"
 #endif
-          else throwBindingException CantCreateMultipleGeomFields
+          else throwBindingException MultipleGeomFieldsNotSupported
       return fpL
   where
     supportsMultiGeomFields pL =
@@ -231,6 +235,20 @@ createLayer ds FeatureDef{..} approxOk options = liftIO $
     extendedOptions
       | gfdName fdGeom /= "" = ("GEOMETRY_NAME", gfdName fdGeom):options
       | otherwise            = options
+
+
+createFeature :: RWLayer s a -> Feature -> GDAL s ()
+createFeature layer feature = liftIO $ throwIfError "createFeature" $
+  withLockedLayerPtr layer $ \pL -> do
+    pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
+    void $ featureToHandle pFd feature ({#call OGR_L_CreateFeature as ^#} pL)
+
+
+getFeature :: Layer s t a -> Int64 -> GDAL s Feature
+getFeature layer fid = liftIO $ throwIfError "getFeature" $
+  withLockedLayerPtr layer $ \pL -> do
+    pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
+    featureFromHandle pFd ({#call OGR_L_GetFeature as ^#} pL (fromIntegral fid))
 
 
 canCreateMultipleGeometryFields :: Bool
@@ -263,6 +281,7 @@ layerGeomFieldDef p =
     <*> liftM toEnumC ({#call unsafe OGR_L_GetGeomType	as ^#} p)
     <*> ({#call unsafe OGR_L_GetSpatialRef as ^#} p >>=
           maybeNewSpatialRefBorrowedHandle)
+    <*> pure True
 
 newLayerHandle
   :: DataSource s t -> OGRException -> LayerH -> IO (Layer s t a)

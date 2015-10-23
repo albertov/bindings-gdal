@@ -86,7 +86,7 @@ spec = setupAndTeardown $ do
     describe "createLayer" $ do
       let strField    = fieldDef OFTString
           realField   = fieldDef OFTReal
-          gfd         = GeomFieldDef "" WkbPoint Nothing
+          gfd         = GeomFieldDef "" WkbPoint Nothing True
           check fd = do
             ds <- createMem []
             l <- createLayer ds fd StrictOK []

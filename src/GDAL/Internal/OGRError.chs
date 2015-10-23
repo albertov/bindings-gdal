@@ -35,7 +35,8 @@ data OGRException
   | InvalidLayerName  !Text
   | SQLQueryError     !Text
   | FieldParseError   !Text
-  | CantCreateMultipleGeomFields
+  | MultipleGeomFieldsNotSupported
+  | UnsupportedFieldType
   deriving (Show, Eq, Typeable)
 
 instance NFData OGRException where

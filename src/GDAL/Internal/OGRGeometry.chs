@@ -25,6 +25,7 @@ module GDAL.Internal.OGRGeometry (
   , withGeometry
   , withMaybeGeometry
   , cloneGeometry
+  , newGeometryHandle
 ) where
 
 {#context lib = "gdal" prefix = "OGR_G_"#}
