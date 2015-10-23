@@ -1,12 +1,16 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 #include "bindings.h"
 
 module GDAL.Internal.OGRFeature (
     OGRFeature (..)
+  , OGRFeatureDef (..)
   , OGRField   (..)
   , Fid (..)
   , FieldType (..)
@@ -23,6 +27,8 @@ module GDAL.Internal.OGRFeature (
 
   , featureToHandle
   , featureFromHandle
+  , lookupField
+  , getFid
 
   , withFieldDefnH
   , fieldDefFromHandle
@@ -45,8 +51,9 @@ import Data.ByteString.Char8 (packCStringLen)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import qualified Data.HashMap.Strict as HM
 import Data.Int (Int32, Int64)
-import Data.Monoid (mempty)
+import Data.Monoid (mempty, (<>))
 import Data.Proxy (Proxy(Proxy))
+import Data.String (fromString)
 
 import Data.Text (Text)
 import Data.Time.LocalTime (
@@ -103,9 +110,11 @@ class OGRField a where
   fromField :: Field -> Either Text a
 
 class OGRFeature a where
-  featureDef  :: Proxy a -> FeatureDef
   toFeature   :: a -> Feature
   fromFeature :: Feature -> Either Text a
+
+class OGRFeature a => OGRFeatureDef a where
+  featureDef  :: Proxy a -> FeatureDef
 
 
 {#enum FieldType {} omit (OFTMaxType) deriving (Eq,Show,Read,Bounded) #}
@@ -158,11 +167,17 @@ type Map a = HM.HashMap Text a
 
 data Feature
   = Feature {
-      fId      :: !(Maybe Fid)
-    , fFields  :: !(Map Field)
+      fFields  :: !(Map Field)
     , fGeom    :: !(Maybe Geometry)
     , fGeoms   :: !(Map (Maybe Geometry))
     } deriving (Show, Eq)
+
+lookupField :: Text -> Map a -> Maybe a
+lookupField = HM.lookup
+
+instance OGRFeature Feature where
+  toFeature    = id
+  fromFeature  = Right
 
 data FeatureDef
   = FeatureDef {
@@ -178,6 +193,10 @@ data FeatureDef
 {#pointer FieldDefnH   newtype#}
 {#pointer FeatureDefnH newtype#}
 
+deriving instance Eq FeatureH
+
+nullFeatureH :: FeatureH
+nullFeatureH = FeatureH nullPtr
 
 
 withFieldDefnH :: Text -> FieldDef -> (FieldDefnH -> IO a) -> IO a
@@ -287,8 +306,10 @@ withGeomFieldDefnH gfdName GeomFieldDef{..} f =
 nullFID :: Fid
 nullFID = Fid ({#const OGRNullFID#})
 
-featureToHandle :: FeatureDefnH -> Feature -> (FeatureH -> IO a) -> IO a
-featureToHandle fdH Feature{..} act =
+featureToHandle
+  :: OGRFeature f
+  => FeatureDefnH -> Maybe Fid -> f -> (FeatureH -> IO a) -> IO a
+featureToHandle fdH fId ft act =
   bracket ({#call unsafe OGR_F_Create as ^#} fdH)
           ({#call unsafe OGR_F_Destroy as ^#}) $ \pF -> do
     case fId of
@@ -315,44 +336,54 @@ featureToHandle fdH Feature{..} act =
       throwBindingException MultipleGeomFieldsNotSupported
 #endif
     act pF
+  where Feature {..} = toFeature ft
 
 imapM f v  = V.mapM  (uncurry f) (V.zip (V.enumFromN 0 (V.length v)) v)
 imapM_ f v = V.mapM_ (uncurry f) (V.zip (V.enumFromN 0 (V.length v)) v)
 
+getFid :: FeatureH -> IO (Maybe Fid)
+getFid pF = do
+  mFid <- liftM fromIntegral ({#call unsafe OGR_F_GetFID as ^#} pF)
+  return (if mFid == nullFID then Nothing else Just mFid)
 
-featureFromHandle :: FeatureDefnH -> IO FeatureH -> IO Feature
+featureFromHandle
+  :: OGRFeature a => FeatureDefnH -> IO FeatureH -> IO (Maybe (Maybe Fid, a))
 featureFromHandle fdH act =
   bracket act {#call unsafe OGR_F_Destroy as ^#} $ \pF -> do
-    mFid <- liftM fromIntegral ({#call unsafe OGR_F_GetFID as ^#} pF)
-    let fid = if mFid == nullFID then Nothing else Just mFid
-    fieldDefs <- fieldDefsFromFeatureDefnH fdH
-    fields <- flip imapM fieldDefs $ \i (fldName, f) -> do
-      isSet <- liftM toBool ({#call unsafe OGR_F_IsFieldSet as ^#} pF i)
-      if isSet
-        then getField (fldType f) i pF >>=
-              maybe (throwBindingException (FieldParseError fldName))
-                    (\f -> return (fldName, f))
-        else return (fldName, OGRNullField)
-    geomRef <- {#call unsafe OGR_F_StealGeometry as ^#} pF
-    geom <- if geomRef /= nullPtr
-              then liftM Just (newGeometryHandle geomRef)
-              else return Nothing
+    if (pF == nullFeatureH)
+      then return Nothing
+      else do
+        fid <- getFid pF
+        fieldDefs <- fieldDefsFromFeatureDefnH fdH
+        fields <- flip imapM fieldDefs $ \i (fldName, fd) -> do
+          isSet <- liftM toBool ({#call OGR_F_IsFieldSet as ^#} pF i)
+          if isSet
+            then getField (fldType fd) i pF >>=
+                  maybe (throwBindingException (FieldParseError fldName))
+                        (\f -> return (fldName, f))
+            else return (fldName, OGRNullField)
+        geomRef <- {#call unsafe OGR_F_StealGeometry as ^#} pF
+        geom <- if geomRef /= nullPtr
+                  then liftM Just (newGeometryHandle geomRef)
+                  else return Nothing
 #if MULTI_GEOM_FIELDS
-    geomFieldDefs <- geomFieldDefsFromFeatureDefnH fdH
-    geoms <- flip imapM (V.tail geomFieldDefs) $ \ix (gfdName, _) -> do
-      pG <- {#call unsafe OGR_F_GetGeomFieldRef as ^#} pF (fromIntegral ix + 1)
-      g <- if pG /= nullPtr
-            then liftM Just (cloneGeometry pG)
-            else return Nothing
-      return (gfdName, g)
+        geomFieldDefs <- geomFieldDefsFromFeatureDefnH fdH
+        geoms <- flip imapM (V.tail geomFieldDefs) $ \ix (gfdName, _) -> do
+          pG <- {#call unsafe OGR_F_GetGeomFieldRef as ^#} pF (ix + 1)
+          g <- if pG /= nullPtr
+                then liftM Just (cloneGeometry pG)
+                else return Nothing
+          return (gfdName, g)
 #else
-    let geoms = mempty
+        let geoms = mempty
 #endif
-    return Feature { fId     = fid
-                   , fFields = HM.fromList (V.toList fields)
+        either (throwBindingException . FromFeatureError)
+               (\f -> return (Just (fid,f)))
+               (fromFeature Feature {
+                     fFields = HM.fromList (V.toList fields)
                    , fGeom   = geom
                    , fGeoms  = HM.fromList (V.toList geoms)
-                   }
+                   })
 
 
 -- ############################################################################
@@ -424,8 +455,7 @@ setField (OGRTime (TimeOfDay h mn s) tz) ix f =
   {#call OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix) 0 0 0
   (fromIntegral h) (fromIntegral mn) (truncate s) (fromOGRTimeZone tz)
 
-setField OGRNullField ix f =
-  {#call unsafe OGR_F_UnsetField as ^#} f ix
+setField OGRNullField ix f = {#call OGR_F_UnsetField as ^#} f ix
 
 -- ############################################################################
 -- getField
@@ -433,9 +463,9 @@ setField OGRNullField ix f =
 
 getField :: FieldType -> CInt -> FeatureH -> IO (Maybe Field)
 
-getField OFTInteger ix f
-  = liftM (Just . OGRInteger . fromIntegral)
-    ({#call unsafe OGR_F_GetFieldAsInteger as ^#} f ix)
+getField OFTInteger ix f =
+  liftM (Just . OGRInteger . fromIntegral)
+    ({#call  OGR_F_GetFieldAsInteger as ^#} f ix)
 
 getField OFTIntegerList ix f = alloca $ \lenP -> do
   buf <- {#call unsafe OGR_F_GetFieldAsIntegerList as ^#} f ix lenP
@@ -535,3 +565,30 @@ peekIntegral = liftM fromIntegral . peek
 getFieldName :: FieldDefnH -> IO Text
 getFieldName =
   {#call unsafe OGR_Fld_GetNameRef as ^#} >=> peekEncodedCString
+
+
+
+
+--
+-- Instances
+--
+
+instance OGRField Int where
+#if GDAL_VERSION_MAJOR >= 2
+  fieldDef _  = FieldDef OFTInteger64 Nothing Nothing Nothing False
+#else
+  fieldDef _  = FieldDef OFTInteger Nothing Nothing Nothing False
+#endif
+  toField                    = OGRInteger . fromIntegral
+  fromField (OGRInteger v)   = Right (fromIntegral v)
+  fromField (OGRInteger64 v) = Right (fromIntegral v)
+  fromField f                = Left ("Invalid Int field: " <>
+                                    (fromString (show f)))
+
+instance OGRField a => OGRField (Maybe a) where
+  fieldDef _             = (fieldDef (Proxy :: Proxy a)) {fldNullable = True}
+  toField Nothing        = OGRNullField
+  toField (Just a)       = toField a
+  fromField OGRNullField = Right Nothing
+  fromField a            = fmap Just (fromField a)
+

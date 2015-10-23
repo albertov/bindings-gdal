@@ -1,4 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -35,6 +36,7 @@ module GDAL.Internal.OGR (
   , executeSQL
 
   , createLayer
+  , createLayerWithDef
   , getLayer
   , getLayerByName
 
@@ -47,6 +49,7 @@ module GDAL.Internal.OGR (
 
   , createFeature
   , getFeature
+  , setFeature
 
   , registerAll
   , cleanupAll
@@ -56,21 +59,24 @@ module GDAL.Internal.OGR (
   , unDataSource
   , unLayer
   , withLockedDataSourcePtr
+  , layerHasCapability
+  , driverHasCapability
+  , dataSourceHasCapability
 ) where
 
 {#context lib = "gdal" prefix = "OGR"#}
 
-import Data.Int (Int64)
+import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
 import qualified Data.Vector as V
 
 import Control.Applicative ((<$>), (<*>), pure)
-import Control.Monad (liftM, when, void, forM_, (<=<))
+import Control.Monad (liftM, when, void, (<=<))
 import Control.Monad.Catch(throwM, catch, catchJust)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Foreign.C.String (CString, peekCString, withCString)
-import Foreign.C.Types (CInt(..), CChar(..), CLong(..), CLLong(..))
+import Foreign.C.Types (CInt(..), CChar(..), CLong(..))
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Marshal.Utils (toBool)
 
@@ -84,7 +90,6 @@ import System.IO.Unsafe (unsafePerformIO)
 {#import GDAL.Internal.OGRError#}
 {#import GDAL.Internal.CPLString#}
 import GDAL.Internal.CPLError hiding (None)
-import GDAL.Internal.CPLConv (cplFree)
 import GDAL.Internal.Util
 import GDAL.Internal.Types
 
@@ -202,9 +207,16 @@ driverByName name = withCString name $ \pName -> do
   } deriving (Eq, Show) #}
 
 createLayer
+  :: forall s a. OGRFeatureDef a
+  => RWDataSource s -> ApproxOK -> OptionList -> GDAL s (RWLayer s a)
+createLayer ds = createLayerWithDef ds (featureDef (Proxy :: Proxy a))
+
+
+
+createLayerWithDef
   :: RWDataSource s -> FeatureDef -> ApproxOK -> OptionList
   -> GDAL s (RWLayer s a)
-createLayer ds FeatureDef{..} approxOk options = liftIO $
+createLayerWithDef ds FeatureDef{..} approxOk options = liftIO $
   useAsEncodedCString fdName $ \pName ->
   withMaybeSpatialReference (gfdSrs fdGeom) $ \pSrs ->
   withOptionList options $ \pOpts ->
@@ -234,18 +246,28 @@ createLayer ds FeatureDef{..} approxOk options = liftIO $
     gType = fromEnumC (gfdType fdGeom)
 
 
-createFeature :: RWLayer s a -> Feature -> GDAL s ()
+createFeature :: OGRFeature a => RWLayer s a -> a -> GDAL s Fid
 createFeature layer feature = liftIO $ throwIfError "createFeature" $
   withLockedLayerPtr layer $ \pL -> do
     pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
-    void $ featureToHandle pFd feature ({#call OGR_L_CreateFeature as ^#} pL)
+    featureToHandle pFd Nothing feature $ \pF -> do
+      void $ {#call OGR_L_CreateFeature as ^#} pL pF
+      getFid pF >>= maybe (throwBindingException UnexpectedNullFid) return
 
 
-getFeature :: Layer s t a -> Fid -> GDAL s Feature
-getFeature layer (Fid fid) = liftIO $ throwIfError "getFeature" $
+setFeature :: OGRFeature a => RWLayer s a -> Fid -> a -> GDAL s ()
+setFeature layer fid feature = liftIO $ throwIfError "setFeature" $
   withLockedLayerPtr layer $ \pL -> do
     pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
-    featureFromHandle pFd ({#call OGR_L_GetFeature as ^#} pL (fromIntegral fid))
+    void $ featureToHandle pFd (Just fid) feature
+      ({#call OGR_L_SetFeature as ^#} pL)
+
+getFeature :: OGRFeature a => Layer s t a -> Fid -> GDAL s (Maybe a)
+getFeature layer (Fid fid) = liftIO $
+  withLockedLayerPtr layer $ \pL -> do
+    pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
+    liftM (fmap snd) $ featureFromHandle pFd $
+      {#call OGR_L_GetFeature as ^#} pL (fromIntegral fid)
 
 
 canCreateMultipleGeometryFields :: Bool

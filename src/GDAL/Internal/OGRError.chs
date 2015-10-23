@@ -30,6 +30,7 @@ data OGRException
   | NullGeometry
   | NullSpatialReference
   | NullLayer
+  | UnexpectedNullFid
   | UnknownDriver     !String
   | InvalidLayerIndex !Int
   | InvalidLayerName  !Text

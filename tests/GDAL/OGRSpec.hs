@@ -1,21 +1,34 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module GDAL.OGRSpec (main, spec, setupAndTeardown) where
 
-import Control.Monad (void, when)
+import Control.Monad (void, when, forM_)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Either (isRight)
 import Data.Maybe (isNothing)
 import Data.Monoid (mempty)
+import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
+import Data.Typeable (Typeable, typeOf)
 
 import System.Mem (performMajorGC)
 import System.FilePath (joinPath)
 
-import Test.Hspec (Spec, SpecWith, hspec, describe, before_, after_, afterAll_)
+import Test.Hspec (
+    Spec
+  , SpecWith
+  , Arg
+  , hspec
+  , describe
+  , before_
+  , after_
+  , afterAll_
+  )
 
 import GDAL (
     GDAL
@@ -84,10 +97,10 @@ spec = setupAndTeardown $ do
     it "create throws on invalid driver name" $
       create "foo" "" [] `shouldThrow` (==(UnknownDriver "foo"))
 
-    describe "createLayer" $ do
+    describe "createLayerWithDef" $ do
       let check fd = do
             ds <- createMem []
-            l <- createLayer ds fd StrictOK []
+            l <- createLayerWithDef ds fd StrictOK []
             layerFeatureDef l >>= (`shouldBe` fd)
 
       it "works with unicode name and field names" $
@@ -132,19 +145,20 @@ spec = setupAndTeardown $ do
                               , fdFields = [strField "str" , intField "int"]
                               , fdGeom   = pointDef
                               , fdGeoms  = mempty}
-            fid  = Fid 66
             geom = either exc Just (createFromWkt Nothing "POINT (45 87)")
             exc  = error . ("Unexpected createFromWkt error: " ++) . show
-            feat = Feature { fId     = Just fid
-                           , fFields = [ ("str", OGRString "Avión")
+            feat = Feature { fFields = [ ("str", OGRString "Avión")
                                        , ("int", OGRInteger 34)]
                            , fGeom   = geom
                            , fGeoms  = mempty}
         ds <- createMem []
-        l <- createLayer ds fDef StrictOK []
-        createFeature l feat
-        getFeature l fid >>= (`shouldBe` feat)
+        l <- createLayerWithDef ds fDef StrictOK []
+        fid <- createFeature l feat
+        getFeature l fid >>= (`shouldBe` Just feat)
 
+  forM_ (["Memory", "ESRI Shapefile"] :: [String]) $ \driverName -> do
+    ogrFieldSpec driverName (34 :: Int)
+    ogrFieldSpec driverName (Just 65 :: Maybe Int)
 
 
   describe "getSpatialFilter" $ do
@@ -227,3 +241,47 @@ intField  name = (name, FieldDef OFTInteger Nothing Nothing Nothing True)
 
 pointDef :: GeomFieldDef
 pointDef = GeomFieldDef WkbPoint Nothing True
+
+data TestFeature a
+  = TestFeature  {
+      tfGeom :: Geometry
+    , tfData :: a
+  } deriving (Eq, Show)
+
+instance OGRField a => OGRFeature (TestFeature a) where
+  toFeature TestFeature{..} =
+    Feature { fFields = [("data", toField tfData)]
+            , fGeom   = Just tfGeom
+            , fGeoms  = mempty}
+  fromFeature Feature{..} = do
+    d    <- maybe (Left "TestFeature: field not found") fromField
+                  ("data" `lookupField` fFields)
+    geom <- maybe (Left "TestFeature: No Geom") Right fGeom
+    return (TestFeature geom d)
+
+
+instance OGRField a => OGRFeatureDef (TestFeature a) where
+  featureDef _ =
+    FeatureDef {
+      fdName   = "Test"
+    , fdFields = [("data", fieldDef (Proxy :: Proxy a))]
+    , fdGeom   = GeomFieldDef WkbPoint Nothing True
+    , fdGeoms  = mempty}
+
+ogrFieldSpec
+  :: forall a. (OGRFeatureDef (TestFeature a), Typeable a, Eq a, Show a)
+  => String -> a -> SpecWith (Arg (IO ()))
+ogrFieldSpec driverName value = do
+
+  let feature = TestFeature geom value
+      geom = either exc id (createFromWkt Nothing "POINT (45 87)")
+      exc  = error . ("Unexpected createFromWkt error: " ++) . show
+      typeName = show (typeOf (undefined :: a))
+
+  describe ("OGRField instance " ++ typeName ++ " " ++ driverName) $ do
+
+    withDir "can create and retrieve a feature" $ \tmpDir -> do
+      ds <- create driverName (joinPath [tmpDir, "test"]) []
+      l <- createLayer ds StrictOK []
+      fid <- createFeature l feature
+      getFeature l fid >>= (`shouldBe` Just feature)
