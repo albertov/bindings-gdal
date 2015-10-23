@@ -10,6 +10,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Data.Either (isRight)
 import Data.Maybe (isNothing)
 import Data.Monoid (mempty)
+import Data.Text (Text)
 
 import System.Mem (performMajorGC)
 import System.FilePath (joinPath)
@@ -84,10 +85,7 @@ spec = setupAndTeardown $ do
       create "foo" "" [] `shouldThrow` (==(UnknownDriver "foo"))
 
     describe "createLayer" $ do
-      let strField    = fieldDef OFTString
-          realField   = fieldDef OFTReal
-          gfd         = geomFieldDef WkbPoint ""
-          check fd = do
+      let check fd = do
             ds <- createMem []
             l <- createLayer ds fd StrictOK []
             layerFeatureDef l >>= (`shouldBe` fd)
@@ -95,13 +93,13 @@ spec = setupAndTeardown $ do
       it "works with unicode name and field names" $
         check (FeatureDef { fdName   = "Barça Players"
                           , fdFields = [ strField "contraseña", realField "año"]
-                          , fdGeom   = gfd
+                          , fdGeom   = pointDef
                           , fdGeoms  = mempty})
 
       it "works with a single geometry field with no srs" $
         check (FeatureDef { fdName   = "Barça Players"
                           , fdFields = mempty
-                          , fdGeom   = gfd
+                          , fdGeom   = pointDef
                           , fdGeoms  = mempty})
 
       it "works with a single geometry field with srs" $ do
@@ -109,38 +107,36 @@ spec = setupAndTeardown $ do
             exc = error . ("Unexpected fromEPSG error: " ++) . show
         check (FeatureDef { fdName   = "Barça Players"
                           , fdFields = mempty
-                          , fdGeom   = gfd {gfdSrs = srs}
+                          , fdGeom   = pointDef {gfdSrs = srs}
                           , fdGeoms  = mempty})
 
       when canCreateMultipleGeometryFields $ do
         it "works with several geometry field with no srs" $ do
           check (FeatureDef { fdName   = "Barça Players"
                             , fdFields = mempty
-                            , fdGeom   = gfd
-                            , fdGeoms  = [gfd{gfdName="another_geom"}]})
+                            , fdGeom   = pointDef
+                            , fdGeoms  = [("another_geom", pointDef)]})
 
         it "works with several geometry field with srs" $ do
           let srs = either exc Just (fromEPSG 23030)
               exc = error . ("Unexpected fromEPSG error: " ++) . show
           check (FeatureDef { fdName   = "Barça Players"
                             , fdFields = mempty
-                            , fdGeom   = gfd
-                            , fdGeoms  = [gfd{ gfdName = "another_geom"
-                                             , gfdSrs  = srs}]})
+                            , fdGeom   = pointDef
+                            , fdGeoms  = [( "another_geom"
+                                          , pointDef {gfdSrs=srs})]})
     describe "layer CRUD" $ do
 
       it "can create and retrieve a feature" $ do
         let fDef = FeatureDef { fdName   = "Some Ñçüo"
-                              , fdFields = [ fieldDef OFTString "Stü"
-                                           , fieldDef OFTInteger "N´m"]
-                              , fdGeom = geomFieldDef WkbPoint []
-                              , fdGeoms = mempty}
-            fid  = 66
+                              , fdFields = [strField "Stü" , intField "N´m"]
+                              , fdGeom   = pointDef
+                              , fdGeoms  = mempty}
+            fid  = Fid 66
             geom = either exc Just (createFromWkt Nothing "POINT (45 87)")
             exc  = error . ("Unexpected createFromWkt error: " ++) . show
             feat = Feature { fId     = Just fid
-                           , fFields = [ Just (OGRString  "Avión")
-                                       , Just (OGRInteger 34)]
+                           , fFields = [OGRString "Avión", OGRInteger 34]
                            , fGeom   = geom
                            , fGeoms  = mempty}
         ds <- createMem []
@@ -222,3 +218,11 @@ getShapePath = liftIO $ getDataFileName "tests/fixtures/fondo.shp"
 setupAndTeardown :: SpecWith a -> SpecWith a
 setupAndTeardown =
   before_ OGR.registerAll . after_  performMajorGC . afterAll_ OGR.cleanupAll
+
+strField, realField, intField :: Text -> (Text, FieldDef)
+strField  name = (name, FieldDef OFTString  Nothing Nothing Nothing True)
+realField name = (name, FieldDef OFTReal    Nothing Nothing Nothing True)
+intField  name = (name, FieldDef OFTInteger Nothing Nothing Nothing True)
+
+pointDef :: GeomFieldDef
+pointDef = GeomFieldDef WkbPoint Nothing True

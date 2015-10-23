@@ -35,6 +35,9 @@ data OGRException
   | InvalidLayerName  !Text
   | SQLQueryError     !Text
   | FieldParseError   !Text
+  | FromFieldError    !Text
+  | FromFeatureError  !Text
+  | NoSuchField       !Text
   | MultipleGeomFieldsNotSupported
   | UnsupportedFieldType
   deriving (Show, Eq, Typeable)

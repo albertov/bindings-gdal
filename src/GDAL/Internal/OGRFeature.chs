@@ -1,11 +1,15 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 #include "bindings.h"
 
 module GDAL.Internal.OGRFeature (
-    FieldType (..)
+    OGRFeature (..)
+  , OGRField   (..)
+  , Fid (..)
+  , FieldType (..)
   , Field (..)
   , Feature (..)
   , FeatureH (..)
@@ -16,9 +20,6 @@ module GDAL.Internal.OGRFeature (
   , FeatureDef (..)
   , GeomFieldDef (..)
   , FieldDef (..)
-
-  , fieldDef
-  , geomFieldDef
 
   , featureToHandle
   , featureFromHandle
@@ -35,7 +36,7 @@ module GDAL.Internal.OGRFeature (
 {#context lib = "gdal" prefix = "OGR" #}
 
 import Control.Applicative ((<$>), (<*>), pure)
-import Control.Monad (liftM, (>=>), (<=<), when, void)
+import Control.Monad (liftM, liftM2, (>=>), (<=<), when, void)
 import Control.Monad.Catch (bracket)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -44,6 +45,8 @@ import Data.ByteString.Char8 (packCStringLen)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Data.Int (Int32, Int64)
 import Data.Monoid (mempty)
+import Data.Proxy (Proxy(Proxy))
+
 import Data.Text (Text)
 import Data.Time.LocalTime (
     LocalTime(..)
@@ -90,6 +93,20 @@ import GDAL.Internal.Util (
 #include "ogr_api.h"
 #include "cpl_string.h"
 
+newtype Fid = Fid { unFid :: Int64 }
+  deriving (Eq, Show, Num)
+
+class OGRField a where
+  fieldDef  :: Proxy a -> FieldDef
+  toField   :: a  -> Field
+  fromField :: Field -> Either Text a
+
+class OGRFeature a where
+  featureDef  :: Proxy a -> FeatureDef
+  toFeature   :: a -> Feature
+  fromFeature :: Feature -> Either Text a
+
+
 {#enum FieldType {} omit (OFTMaxType) deriving (Eq,Show,Read,Bounded) #}
 
 {#enum Justification  {}
@@ -111,6 +128,7 @@ data Field
   | OGRDateTime      !LocalTime !OGRTimeZone
   | OGRDate          !Day       !OGRTimeZone
   | OGRTime          !TimeOfDay !OGRTimeZone
+  | OGRNullField
   deriving (Show, Eq)
 
 data OGRTimeZone
@@ -121,32 +139,24 @@ data OGRTimeZone
 
 data FieldDef
   = FieldDef {
-      fldName     :: !Text
-    , fldType     :: !FieldType
+      fldType     :: !FieldType
     , fldWidth    :: !(Maybe Int)
     , fldPrec     :: !(Maybe Int)
     , fldJust     :: !(Maybe Justification)
     , fldNullable :: !Bool
     } deriving (Show, Eq)
 
-fieldDef :: FieldType -> Text -> FieldDef
-fieldDef ftype name = FieldDef name ftype Nothing Nothing Nothing True
-
 data GeomFieldDef
   = GeomFieldDef {
-      gfdName     :: !Text
-    , gfdType     :: !GeometryType
+      gfdType     :: !GeometryType
     , gfdSrs      :: !(Maybe SpatialReference)
     , gfdNullable :: !Bool
     } deriving (Show, Eq)
 
-geomFieldDef :: GeometryType -> Text -> GeomFieldDef
-geomFieldDef ftype name = GeomFieldDef name ftype Nothing True
-
 data Feature
   = Feature {
-      fId      :: !(Maybe Int64)
-    , fFields  :: !(V.Vector (Maybe Field))
+      fId      :: !(Maybe Fid)
+    , fFields  :: !(V.Vector Field)
     , fGeom    :: !(Maybe Geometry)
     , fGeoms   :: !(V.Vector Geometry)
     } deriving (Show, Eq)
@@ -154,9 +164,9 @@ data Feature
 data FeatureDef
   = FeatureDef {
       fdName    :: !Text
-    , fdFields  :: !(V.Vector FieldDef)
+    , fdFields  :: !(V.Vector (Text, FieldDef))
     , fdGeom    :: !GeomFieldDef
-    , fdGeoms   :: !(V.Vector GeomFieldDef)
+    , fdGeoms   :: !(V.Vector (Text, GeomFieldDef))
     } deriving (Show, Eq)
 
 
@@ -167,8 +177,8 @@ data FeatureDef
 
 
 
-withFieldDefnH :: FieldDef -> (FieldDefnH -> IO a) -> IO a
-withFieldDefnH FieldDef{..} f =
+withFieldDefnH :: Text -> FieldDef -> (FieldDefnH -> IO a) -> IO a
+withFieldDefnH fldName FieldDef{..} f =
   useAsEncodedCString fldName $ \pName ->
   bracket ({#call unsafe OGR_Fld_Create as ^#} pName (fromEnumC fldType))
           ({#call unsafe OGR_Fld_Destroy as ^#}) (\p -> populate p >> f p)
@@ -190,8 +200,7 @@ withFieldDefnH FieldDef{..} f =
 fieldDefFromHandle :: FieldDefnH -> IO FieldDef
 fieldDefFromHandle p =
   FieldDef
-    <$> getFieldName p
-    <*> liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} p)
+    <$> liftM toEnumC ({#call unsafe OGR_Fld_GetType as ^#} p)
     <*> liftM iToMaybe ({#call unsafe OGR_Fld_GetWidth as ^#} p)
     <*> liftM iToMaybe ({#call unsafe OGR_Fld_GetPrecision as ^#} p)
     <*> liftM jToMaybe ({#call unsafe OGR_Fld_GetJustify as ^#} p)
@@ -213,7 +222,7 @@ featureDefFromHandle gfd p = do
         | V.null gfields = (gfd, gfields)
         -- ignore layer definition since it doesn't carry correct nullability
         -- info
-        | otherwise      = (V.unsafeHead gfields, V.unsafeTail gfields)
+        | otherwise      = (snd (V.unsafeHead gfields), V.unsafeTail gfields)
 #else
   let (gfd', gfields') = (gfd, V.empty)
 #endif
@@ -223,17 +232,19 @@ featureDefFromHandle gfd p = do
     <*> pure gfd'
     <*> pure gfields'
 
-fieldDefsFromFeatureDefnH :: FeatureDefnH -> IO (V.Vector FieldDef)
+fieldDefsFromFeatureDefnH :: FeatureDefnH -> IO (V.Vector (Text, FieldDef))
 fieldDefsFromFeatureDefnH p = do
   nFields <- {#call unsafe OGR_FD_GetFieldCount as ^#} p
-  V.generateM (fromIntegral nFields) $
-    fieldDefFromHandle <=<
-      ({#call unsafe OGR_FD_GetFieldDefn as ^#} p . fromIntegral)
+  V.generateM (fromIntegral nFields) $ \i -> do
+    fDef <- {#call unsafe OGR_FD_GetFieldDefn as ^#} p (fromIntegral i)
+    liftM2 (,) (getFieldName fDef) (fieldDefFromHandle fDef)
+
 
 
 #if MULTI_GEOM_FIELDS
 
-geomFieldDefsFromFeatureDefnH :: FeatureDefnH -> IO (V.Vector GeomFieldDef)
+geomFieldDefsFromFeatureDefnH
+  :: FeatureDefnH -> IO (V.Vector (Text, GeomFieldDef))
 
 {#pointer GeomFieldDefnH newtype#}
 
@@ -242,20 +253,21 @@ geomFieldDefsFromFeatureDefnH p = do
   V.generateM (fromIntegral nFields) $
     gFldDef <=< ({#call unsafe OGR_FD_GetGeomFieldDefn as ^#} p . fromIntegral)
   where
-    gFldDef g =
-      GeomFieldDef
-        <$> ({#call unsafe OGR_GFld_GetNameRef as ^#} g >>= peekEncodedCString)
-        <*> liftM toEnumC ({#call unsafe OGR_GFld_GetType as ^#} g)
-        <*> ({#call unsafe OGR_GFld_GetSpatialRef as ^#} g >>=
-              maybeNewSpatialRefBorrowedHandle)
+    gFldDef g = do
+      name <- {#call unsafe OGR_GFld_GetNameRef as ^#} g >>= peekEncodedCString
+      gDef <- GeomFieldDef
+              <$> liftM toEnumC ({#call unsafe OGR_GFld_GetType as ^#} g)
+              <*> ({#call unsafe OGR_GFld_GetSpatialRef as ^#} g >>=
+                    maybeNewSpatialRefBorrowedHandle)
 #if (GDAL_VERSION_MAJOR >= 2)
-        <*> liftM toBool ({#call unsafe OGR_GFld_IsNullable as ^#} g)
+              <*> liftM toBool ({#call unsafe OGR_GFld_IsNullable as ^#} g)
 #else
-        <*> pure True
+              <*> pure True
 #endif
+      return (name, gDef)
 
-withGeomFieldDefnH :: GeomFieldDef -> (GeomFieldDefnH -> IO a) -> IO a
-withGeomFieldDefnH GeomFieldDef{..} f =
+withGeomFieldDefnH :: Text -> GeomFieldDef -> (GeomFieldDefnH -> IO a) -> IO a
+withGeomFieldDefnH gfdName GeomFieldDef{..} f =
   useAsEncodedCString gfdName $ \pName ->
   bracket ({#call unsafe OGR_GFld_Create as ^#} pName (fromEnumC gfdType))
           ({#call unsafe OGR_GFld_Destroy as ^#}) (\p -> populate p >> f p)
@@ -269,20 +281,17 @@ withGeomFieldDefnH GeomFieldDef{..} f =
 
 #endif -- MULTI_GEOM_FIELDS
 
-nullFID :: Int64
-nullFID = {#const OGRNullFID#}
+nullFID :: Fid
+nullFID = Fid ({#const OGRNullFID#})
 
 featureToHandle :: FeatureDefnH -> Feature -> (FeatureH -> IO a) -> IO a
 featureToHandle fdH Feature{..} act =
   bracket ({#call unsafe OGR_F_Create as ^#} fdH)
           ({#call unsafe OGR_F_Destroy as ^#}) $ \pF -> do
     case fId of
-      Just fid -> void $ {#call OGR_F_SetFID as ^#} pF (fromIntegral fid)
-      Nothing  -> return ()
-    flip imapM_ fFields $ \ix mF ->
-      case mF of
-        Just f  -> setField f ix pF
-        Nothing -> {#call unsafe OGR_F_UnsetField as ^#} pF ix
+      Just (Fid fid) -> void $ {#call OGR_F_SetFID as ^#} pF (fromIntegral fid)
+      Nothing        -> return ()
+    imapM_ (\ix f -> setField f ix pF) fFields
     case fGeom of
       Just g  -> void $ withGeometry g ({#call OGR_F_SetGeometry as ^#} pF)
       Nothing -> return ()
@@ -305,11 +314,12 @@ featureFromHandle fdH act =
     mFid <- liftM fromIntegral ({#call unsafe OGR_F_GetFID as ^#} pF)
     let fid = if mFid == nullFID then Nothing else Just mFid
     fieldDefs <- fieldDefsFromFeatureDefnH fdH
-    fields <- flip imapM fieldDefs $ \i f -> do
+    fields <- flip imapM fieldDefs $ \i (fldName, f) -> do
       isSet <- liftM toBool ({#call unsafe OGR_F_IsFieldSet as ^#} pF i)
       if isSet
-        then liftM Just (getField f i pF)
-        else return Nothing
+        then getField (fldType f) i pF >>=
+              maybe (throwBindingException (FieldParseError fldName)) return
+        else return OGRNullField
     geomRef <- {#call unsafe OGR_F_StealGeometry as ^#} pF
     geom <- if geomRef /= nullPtr
               then liftM Just (newGeometryHandle geomRef)
@@ -349,8 +359,12 @@ setField (OGRInteger64List v) ix f =
     {#call OGR_F_SetFieldInteger64List as ^#} f (fromIntegral ix)
       (fromIntegral (St.length v)) . castPtr
 #else
-setField (OGRInteger64 _) _ _     = throwBindingException UnsupportedFieldType
-setField (OGRInteger64List _) _ _ = throwBindingException UnsupportedFieldType
+-- | TODO: check for overflow
+setField (OGRInteger64 v)     ix f =
+  setField (OGRInteger (fromIntegral v)) ix f
+
+setField (OGRInteger64List v) ix f =
+  setField (OGRIntegerList (St.map fromIntegral v)) ix f
 #endif
 
 setField (OGRReal v) ix f =
@@ -391,83 +405,79 @@ setField (OGRTime (TimeOfDay h mn s) tz) ix f =
   {#call OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix) 0 0 0
   (fromIntegral h) (fromIntegral mn) (truncate s) (fromOGRTimeZone tz)
 
+setField OGRNullField ix f =
+  {#call unsafe OGR_F_UnsetField as ^#} f ix
+
 -- ############################################################################
 -- getField
 -- ############################################################################
 
-getField :: FieldDef -> CInt -> FeatureH -> IO Field
+getField :: FieldType -> CInt -> FeatureH -> IO (Maybe Field)
 
-getField FieldDef{fldType=OFTInteger} ix f
-  = liftM (OGRInteger . fromIntegral)
+getField OFTInteger ix f
+  = liftM (Just . OGRInteger . fromIntegral)
     ({#call unsafe OGR_F_GetFieldAsInteger as ^#} f ix)
 
-getField FieldDef{fldType=OFTIntegerList} ix f = alloca $ \lenP -> do
+getField OFTIntegerList ix f = alloca $ \lenP -> do
   buf <- {#call unsafe OGR_F_GetFieldAsIntegerList as ^#} f ix lenP
   nElems <- peekIntegral lenP
   vec <- Stm.new nElems
   Stm.unsafeWith vec $ \vP ->
     copyBytes vP (buf :: Ptr CInt) (nElems * sizeOf (undefined :: CInt))
-  liftM OGRIntegerList (St.unsafeFreeze (Stm.unsafeCast vec))
+  liftM (Just . OGRIntegerList) (St.unsafeFreeze (Stm.unsafeCast vec))
 
 #if (GDAL_VERSION_MAJOR >= 2)
-getField FieldDef{fldType=OFTInteger64} ix f
-  = liftM (OGRInteger64 . fromIntegral)
+getField OFTInteger64 ix f
+  = liftM (Just . OGRInteger64 . fromIntegral)
     ({#call unsafe OGR_F_GetFieldAsInteger64 as ^#} f ix)
 
-getField FieldDef{fldType=OFTInteger64List} ix f = alloca $ \lenP -> do
+getField OFTInteger64List ix f = alloca $ \lenP -> do
   buf <- {#call unsafe OGR_F_GetFieldAsInteger64List as ^#} f ix lenP
   nElems <- peekIntegral lenP
   vec <- Stm.new nElems
   Stm.unsafeWith vec $ \vP ->
     copyBytes vP (buf :: Ptr CLLong) (nElems * sizeOf (undefined :: CLLong))
-  liftM OGRInteger64List (St.unsafeFreeze (Stm.unsafeCast vec))
+  liftM (Just . OGRInteger64List) (St.unsafeFreeze (Stm.unsafeCast vec))
 #endif
 
-getField FieldDef{fldType=OFTReal} ix f
-  = liftM (OGRReal . realToFrac)
+getField OFTReal ix f
+  = liftM (Just . OGRReal . realToFrac)
     ({#call unsafe OGR_F_GetFieldAsDouble as ^#} f ix)
 
-getField FieldDef{fldType=OFTRealList} ix f = alloca $ \lenP -> do
+getField OFTRealList ix f = alloca $ \lenP -> do
   buf <- {#call unsafe OGR_F_GetFieldAsDoubleList as ^#} f ix lenP
   nElems <- peekIntegral lenP
   vec <- Stm.new nElems
   Stm.unsafeWith vec $ \vP ->
      copyBytes vP (buf :: Ptr CDouble) (nElems * sizeOf (undefined :: CDouble))
-  liftM OGRRealList (St.unsafeFreeze (Stm.unsafeCast vec))
+  liftM (Just . OGRRealList) (St.unsafeFreeze (Stm.unsafeCast vec))
 
-getField FieldDef{fldType=OFTString} ix f = liftM OGRString
+getField OFTString ix f = liftM (Just . OGRString)
   (({#call unsafe OGR_F_GetFieldAsString as ^#} f ix) >>= peekEncodedCString)
 
-getField fd@FieldDef{fldType=OFTWideString} ix f =
-  getField fd{fldType=OFTString} ix f
+getField OFTWideString ix f = getField OFTString ix f
 
-getField FieldDef{fldType=OFTStringList} ix f = liftM OGRStringList $ do
+getField OFTStringList ix f = liftM (Just . OGRStringList) $ do
   ptr <- {#call unsafe OGR_F_GetFieldAsStringList as ^#} f ix
   nElems <- liftM fromIntegral ({#call unsafe CSLCount as ^#} ptr)
   V.generateM nElems (peekElemOff ptr >=> peekEncodedCString)
 
-getField fd@FieldDef{fldType=OFTWideStringList} ix f =
-  getField fd{fldType=OFTStringList} ix f
+getField OFTWideStringList ix f = getField OFTStringList ix f
 
-getField FieldDef{fldType=OFTBinary} ix f = alloca $ \lenP -> do
+getField OFTBinary ix f = alloca $ \lenP -> do
   buf <- liftM castPtr ({#call unsafe OGR_F_GetFieldAsBinary as ^#} f ix lenP)
   nElems <- peekIntegral lenP
-  liftM OGRBinary (packCStringLen (buf, nElems))
+  liftM (Just . OGRBinary) (packCStringLen (buf, nElems))
 
-getField FieldDef{fldType=OFTDateTime,fldName=fname} ix f =
-  getDateTime ix f >>=
-    maybe (throwBindingException (FieldParseError fname))
-          (return . uncurry OGRDateTime)
+getField OFTDateTime ix f =
+  liftM (fmap (uncurry OGRDateTime)) (getDateTime ix f)
 
-getField FieldDef{fldType=OFTDate, fldName=fname} ix f =
-  getDateTime ix f >>=
-    maybe (throwBindingException (FieldParseError fname))
-          (return . (\(LocalTime d _,tz) -> OGRDate d tz))
+getField OFTDate ix f =
+  liftM (fmap (\(LocalTime d _,tz) -> OGRDate d tz)) (getDateTime ix f)
 
-getField FieldDef{fldType=OFTTime, fldName=fname} ix f =
-  getDateTime ix f >>=
-    maybe (throwBindingException (FieldParseError fname))
-          (return . (\(LocalTime _ t,tz) -> OGRTime t tz))
+getField OFTTime ix f =
+  liftM (fmap (\(LocalTime _ t,tz) -> OGRTime t tz)) (getDateTime ix f)
+
 
 getDateTime :: CInt -> FeatureH -> IO (Maybe (LocalTime, OGRTimeZone))
 getDateTime ix f

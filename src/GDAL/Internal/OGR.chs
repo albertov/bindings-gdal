@@ -207,18 +207,18 @@ createLayer
 createLayer ds FeatureDef{..} approxOk options = liftIO $
   useAsEncodedCString fdName $ \pName ->
   withMaybeSpatialReference (gfdSrs fdGeom) $ \pSrs ->
-  withOptionList extendedOptions $ \pOpts ->
+  withOptionList options $ \pOpts ->
   throwIfError "createLayer" $ do
     fpL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts >>=
               newLayerHandle ds NullLayer
     withLockedLayerPtr fpL $ \pL -> do
-      V.forM_ fdFields $ \f -> withFieldDefnH f $ \pFld ->
+      V.forM_ fdFields $ \(n,f) -> withFieldDefnH n f $ \pFld ->
         {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
       when (not (V.null fdGeoms)) $
         if supportsMultiGeomFields pL
           then
 #if MULTI_GEOM_FIELDS
-            V.forM_ fdGeoms $ \f -> withGeomFieldDefnH f $ \pGFld ->
+            V.forM_ fdGeoms $ \(n,f) -> withGeomFieldDefnH n f $ \pGFld ->
               {#call OGR_L_CreateGeomField as ^#} pL pGFld iApproxOk
 #else
             error "should never reach here"
@@ -232,9 +232,6 @@ createLayer ds FeatureDef{..} approxOk options = liftIO $
     iApproxOk = fromEnumC approxOk
     pDs   = unDataSource ds
     gType = fromEnumC (gfdType fdGeom)
-    extendedOptions
-      | gfdName fdGeom /= "" = ("GEOMETRY_NAME", gfdName fdGeom):options
-      | otherwise            = options
 
 
 createFeature :: RWLayer s a -> Feature -> GDAL s ()
@@ -244,8 +241,8 @@ createFeature layer feature = liftIO $ throwIfError "createFeature" $
     void $ featureToHandle pFd feature ({#call OGR_L_CreateFeature as ^#} pL)
 
 
-getFeature :: Layer s t a -> Int64 -> GDAL s Feature
-getFeature layer fid = liftIO $ throwIfError "getFeature" $
+getFeature :: Layer s t a -> Fid -> GDAL s Feature
+getFeature layer (Fid fid) = liftIO $ throwIfError "getFeature" $
   withLockedLayerPtr layer $ \pL -> do
     pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
     featureFromHandle pFd ({#call OGR_L_GetFeature as ^#} pL (fromIntegral fid))
@@ -277,8 +274,7 @@ getLayerByName layer ds = liftIO $ useAsEncodedCString layer $
 layerGeomFieldDef :: LayerH -> IO GeomFieldDef
 layerGeomFieldDef p =
   GeomFieldDef
-    <$> ({#call unsafe OGR_L_GetGeometryColumn as ^#} p >>= peekEncodedCString)
-    <*> liftM toEnumC ({#call unsafe OGR_L_GetGeomType	as ^#} p)
+    <$> liftM toEnumC ({#call unsafe OGR_L_GetGeomType	as ^#} p)
     <*> ({#call unsafe OGR_L_GetSpatialRef as ^#} p >>=
           maybeNewSpatialRefBorrowedHandle)
     <*> pure True
