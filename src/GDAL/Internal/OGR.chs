@@ -77,6 +77,9 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Foreign.C.String (CString, peekCString, withCString)
 import Foreign.C.Types (CInt(..), CChar(..), CLong(..))
+#if GDAL_VERSION_MAJOR >= 2
+import Foreign.C.Types (CLLong(..))
+#endif
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Marshal.Utils (toBool)
 

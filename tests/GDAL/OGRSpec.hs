@@ -283,5 +283,4 @@ ogrFieldSpec driverName value = do
     withDir "can create and retrieve a feature" $ \tmpDir -> do
       ds <- create driverName (joinPath [tmpDir, "test"]) []
       l <- createLayer ds StrictOK []
-      fid <- createFeature l feature
-      getFeature l fid >>= (`shouldBe` Just feature)
+      createFeature l feature >>= getFeature l >>= (`shouldBe` Just feature)
