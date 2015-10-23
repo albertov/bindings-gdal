@@ -6,7 +6,7 @@
 
 module GDAL.Internal.OGRFeature (
     FieldType (..)
-  , Field
+  , Field (..)
   , Feature (..)
   , FeatureH (..)
   , FieldDefnH (..)
@@ -18,6 +18,8 @@ module GDAL.Internal.OGRFeature (
   , FieldDef (..)
 
   , fieldDef
+  , geomFieldDef
+
   , featureToHandle
   , featureFromHandle
 
@@ -109,7 +111,7 @@ data Field
   | OGRDateTime      !LocalTime !OGRTimeZone
   | OGRDate          !Day       !OGRTimeZone
   | OGRTime          !TimeOfDay !OGRTimeZone
-  deriving (Show)
+  deriving (Show, Eq)
 
 data OGRTimeZone
   = UnknownTimeZone
@@ -130,24 +132,16 @@ data FieldDef
 fieldDef :: FieldType -> Text -> FieldDef
 fieldDef ftype name = FieldDef name ftype Nothing Nothing Nothing True
 
-fieldType :: Field -> FieldType
-fieldType OGRInteger{}       = OFTInteger
-fieldType OGRIntegerList{}   = OFTIntegerList
-#if GDAL_VERSION_MAJOR > 2
-fieldType OGRInteger64{}     = OFTInteger64
-fieldType OGRInteger64List{} = OFTInteger64List
-#else
-fieldType OGRInteger64{}     = OFTInteger
-fieldType OGRInteger64List{} = OFTIntegerList
-#endif
-fieldType OGRReal{}          = OFTReal
-fieldType OGRRealList{}      = OFTRealList
-fieldType OGRString{}        = OFTString
-fieldType OGRStringList{}    = OFTStringList
-fieldType OGRBinary{}        = OFTBinary
-fieldType OGRDateTime{}      = OFTDateTime
-fieldType OGRDate{}          = OFTDate
-fieldType OGRTime{}          = OFTTime
+data GeomFieldDef
+  = GeomFieldDef {
+      gfdName     :: !Text
+    , gfdType     :: !GeometryType
+    , gfdSrs      :: !(Maybe SpatialReference)
+    , gfdNullable :: !Bool
+    } deriving (Show, Eq)
+
+geomFieldDef :: GeometryType -> Text -> GeomFieldDef
+geomFieldDef ftype name = GeomFieldDef name ftype Nothing True
 
 data Feature
   = Feature {
@@ -155,7 +149,7 @@ data Feature
     , fFields  :: !(V.Vector (Maybe Field))
     , fGeom    :: !(Maybe Geometry)
     , fGeoms   :: !(V.Vector Geometry)
-    } deriving (Show)
+    } deriving (Show, Eq)
 
 data FeatureDef
   = FeatureDef {
@@ -165,13 +159,6 @@ data FeatureDef
     , fdGeoms   :: !(V.Vector GeomFieldDef)
     } deriving (Show, Eq)
 
-data GeomFieldDef
-  = GeomFieldDef {
-      gfdName     :: !Text
-    , gfdType     :: !GeometryType
-    , gfdSrs      :: !(Maybe SpatialReference)
-    , gfdNullable :: !Bool
-    } deriving (Show, Eq)
 
 
 {#pointer FeatureH     newtype#}
@@ -324,7 +311,7 @@ featureFromHandle fdH act =
         then liftM Just (getField f i pF)
         else return Nothing
     geomRef <- {#call unsafe OGR_F_StealGeometry as ^#} pF
-    geom <- if geomRef == nullPtr
+    geom <- if geomRef /= nullPtr
               then liftM Just (newGeometryHandle geomRef)
               else return Nothing
 #if MULTI_GEOM_FIELDS
@@ -519,10 +506,3 @@ peekIntegral = liftM fromIntegral . peek
 getFieldName :: FieldDefnH -> IO Text
 getFieldName =
   {#call unsafe OGR_Fld_GetNameRef as ^#} >=> peekEncodedCString
-
-
-geometryByName :: Text -> FeatureH -> GDAL s Geometry
-geometryByName = undefined
-
-geometryByIndex :: FeatureH -> Int -> GDAL s Geometry
-geometryByIndex = undefined

@@ -86,7 +86,7 @@ spec = setupAndTeardown $ do
     describe "createLayer" $ do
       let strField    = fieldDef OFTString
           realField   = fieldDef OFTReal
-          gfd         = GeomFieldDef "" WkbPoint Nothing True
+          gfd         = geomFieldDef WkbPoint ""
           check fd = do
             ds <- createMem []
             l <- createLayer ds fd StrictOK []
@@ -127,6 +127,28 @@ spec = setupAndTeardown $ do
                             , fdGeom   = gfd
                             , fdGeoms  = [gfd{ gfdName = "another_geom"
                                              , gfdSrs  = srs}]})
+    describe "layer CRUD" $ do
+
+      it "can create and retrieve a feature" $ do
+        let fDef = FeatureDef { fdName   = "Some Ñçüo"
+                              , fdFields = [ fieldDef OFTString "Stü"
+                                           , fieldDef OFTInteger "N´m"]
+                              , fdGeom = geomFieldDef WkbPoint []
+                              , fdGeoms = mempty}
+            fid  = 66
+            geom = either exc Just (createFromWkt Nothing "POINT (45 87)")
+            exc  = error . ("Unexpected createFromWkt error: " ++) . show
+            feat = Feature { fId     = Just fid
+                           , fFields = [ Just (OGRString  "Avión")
+                                       , Just (OGRInteger 34)]
+                           , fGeom   = geom
+                           , fGeoms  = mempty}
+        ds <- createMem []
+        l <- createLayer ds fDef StrictOK []
+        createFeature l feat
+        getFeature l fid >>= (`shouldBe` feat)
+
+
 
   describe "getSpatialFilter" $ do
 
