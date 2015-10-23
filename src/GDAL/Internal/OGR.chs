@@ -64,7 +64,7 @@ import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Vector as V
 
-import Control.Applicative ((<$>), (<*>))
+import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (liftM, when, void, forM_, (<=<))
 import Control.Monad.Catch(throwM, catch, catchJust)
 import Control.Monad.IO.Class (MonadIO(liftIO))
