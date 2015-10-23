@@ -156,9 +156,21 @@ spec = setupAndTeardown $ do
         fid <- createFeature l feat
         getFeature l fid >>= (`shouldBe` Just feat)
 
-  forM_ (["Memory", "ESRI Shapefile"] :: [String]) $ \driverName -> do
-    ogrFieldSpec driverName (34 :: Int)
-    ogrFieldSpec driverName (Just 65 :: Maybe Int)
+  describe "OGRField instances" $
+    forM_ (["Memory", "ESRI Shapefile"] :: [String]) $ \driverName -> do
+      ogrFieldSpec driverName (34 :: Int)
+      ogrFieldSpec driverName (Just 65 :: Maybe Int)
+      when (driverName=="Memory") $ do
+        ogrFieldSpec driverName ([34] :: [Int])
+        ogrFieldSpec driverName (Just [65] :: Maybe [Int])
+      ogrFieldSpec driverName (3.4 :: Double)
+      ogrFieldSpec driverName (Just 6.5 :: Maybe Double)
+      ogrFieldSpec driverName (3.4 :: Float)
+      ogrFieldSpec driverName (Just 6.5 :: Maybe Float)
+      ogrFieldSpec driverName ("foo" :: Text)
+      ogrFieldSpec driverName (Just "bar" :: Maybe Text)
+      ogrFieldSpec driverName ("foo" :: String)
+      ogrFieldSpec driverName (Just "bar" :: Maybe String)
 
 
   describe "getSpatialFilter" $ do
@@ -254,7 +266,7 @@ instance OGRField a => OGRFeature (TestFeature a) where
             , fGeom   = Just tfGeom
             , fGeoms  = mempty}
   fromFeature Feature{..} = do
-    d    <- maybe (Left "TestFeature: field not found") fromField
+    d    <- maybe (Left "TestFeature: field 'data' not found") fromField
                   ("data" `lookupField` fFields)
     geom <- maybe (Left "TestFeature: No Geom") Right fGeom
     return (TestFeature geom d)
@@ -272,15 +284,13 @@ ogrFieldSpec
   :: forall a. (OGRFeatureDef (TestFeature a), Typeable a, Eq a, Show a)
   => String -> a -> SpecWith (Arg (IO ()))
 ogrFieldSpec driverName value = do
-
-  let feature = TestFeature geom value
-      geom = either exc id (createFromWkt Nothing "POINT (45 87)")
+  let geom = either exc id (createFromWkt Nothing "POINT (45 87)")
       exc  = error . ("Unexpected createFromWkt error: " ++) . show
       typeName = show (typeOf (undefined :: a))
+      feature = TestFeature geom value
 
-  describe ("OGRField instance " ++ typeName ++ " " ++ driverName) $ do
-
-    withDir "can create and retrieve a feature" $ \tmpDir -> do
-      ds <- create driverName (joinPath [tmpDir, "test"]) []
-      l <- createLayer ds StrictOK []
-      createFeature l feature >>= getFeature l >>= (`shouldBe` Just feature)
+  withDir ("feature with '" ++ typeName ++ "' field comes out of '" ++
+           driverName ++ "' layer as it got in") $ \tmpDir -> do
+    ds <- create driverName (joinPath [tmpDir, "test"]) []
+    l <- createLayer ds StrictOK []
+    createFeature l feature >>= getFeature l >>= (`shouldBe` Just feature)

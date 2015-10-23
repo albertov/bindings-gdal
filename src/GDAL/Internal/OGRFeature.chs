@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -44,47 +45,46 @@ module GDAL.Internal.OGRFeature (
 import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (liftM, liftM2, (>=>), (<=<), when, void, join)
 import Control.Monad.Catch (bracket)
-import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (packCStringLen)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import qualified Data.HashMap.Strict as HM
 import Data.Int (Int32, Int64)
-import Data.Monoid (mempty, (<>))
-import Data.Proxy (Proxy(Proxy))
-import Data.String (fromString)
+import Data.Monoid (mempty)
+import Data.Proxy (Proxy)
 
 import Data.Text (Text)
 import Data.Time.LocalTime (
     LocalTime(..)
   , TimeOfDay(..)
   , TimeZone(..)
-  , ZonedTime (..)
   , minutesToTimeZone
   , utc
   )
 import Data.Time ()
 import Data.Time.Calendar (Day, fromGregorian, toGregorian)
-import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector as V
 
 import Foreign.C.Types (
     CInt(..)
-  , CLLong(..)
   , CDouble(..)
   , CChar(..)
   , CUChar(..)
   , CLong(..)
   )
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Utils (copyBytes, toBool, fromBool)
+import Foreign.Marshal.Utils (copyBytes, toBool)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (Storable, sizeOf, peek, peekElemOff)
+#if GDAL_VERSION_MAJOR >= 2
+import Foreign.C.Types (CLLong(..))
+import Foreign.Marshal.Utils (fromBool)
+#endif
 
-import GDAL.Internal.Types
+
 import GDAL.Internal.Util (
     toEnumC
   , fromEnumC
@@ -313,10 +313,11 @@ featureToHandle fdH fId ft act =
   bracket ({#call unsafe OGR_F_Create as ^#} fdH)
           ({#call unsafe OGR_F_Destroy as ^#}) $ \pF -> do
     case fId of
-      Just (Fid fid) -> void $ {#call OGR_F_SetFID as ^#} pF (fromIntegral fid)
+      Just (Fid fid) ->
+        void $ {#call unsafe OGR_F_SetFID as ^#} pF (fromIntegral fid)
       Nothing        -> return ()
     fieldDefs <- fieldDefsFromFeatureDefnH fdH
-    flip imapM_ fieldDefs $ \ix (name, fd) -> do
+    flip imapM_ fieldDefs $ \ix (name, _) -> do
       case HM.lookup name fFields of
         Just f  -> setField f ix pF
         Nothing -> return ()
@@ -326,7 +327,7 @@ featureToHandle fdH fId ft act =
     when (not (HM.null fGeoms)) $ do
 #if MULTI_GEOM_FIELDS
       geomFieldDefs <- geomFieldDefsFromFeatureDefnH fdH
-      flip imapM_ (V.tail geomFieldDefs) $ \ix (name, gfd) -> do
+      flip imapM_ (V.tail geomFieldDefs) $ \ix (name, _) -> do
         case join (HM.lookup name fGeoms) of
           Just g  ->
             void $ withGeometry g ({#call OGR_F_SetGeomField as ^#} pF (ix+1))
@@ -338,7 +339,10 @@ featureToHandle fdH fId ft act =
     act pF
   where Feature {..} = toFeature ft
 
+imapM :: (Monad m, Num a) => (a -> b -> m c) -> V.Vector b -> m (V.Vector c)
 imapM f v  = V.mapM  (uncurry f) (V.zip (V.enumFromN 0 (V.length v)) v)
+
+imapM_ :: (Monad m, Num a) => (a -> b -> m ()) -> V.Vector b -> m ()
 imapM_ f v = V.mapM_ (uncurry f) (V.zip (V.enumFromN 0 (V.length v)) v)
 
 getFid :: FeatureH -> IO (Maybe Fid)
@@ -356,7 +360,7 @@ featureFromHandle fdH act =
         fid <- getFid pF
         fieldDefs <- fieldDefsFromFeatureDefnH fdH
         fields <- flip imapM fieldDefs $ \i (fldName, fd) -> do
-          isSet <- liftM toBool ({#call OGR_F_IsFieldSet as ^#} pF i)
+          isSet <- liftM toBool ({#call unsafe OGR_F_IsFieldSet as ^#} pF i)
           if isSet
             then getField (fldType fd) i pF >>=
                   maybe (throwBindingException (FieldParseError fldName))
@@ -465,7 +469,7 @@ getField :: FieldType -> CInt -> FeatureH -> IO (Maybe Field)
 
 getField OFTInteger ix f =
   liftM (Just . OGRInteger . fromIntegral)
-    ({#call  OGR_F_GetFieldAsInteger as ^#} f ix)
+    ({#call OGR_F_GetFieldAsInteger as ^#} f ix)
 
 getField OFTIntegerList ix f = alloca $ \lenP -> do
   buf <- {#call unsafe OGR_F_GetFieldAsIntegerList as ^#} f ix lenP
@@ -565,30 +569,3 @@ peekIntegral = liftM fromIntegral . peek
 getFieldName :: FieldDefnH -> IO Text
 getFieldName =
   {#call unsafe OGR_Fld_GetNameRef as ^#} >=> peekEncodedCString
-
-
-
-
---
--- Instances
---
-
-instance OGRField Int where
-#if GDAL_VERSION_MAJOR >= 2
-  fieldDef _  = FieldDef OFTInteger64 Nothing Nothing Nothing False
-#else
-  fieldDef _  = FieldDef OFTInteger Nothing Nothing Nothing False
-#endif
-  toField                    = OGRInteger . fromIntegral
-  fromField (OGRInteger v)   = Right (fromIntegral v)
-  fromField (OGRInteger64 v) = Right (fromIntegral v)
-  fromField f                = Left ("Invalid Int field: " <>
-                                    (fromString (show f)))
-
-instance OGRField a => OGRField (Maybe a) where
-  fieldDef _             = (fieldDef (Proxy :: Proxy a)) {fldNullable = True}
-  toField Nothing        = OGRNullField
-  toField (Just a)       = toField a
-  fromField OGRNullField = Right Nothing
-  fromField a            = fmap Just (fromField a)
-

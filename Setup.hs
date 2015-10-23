@@ -15,13 +15,18 @@ gdalConf (pkg0, pbi) flags = do
  gdalInclude <- getIncludeDirs
  gdalLibDirs <- getExtraLibDirs
  gdalLibs    <- getExtraLibs
+ gdalVers    <- getOutput "gdal-config" ["--version"]
  let lpd        = localPkgDescr lbi
+     (gdalMajor,rVers) = break (=='.') gdalVers
+     (gdalMinor,_)     = break (=='.') (tail rVers)
      lib        = fromJust (library lpd)
      libbi      = libBuildInfo lib
      libbi'     = libbi {
                      extraLibDirs = extraLibDirs libbi ++ gdalLibDirs
                    , extraLibs    = extraLibs    libbi ++ gdalLibs
                    , includeDirs  = includeDirs  libbi ++ gdalInclude
+                   , cppOptions   = [ "-DGDAL_VERSION_MAJOR="++gdalMajor
+                                    , "-DGDAL_VERSION_MINOR="++gdalMinor]
                    }
      lib'       = lib { libBuildInfo = libbi' }
      lpd'       = lpd { library = Just lib' }

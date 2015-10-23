@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -50,6 +51,7 @@ module GDAL.Internal.OGR (
   , createFeature
   , getFeature
   , setFeature
+  , deleteFeature
 
   , registerAll
   , cleanupAll
@@ -272,6 +274,11 @@ getFeature layer (Fid fid) = liftIO $
     liftM (fmap snd) $ featureFromHandle pFd $
       {#call OGR_L_GetFeature as ^#} pL (fromIntegral fid)
 
+deleteFeature :: Layer s t a -> Fid -> GDAL s ()
+deleteFeature layer (Fid fid) = liftIO $
+  throwIfError "deleteFeature" $
+    void $ withLockedLayerPtr layer $
+      flip {#call OGR_L_DeleteFeature as ^#} (fromIntegral fid)
 
 canCreateMultipleGeometryFields :: Bool
 canCreateMultipleGeometryFields =
