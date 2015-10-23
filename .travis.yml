@@ -38,9 +38,9 @@ env:
 - ARGS="--resolver lts-2"   GDAL="1.11.2"
 - ARGS="--resolver lts-2"   GDAL="2.0.1"
 - ARGS="--resolver lts-3"   GDAL="1.10.1"
-#- ARGS="--resolver lts-3"   GDAL="1.11.2"
-#- ARGS="--resolver lts-3"   GDAL="2.0.1"
-#- ARGS="--resolver nightly" GDAL="2.0.1"
+- ARGS="--resolver lts-3"   GDAL="1.11.2"
+- ARGS="--resolver lts-3"   GDAL="2.0.1"
+- ARGS="--resolver nightly" GDAL="2.0.1"
 
 before_install:
 # Download, install and setup stack
