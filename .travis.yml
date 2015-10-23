@@ -34,58 +34,58 @@ addons:
     - zlib1g-dev
 
 env:
-  - ARGS="--resolver lts-2"   GDAL="1.10.1"
-    #- ARGS="--resolver lts-2"   GDAL="1.11.2"
-    #- ARGS="--resolver lts-2"   GDAL="2.0.1"
-    #- ARGS="--resolver lts-3"   GDAL="1.10.1"
-    #- ARGS="--resolver lts-3"   GDAL="1.11.2"
-    #- ARGS="--resolver lts-3"   GDAL="2.0.1"
-    #- ARGS="--resolver nightly" GDAL="2.0.1"
+- ARGS="--resolver lts-2"   GDAL="1.10.1"
+#- ARGS="--resolver lts-2"   GDAL="1.11.2"
+#- ARGS="--resolver lts-2"   GDAL="2.0.1"
+#- ARGS="--resolver lts-3"   GDAL="1.10.1"
+#- ARGS="--resolver lts-3"   GDAL="1.11.2"
+#- ARGS="--resolver lts-3"   GDAL="2.0.1"
+#- ARGS="--resolver nightly" GDAL="2.0.1"
 
 before_install:
 # Download, install and setup stack
-  - |
-      set -e
+- |
+  set -e
 
-      mkdir -p $HOME/.local/bin
+  mkdir -p $HOME/.local/bin
 
-      if [ ! -f $HOME/.local/bin/stack ]; then
-        travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 \
-         | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
-      fi
+  if [ ! -f $HOME/.local/bin/stack ]; then
+    travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 \
+     | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
+  fi
 
-      stack $ARGS --no-terminal --install-ghc setup
+  stack $ARGS --no-terminal --install-ghc setup
 
 # Download, configure, compile and install GDAL
 
 - |
-    set -e
+  set -e
 
-    export GDAL_URL = http://download.osgeo.org/gdal/${GDAL}/gdal-${GDAL}.tar.gz
-    export PATH        = $HOME/.local/bin:$PATH
-    export GDAL_PREFIX = $HOME/.local/gdal-$GDAL
-    export GDAL_BIN    = $GDAL_PREFIX/bin
-    export GDAL_LIB    = $GDAL_PREFIX/lib
-    export GDAL_SRC    = $HOME/gdal-$GDAL-src
+  export GDAL_URL = http://download.osgeo.org/gdal/${GDAL}/gdal-${GDAL}.tar.gz
+  export PATH        = $HOME/.local/bin:$PATH
+  export GDAL_PREFIX = $HOME/.local/gdal-$GDAL
+  export GDAL_BIN    = $GDAL_PREFIX/bin
+  export GDAL_LIB    = $GDAL_PREFIX/lib
+  export GDAL_SRC    = $HOME/gdal-$GDAL-src
 
-    if [ ! -f $GDAL_BIN/gdal-config ]; then
-      mkdir -p $GDAL_PREFIX
-      mkdir -p $GDAL_SRC
-      travis_retry curl -L $GDAL_URL | tar xz --strip-components=1 -C $GDAL_SRC
-      pushd $GDAL_SRC
-      ./configure --prefix=$GDAL_PREFIX \
-                  --enable-debug \
-                  --without-libtool \
-                  --without-php \
-                  --without-python \
-                  --without-java \
-                  --without-perl \
-                  --without-ruby \
-                  --without-odbc
-      make -j3
-      make install
-      popd
-    fi
+  if [ ! -f $GDAL_BIN/gdal-config ]; then
+    mkdir -p $GDAL_PREFIX
+    mkdir -p $GDAL_SRC
+    travis_retry curl -L $GDAL_URL | tar xz --strip-components=1 -C $GDAL_SRC
+    pushd $GDAL_SRC
+    ./configure --prefix=$GDAL_PREFIX \
+                --enable-debug \
+                --without-libtool \
+                --without-php \
+                --without-python \
+                --without-java \
+                --without-perl \
+                --without-ruby \
+                --without-odbc
+    make -j3
+    make install
+    popd
+  fi
 
   export PATH            = $GDAL_BIN:$PATH
   export LD_LIBRARY_PATH = $GDAL_LIB:$LD_LIBRARY_PATH
