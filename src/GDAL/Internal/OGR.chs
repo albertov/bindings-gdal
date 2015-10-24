@@ -41,6 +41,7 @@ module GDAL.Internal.OGR (
   , createLayerWithDef
   , getLayer
   , getLayerByName
+  , syncToDisk
 
   , getSpatialFilter
   , setSpatialFilter
@@ -255,25 +256,27 @@ createLayerWithDef ds FeatureDef{..} approxOk options = liftIO $
 
 
 createFeature :: OGRFeature a => RWLayer s a -> a -> GDAL s Fid
-createFeature layer feature = liftIO $ throwIfError "createFeature" $
+createFeature layer feat = liftIO $
+  throwIfError "createFeature" $
   withLockedLayerPtr layer $ \pL -> do
     pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
-    featureToHandle pFd Nothing feature $ \pF -> do
+    featureToHandle pFd Nothing feat $ \pF -> do
       void $ {#call OGR_L_CreateFeature as ^#} pL pF
       getFid pF >>= maybe (throwBindingException UnexpectedNullFid) return
 
 createFeature_ :: OGRFeature a => RWLayer s a -> a -> GDAL s ()
-createFeature_ layer feature =
+createFeature_ layer feat =
   catchJust (\case {UnexpectedNullFid -> Just (); _ -> Nothing})
-            (void (createFeature layer feature))
+            (void (createFeature layer feat))
             return
 
 
 setFeature :: OGRFeature a => RWLayer s a -> Fid -> a -> GDAL s ()
-setFeature layer fid feature = liftIO $ throwIfError "setFeature" $
+setFeature layer fid feat = liftIO $
+  throwIfError "setFeature" $
   withLockedLayerPtr layer $ \pL -> do
     pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
-    void $ featureToHandle pFd (Just fid) feature
+    void $ featureToHandle pFd (Just fid) feat
       ({#call OGR_L_SetFeature as ^#} pL)
 
 getFeature :: OGRFeature a => Layer s t a -> Fid -> GDAL s (Maybe a)
@@ -298,6 +301,10 @@ canCreateMultipleGeometryFields =
 #else
   False
 #endif
+
+syncToDisk :: RWLayer s a -> GDAL s ()
+syncToDisk =
+  liftIO . throwIfError_ "syncToDisk" . {#call OGR_L_SyncToDisk as ^#} . unLayer
 
 getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
 getLayer layer ds = liftIO $

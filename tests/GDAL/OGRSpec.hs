@@ -9,6 +9,7 @@ module GDAL.OGRSpec (main, spec, setupAndTeardown) where
 
 #include "bindings.h"
 
+import Control.Applicative ((<$>), (<*>))
 import Control.Monad (void, when, forM_)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 import Control.Monad.Catch (try, throwM)
@@ -17,7 +18,7 @@ import Data.ByteString (ByteString)
 import Data.Either (isRight)
 import Data.Int
 import Data.Word
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, isJust)
 import Data.Monoid (mempty)
 import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
@@ -46,7 +47,7 @@ import GDAL (
   , GDALException(..)
   )
 import GDAL.OGR as OGR
-import GDAL.OSR (fromEPSG)
+import GDAL.OSR (SpatialReference, fromEPSG)
 
 import Paths_bindings_gdal
 
@@ -127,11 +128,9 @@ spec = setupAndTeardown $ do
                           , fdGeoms  = mempty})
 
       it "works with a single geometry field with srs" $ do
-        let srs = either exc Just (fromEPSG 23030)
-            exc = error . ("Unexpected fromEPSG error: " ++) . show
         check (FeatureDef { fdName   = "Barça Players"
                           , fdFields = mempty
-                          , fdGeom   = pointDef {gfdSrs = srs}
+                          , fdGeom   = pointDef {gfdSrs = Just aSrs}
                           , fdGeoms  = mempty})
 
       when canCreateMultipleGeometryFields $ do
@@ -142,30 +141,65 @@ spec = setupAndTeardown $ do
                             , fdGeoms  = [("another_geom", pointDef)]})
 
         it "works with several geometry field with srs" $ do
-          let srs = either exc Just (fromEPSG 23030)
-              exc = error . ("Unexpected fromEPSG error: " ++) . show
           check (FeatureDef { fdName   = "Barça Players"
                             , fdFields = mempty
                             , fdGeom   = pointDef
                             , fdGeoms  = [( "another_geom"
-                                          , pointDef {gfdSrs=srs})]})
+                                          , pointDef {gfdSrs = Just aSrs})]})
     describe "layer CRUD" $ do
 
       it "can create and retrieve a feature" $ do
-        let fDef = FeatureDef { fdName   = "Some Ñçüo"
-                              , fdFields = [strField "str" , intField "int"]
-                              , fdGeom   = pointDef
-                              , fdGeoms  = mempty}
-            geom = either exc Just (createFromWkt Nothing "POINT (45 87)")
-            exc  = error . ("Unexpected createFromWkt error: " ++) . show
-            feat = Feature { fFields = [ ("str", OGRString "Avión")
-                                       , ("int", OGRInteger 34)]
-                           , fGeom   = geom
-                           , fGeoms  = mempty}
+        let feat = TestFeature aPoint ("some data" :: String)
         ds <- createMem []
-        l <- createLayerWithDef ds fDef StrictOK []
+        l <- createLayer ds StrictOK []
         fid <- createFeature l feat
         getFeature l fid >>= (`shouldBe` Just feat)
+
+      it "can create and delete a feature" $ do
+        let feat = TestFeature aPoint ("some data" :: String)
+        ds <- createMem []
+        l <- createLayer ds StrictOK []
+        fid <- createFeature l feat
+        getFeature l fid >>= (`shouldSatisfy` isJust)
+        deleteFeature l fid
+        getFeature l fid >>= (`shouldSatisfy` isNothing)
+
+      it "can create and update a feature" $ do
+        let feat  = TestFeature aPoint ("some data" :: String)
+            feat2 = feat {tfData="other data"}
+        ds <- createMem []
+        l <- createLayer ds StrictOK []
+        fid <- createFeature l feat
+        getFeature l fid >>= (`shouldBe` Just feat)
+        setFeature l fid feat2
+        getFeature l fid >>= (`shouldBe` Just feat2)
+
+      withDir "can retrieve features with less fields than present in layer" $
+        \tmpDir -> do
+          let path = joinPath [tmpDir, "test.shp"]
+              name = "Test"
+              someData = "dfsdgfsdgsdf" :: Text
+              feat = feature aPoint [ "name"   .= ("Pepe" :: Text)
+                                    , "height" .= (187 :: Double)
+                                    , "data"   .= someData
+                                    ]
+              expected = Just (TestFeature aPoint someData)
+              fDef =
+                FeatureDef {
+                  fdName   = name
+                , fdFields = [ "name"   `fieldTypedAs` (undefined :: Text)
+                             , "height" `fieldTypedAs` (undefined :: Double)
+                             , "data"   `fieldTypedAs` (undefined :: String)
+                             ]
+                , fdGeom   = GeomFieldDef WkbPoint Nothing True
+                , fdGeoms  = mempty}
+          ds <- create "ESRI Shapefile" path []
+          l <- createLayerWithDef ds fDef StrictOK []
+          fid <- createFeature l feat
+          syncToDisk l
+          l2 <- openReadOnly path >>= getLayerByName name
+          getFeature l2 fid >>= (`shouldBe` expected)
+
 
 
   describe "getSpatialFilter" $ do
@@ -176,10 +210,9 @@ spec = setupAndTeardown $ do
 
     it "can set a spatial filter and retrieve it" $ do
       l <- getShapePath >>= openReadWrite >>= getLayer 0
-      let Right g = createFromWkt Nothing "POINT (34 21)"
-      setSpatialFilter l g
+      setSpatialFilter l aPoint
       mGeom <- getSpatialFilter l
-      mGeom `shouldBe` Just g
+      mGeom `shouldBe` Just aPoint
 
 
   describe "executeSQL" $ do
@@ -310,13 +343,20 @@ setupAndTeardown :: SpecWith a -> SpecWith a
 setupAndTeardown =
   before_ OGR.registerAll . after_  performMajorGC . afterAll_ OGR.cleanupAll
 
-strField, realField, intField :: Text -> (Text, FieldDef)
+strField, realField :: Text -> (Text, FieldDef)
 strField  name = (name, FieldDef OFTString  Nothing Nothing Nothing True)
 realField name = (name, FieldDef OFTReal    Nothing Nothing Nothing True)
-intField  name = (name, FieldDef OFTInteger Nothing Nothing Nothing True)
 
 pointDef :: GeomFieldDef
 pointDef = GeomFieldDef WkbPoint Nothing True
+
+aPoint :: Geometry
+aPoint = either exc id (createFromWkt Nothing "POINT (45 87)")
+  where exc  = error . ("Unexpected createFromWkt error: " ++) . show
+
+aSrs :: SpatialReference
+aSrs = either exc id (fromEPSG 23030)
+  where exc = error . ("Unexpected fromEPSG error: " ++) . show
 
 data TestFeature a
   = TestFeature  {
@@ -325,22 +365,15 @@ data TestFeature a
   } deriving (Eq, Show)
 
 instance OGRField a => OGRFeature (TestFeature a) where
-  toFeature TestFeature{..} =
-    Feature { fFields = [("data", toField tfData)]
-            , fGeom   = Just tfGeom
-            , fGeoms  = mempty}
-  fromFeature Feature{..} = do
-    d    <- maybe (Left "TestFeature: field 'data' not found") fromField
-                  ("data" `lookupField` fFields)
-    geom <- maybe (Left "TestFeature: No Geom") Right fGeom
-    return (TestFeature geom d)
+  toFeature TestFeature{..} = feature tfGeom ["data" .= tfData]
+  fromFeature f             = TestFeature <$> theGeom f <*> f .: "data"
 
 
 instance OGRField a => OGRFeatureDef (TestFeature a) where
   featureDef _ =
     FeatureDef {
       fdName   = "Test"
-    , fdFields = [("data", fieldDef (Proxy :: Proxy a))]
+    , fdFields = ["data" `fieldTypedAs` (undefined :: a)]
     , fdGeom   = GeomFieldDef WkbPoint Nothing True
     , fdGeoms  = mempty}
 
@@ -367,16 +400,14 @@ ogrFieldSpec driverName v = do
 
   where
     ogrFieldSpec_ value = do
-      let geom = either exc id (createFromWkt Nothing "POINT (45 87)")
-          exc  = error . ("Unexpected createFromWkt error: " ++) . show
-          feature = TestFeature geom value
+      let feat = TestFeature aPoint value
           tyName  = show (typeOf value)
 
       withDir (show value) $ \tmpDir -> do
         ds <- create driverName (joinPath [tmpDir, "test"]) []
         r <- try $ do
           l <- createLayer ds StrictOK []
-          createFeature l feature >>= getFeature l >>= (`shouldBe` Just feature)
+          createFeature l feat >>= getFeature l >>= (`shouldBe` Just feat)
         case r of
           Right () -> return ()
           Left GDALException{gdalErrNum=NotSupported} ->

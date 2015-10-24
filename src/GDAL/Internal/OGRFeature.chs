@@ -26,10 +26,18 @@ module GDAL.Internal.OGRFeature (
   , FeatureDef (..)
   , GeomFieldDef (..)
   , FieldDef (..)
+  , fieldTypedAs
+  , (.:)
+  , (.=)
+  , aGeom
+  , aNullableGeom
+  , theGeom
+  , theNullableGeom
+  , feature
+
 
   , featureToHandle
   , featureFromHandle
-  , lookupField
   , getFid
 
   , withFieldDefnH
@@ -52,8 +60,8 @@ import Data.ByteString.Char8 (packCStringLen)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import qualified Data.HashMap.Strict as HM
 import Data.Int (Int32, Int64)
-import Data.Monoid (mempty)
-import Data.Proxy (Proxy)
+import Data.Monoid (mempty, (<>))
+import Data.Proxy (Proxy(Proxy))
 
 import Data.Text (Text)
 import Data.Time.LocalTime (
@@ -110,13 +118,42 @@ class OGRField a where
   toField   :: a  -> Field
   fromField :: Field -> Either Text a
 
+(.:) :: OGRField a => Feature -> Text -> Either Text a
+feat .: name =
+  maybe (Left ("fromFeature: field '"<>name<>"' not present"))
+        fromField
+        (HM.lookup name (fFields feat))
+
+(.=) :: OGRField a => Text -> a -> (Text, Field)
+name .= value = (name, toField value)
+
 class OGRFeature a where
   toFeature   :: a -> Feature
   fromFeature :: Feature -> Either Text a
 
+theGeom :: Feature -> Either Text Geometry
+theGeom = maybe (Left "Feature has no geometry") Right . fGeom
+
+theNullableGeom :: Feature -> Either Text (Maybe Geometry)
+theNullableGeom = Right . fGeom
+
+aGeom :: Feature -> Text -> Either Text Geometry
+feat `aGeom` name =
+  maybe (Left ("fromFeature: geometry field '"<>name<>"' not present"))
+        (maybe (Left ("fromFeature: geometry '"<>name<>"' is NULL")) Right)
+        (HM.lookup name (fGeoms feat))
+
+aNullableGeom :: Feature -> Text -> Either Text (Maybe Geometry)
+feat `aNullableGeom` name =
+  maybe (Left ("fromFeature: geometry field '"<>name<>"' not present"))
+        Right
+        (HM.lookup name (fGeoms feat))
+
 class OGRFeature a => OGRFeatureDef a where
   featureDef  :: Proxy a -> FeatureDef
 
+fieldTypedAs :: forall a. OGRField a => Text -> a -> (Text, FieldDef)
+name `fieldTypedAs` _ = (name, fieldDef (Proxy :: Proxy a))
 
 {#enum FieldType {} omit (OFTMaxType) deriving (Eq,Show,Read,Bounded) #}
 
@@ -175,8 +212,12 @@ data Feature
     , fGeoms   :: !(Map (Maybe Geometry))
     } deriving (Show, Eq)
 
-lookupField :: Text -> Map a -> Maybe a
-lookupField = HM.lookup
+feature :: Geometry -> [(Text,Field)] -> Feature
+feature g fs =
+  Feature { fFields = HM.fromList fs
+          , fGeom   = Just g
+          , fGeoms  = mempty
+          }
 
 instance OGRFeature Feature where
   toFeature    = id
