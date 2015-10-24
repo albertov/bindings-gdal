@@ -43,6 +43,8 @@ module GDAL.Internal.OGRFeature (
   , withFieldDefnH
   , fieldDefFromHandle
   , featureDefFromHandle
+  , fieldDefsFromFeatureDefnH
+  , geomFieldDefsFromFeatureDefnH
 #if SUPPORTS_MULTI_GEOM_FIELDS
   , GeomFieldDefnH (..)
   , withGeomFieldDefnH
@@ -226,11 +228,13 @@ instance OGRFeature Feature where
 data FeatureDef
   = FeatureDef {
       fdName    :: !Text
-    , fdFields  :: !(V.Vector (Text, FieldDef))
+    , fdFields  :: !FieldDefs
     , fdGeom    :: !GeomFieldDef
-    , fdGeoms   :: !(V.Vector (Text, GeomFieldDef))
+    , fdGeoms   :: !GeomFieldDefs
     } deriving (Show, Eq)
 
+type FieldDefs = V.Vector (Text, FieldDef)
+type GeomFieldDefs = V.Vector (Text, GeomFieldDef)
 
 
 {#pointer FeatureH     newtype#}
@@ -306,11 +310,10 @@ fieldDefsFromFeatureDefnH p = do
     liftM2 (,) (getFieldName fDef) (fieldDefFromHandle fDef)
 
 
-
-#if SUPPORTS_MULTI_GEOM_FIELDS
-
 geomFieldDefsFromFeatureDefnH
   :: FeatureDefnH -> IO (V.Vector (Text, GeomFieldDef))
+
+#if SUPPORTS_MULTI_GEOM_FIELDS
 
 {#pointer GeomFieldDefnH newtype#}
 
@@ -345,6 +348,8 @@ withGeomFieldDefnH gfdName GeomFieldDef{..} f =
       {#call unsafe OGR_GFld_SetNullable as ^#} p (fromBool gfdNullable)
 #endif
 
+#else
+geomFieldDefsFromFeatureDefnH = const (return mempty)
 #endif -- SUPPORTS_MULTI_GEOM_FIELDS
 
 nullFID :: Fid
@@ -395,15 +400,15 @@ getFid pF = do
   return (if mFid == nullFID then Nothing else Just mFid)
 
 featureFromHandle
-  :: OGRFeature a => FeatureDefnH -> IO FeatureH -> IO (Maybe (Maybe Fid, a))
-featureFromHandle fdH act =
+  :: OGRFeature a
+  => FeatureDef -> IO FeatureH -> IO (Maybe (Maybe Fid, a))
+featureFromHandle FeatureDef{..} act =
   bracket act {#call unsafe OGR_F_Destroy as ^#} $ \pF -> do
     if (pF == nullFeatureH)
       then return Nothing
       else do
         fid <- getFid pF
-        fieldDefs <- fieldDefsFromFeatureDefnH fdH
-        fields <- flip imapM fieldDefs $ \i (fldName, fd) -> do
+        fields <- flip imapM fdFields $ \i (fldName, fd) -> do
           isSet <- liftM toBool ({#call unsafe OGR_F_IsFieldSet as ^#} pF i)
           if isSet
             then getField (fldType fd) i pF >>=
@@ -415,8 +420,7 @@ featureFromHandle fdH act =
                   then liftM Just (newGeometryHandle geomRef)
                   else return Nothing
 #if SUPPORTS_MULTI_GEOM_FIELDS
-        geomFieldDefs <- geomFieldDefsFromFeatureDefnH fdH
-        geoms <- flip imapM (V.tail geomFieldDefs) $ \ix (gfdName, _) -> do
+        geoms <- flip imapM fdGeoms $ \ix (gfdName, _) -> do
           pG <- {#call unsafe OGR_F_GetGeomFieldRef as ^#} pF (ix + 1)
           g <- if pG /= nullPtr
                 then liftM Just (cloneGeometry pG)

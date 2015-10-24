@@ -36,8 +36,10 @@ import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar, newEmptyMVar)
 import Control.Exception (evaluate, catchJust, fromException)
 import Control.DeepSeq (NFData(rnf), force)
 import Control.Monad (liftM, void)
+import Control.Monad.Base (MonadBase)
 import Control.Monad.Trans.Resource (
     ResourceT
+  , MonadResource
   , runResourceT
   , register
   , resourceForkIO
@@ -278,6 +280,8 @@ deriving instance MonadIO (GDAL s)
 deriving instance MonadThrow (GDAL s)
 deriving instance MonadCatch (GDAL s)
 deriving instance MonadMask (GDAL s)
+deriving instance MonadBase IO (GDAL s)
+deriving instance MonadResource (GDAL s)
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
 runGDAL (GDAL a) =

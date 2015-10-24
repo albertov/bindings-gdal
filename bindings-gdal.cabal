@@ -44,6 +44,7 @@ library
                    , GDAL
   build-depends:     base >=4.5 && < 5
                    , vector
+                   , conduit
                    , bytestring
                    , text
                    , time
@@ -52,6 +53,7 @@ library
                    , resourcet
                    , exceptions
                    , transformers
+                   , transformers-base
                    , mtl
                    , deepseq
                    , data-default
@@ -81,6 +83,7 @@ test-suite spec
                   , transformers
                   , time
                   , data-default
+                  , conduit
   hs-source-dirs:   tests
   main-is:          Spec.hs
   other-modules:    GDALSpec

@@ -22,6 +22,7 @@ module GDAL.Internal.OGR (
   , ApproxOK (..)
   , Layer
   , LayerH (..)
+  , LayerSource
   , RODataSource
   , RWDataSource
   , ROLayer
@@ -67,10 +68,13 @@ module GDAL.Internal.OGR (
   , layerHasCapability
   , driverHasCapability
   , dataSourceHasCapability
+  , sourceFromLayer
+  , nullLayerH
 ) where
 
 {#context lib = "gdal" prefix = "OGR"#}
 
+import Data.Conduit
 import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
 import qualified Data.Vector as V
@@ -254,12 +258,14 @@ createLayerWithDef ds FeatureDef{..} approxOk options = liftIO $
     pDs   = unDataSource ds
     gType = fromEnumC (gfdType fdGeom)
 
+getLayerSchema :: LayerH -> IO FeatureDefnH
+getLayerSchema = {#call OGR_L_GetLayerDefn as ^#}
 
 createFeature :: OGRFeature a => RWLayer s a -> a -> GDAL s Fid
 createFeature layer feat = liftIO $
   throwIfError "createFeature" $
   withLockedLayerPtr layer $ \pL -> do
-    pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
+    pFd <- getLayerSchema pL
     featureToHandle pFd Nothing feat $ \pF -> do
       void $ {#call OGR_L_CreateFeature as ^#} pL pF
       getFid pF >>= maybe (throwBindingException UnexpectedNullFid) return
@@ -275,7 +281,7 @@ setFeature :: OGRFeature a => RWLayer s a -> Fid -> a -> GDAL s ()
 setFeature layer fid feat = liftIO $
   throwIfError "setFeature" $
   withLockedLayerPtr layer $ \pL -> do
-    pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
+    pFd <- getLayerSchema pL
     void $ featureToHandle pFd (Just fid) feat
       ({#call OGR_L_SetFeature as ^#} pL)
 
@@ -284,8 +290,8 @@ getFeature layer (Fid fid) = liftIO $ do
   withLockedLayerPtr layer $ \pL -> do
     when (not (pL `layerHasCapability` RandomRead)) $
       throwBindingException (UnsupportedLayerCapability RandomRead)
-    pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
-    liftM (fmap snd) $ featureFromHandle pFd $
+    fDef <- layerFeatureDefIO pL
+    liftM (fmap snd) $ featureFromHandle fDef $
       {#call OGR_L_GetFeature as ^#} pL (fromIntegral fid)
 
 deleteFeature :: Layer s t a -> Fid -> GDAL s ()
@@ -307,18 +313,46 @@ syncToDisk =
   liftIO . throwIfError_ "syncToDisk" . {#call OGR_L_SyncToDisk as ^#} . unLayer
 
 getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
-getLayer layer ds = liftIO $
-  newLayerHandle ds (InvalidLayerIndex layer) <=<
+getLayer ix ds = liftIO $
+  newLayerHandle ds (InvalidLayerIndex ix) <=<
     throwIfError "getLayer" $ {#call OGR_DS_GetLayer as ^#} dsH lyr
   where
     dsH = unDataSource ds
-    lyr = fromIntegral layer
+    lyr = fromIntegral ix
+
 
 getLayerByName :: Text -> DataSource s t -> GDAL s (Layer s t a)
 getLayerByName layer ds = liftIO $ useAsEncodedCString layer $
   newLayerHandle ds (InvalidLayerName layer) <=<
     throwIfError "getLayerByName" .
       {#call OGR_DS_GetLayerByName as ^#} (unDataSource ds)
+
+type LayerSource s a = Source (GDAL s) a
+
+sourceFromLayer
+  :: forall s a. OGRFeature a
+  => IO LayerH -> LayerSource s (Maybe Fid, a)
+sourceFromLayer getHandle = bracketP initialize cleanUp getFeatures
+  where
+    initialize = throwIfError "sourceFromLayer: initialize" $ do
+      pL <- getHandle
+      when (pL == nullLayerH) (throwBindingException NullLayer)
+      void $ {#call OGR_L_StartTransaction as ^#} pL
+      void $ {#call OGR_L_ResetReading as ^#}  pL
+      fDef <- layerFeatureDefIO pL
+      return (pL, fDef)
+
+    getFeatures info@(pL, fDef) = do
+      next <- liftIO $
+              featureFromHandle fDef $
+              throwIfError "getNextFeature" $
+              {#call OGR_L_GetNextFeature as ^#} pL
+      case next of
+        Just v  -> yield v >> getFeatures info
+        Nothing -> return ()
+
+    cleanUp = void . {#call unsafe OGR_L_RollbackTransaction as ^#} . fst
+
 
 -- | GDAL < 1.11 only supports 1 geometry field and associates it the layer
 layerGeomFieldDef :: LayerH -> IO GeomFieldDef
@@ -379,10 +413,12 @@ layerName =
   liftIO . (peekEncodedCString <=< {#call unsafe OGR_L_GetName as ^#} . unLayer)
 
 layerFeatureDef :: Layer s t a -> GDAL s FeatureDef
-layerFeatureDef l = liftIO $ do
-  let pL = unLayer l
+layerFeatureDef = liftIO . layerFeatureDefIO . unLayer
+
+layerFeatureDefIO :: LayerH -> IO FeatureDef
+layerFeatureDefIO pL = do
   gfd <- layerGeomFieldDef pL
-  featureDefFromHandle gfd =<< {#call unsafe OGR_L_GetLayerDefn as ^#} pL
+  getLayerSchema pL >>= featureDefFromHandle gfd
 
 
 getSpatialFilter :: Layer s t a -> GDAL s (Maybe Geometry)
