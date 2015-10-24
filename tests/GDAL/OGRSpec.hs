@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -232,102 +233,72 @@ spec = setupAndTeardown $ do
 
   describe "OGRField instances" $
     forM_ (["Memory", "ESRI Shapefile"] :: [String]) $ \driverName -> do
+      describe ("'"++driverName++"' driver") $ do
 #if SUPPORTS_WORD_FIELDS
-      ogrFieldSpec driverName (34 :: Int)
-      ogrFieldSpec driverName (Just 65 :: Maybe Int)
-      ogrFieldSpec driverName (Nothing :: Maybe Int)
-      ogrFieldSpec driverName (0 :: Int)
-      ogrFieldSpec driverName (Just 0 :: Maybe Int)
-      ogrFieldSpec driverName (minBound :: Int)
-      ogrFieldSpec driverName (Just minBound :: Maybe Int)
-      ogrFieldSpec driverName (maxBound :: Int)
-      ogrFieldSpec driverName (Just maxBound :: Maybe Int)
-      ogrFieldSpec driverName (34 :: Word)
-      ogrFieldSpec driverName (Just 65 :: Maybe Word)
-      ogrFieldSpec driverName (Nothing :: Maybe Word)
-      ogrFieldSpec driverName (0 :: Int)
-      ogrFieldSpec driverName (Just 0 :: Maybe Word)
-      ogrFieldSpec driverName (minBound :: Word)
-      ogrFieldSpec driverName (Just minBound :: Maybe Word)
-      ogrFieldSpec driverName (maxBound :: Word)
-      ogrFieldSpec driverName (Just maxBound :: Maybe Word)
+        ogrFieldSpec driverName (34 :: Int)
+        ogrFieldSpec driverName (0 :: Int)
+        ogrFieldSpec driverName (minBound :: Int)
+        ogrFieldSpec driverName (maxBound :: Int)
+        ogrFieldSpec driverName (34 :: Word)
+        ogrFieldSpec driverName (0 :: Int)
+        ogrFieldSpec driverName (minBound :: Word)
+        ogrFieldSpec driverName (maxBound :: Word)
 
-      ogrFieldSpec driverName ([0,34,76,0,minBound,maxBound] :: [Int])
-      ogrFieldSpec driverName (Just [0,65,maxBound,minBound] :: Maybe [Int])
-      ogrFieldSpec driverName (Nothing :: Maybe [Int])
-      ogrFieldSpec driverName ([0,34,76,0,minBound,maxBound] :: U.Vector Int)
-      ogrFieldSpec driverName (Just [0,65,maxBound,minBound] :: Maybe (U.Vector Int))
-      ogrFieldSpec driverName (Nothing :: Maybe (U.Vector Int))
+        ogrFieldSpec driverName ([0,34,76,minBound,maxBound] :: [Int])
+        ogrFieldSpec driverName ([0,34,76,minBound,maxBound] :: U.Vector Int)
 #else
-      ogrFieldSpec driverName (34 :: Int32)
-      ogrFieldSpec driverName (Just 65 :: Maybe Int32)
-      ogrFieldSpec driverName (Nothing :: Maybe Int32)
-      ogrFieldSpec driverName (0 :: Int32)
-      ogrFieldSpec driverName (Just 0 :: Maybe Int32)
-      ogrFieldSpec driverName (minBound :: Int32)
-      ogrFieldSpec driverName (Just minBound :: Maybe Int32)
-      ogrFieldSpec driverName (maxBound :: Int32)
-      ogrFieldSpec driverName (Just maxBound :: Maybe Int32)
-      ogrFieldSpec driverName (34 :: Word32)
-      ogrFieldSpec driverName (Just 65 :: Maybe Word32)
-      ogrFieldSpec driverName (Nothing :: Maybe Word32)
-      ogrFieldSpec driverName (0 :: Int32)
-      ogrFieldSpec driverName (Just 0 :: Maybe Word32)
-      ogrFieldSpec driverName (minBound :: Word32)
-      ogrFieldSpec driverName (Just minBound :: Maybe Word32)
-      ogrFieldSpec driverName (maxBound :: Word32)
-      ogrFieldSpec driverName (Just maxBound :: Maybe Word32)
+        ogrFieldSpec driverName (34 :: Int32)
+        ogrFieldSpec driverName (0 :: Int32)
+        ogrFieldSpec driverName (minBound :: Int32)
+        ogrFieldSpec driverName (maxBound :: Int32)
+        ogrFieldSpec driverName (34 :: Word32)
+        ogrFieldSpec driverName (0 :: Int32)
+        ogrFieldSpec driverName (minBound :: Word32)
+        ogrFieldSpec driverName (maxBound :: Word32)
 
-      ogrFieldSpec driverName ([0,34,76,0,minBound,maxBound] :: [Int32])
-      ogrFieldSpec driverName (Just [0,65,maxBound,minBound] :: Maybe [Int32])
-      ogrFieldSpec driverName (Nothing :: Maybe [Int32])
-      ogrFieldSpec driverName ([0,34,76,0,minBound,maxBound] :: U.Vector Int32)
-      ogrFieldSpec driverName (Just [0,65,maxBound,minBound] :: Maybe (U.Vector Int32))
-      ogrFieldSpec driverName (Nothing :: Maybe (U.Vector Int32))
+        ogrFieldSpec driverName ([0,34,76,minBound,maxBound] :: [Int32])
+        ogrFieldSpec driverName ([0,34,76,minBound,maxBound] :: U.Vector Int32)
 #endif
-      ogrFieldSpec driverName (3.4 :: Double)
-      ogrFieldSpec driverName (Just 6.5 :: Maybe Double)
-      ogrFieldSpec driverName (Nothing :: Maybe Double)
-      ogrFieldSpec driverName (3.4 :: Float)
-      ogrFieldSpec driverName (Just 6.5 :: Maybe Float)
-      ogrFieldSpec driverName (Nothing :: Maybe Float)
+        ogrFieldSpec driverName (3.4 :: Double)
+        ogrFieldSpec driverName (3.4 :: Float)
 
-      ogrFieldSpec driverName ("foo" :: Text)
-      ogrFieldSpec driverName (Just "bar" :: Maybe Text)
-      ogrFieldSpec driverName (Nothing :: Maybe Text)
-      ogrFieldSpec driverName ("foo" :: String)
-      ogrFieldSpec driverName (Just "bar" :: Maybe String)
-      ogrFieldSpec driverName (Nothing :: Maybe String)
+        ogrFieldSpec driverName ("foo" :: Text)
+        ogrFieldSpec driverName ("foo" :: String)
 
-      ogrFieldSpec driverName ("\x0\x0\x0\0\xDE\xAD\xBE\xEF" :: ByteString)
-      ogrFieldSpec driverName (Just "\x0\x0\x0\0\xDE\xAD\xBE\xEF" :: Maybe ByteString)
-      ogrFieldSpec driverName (Nothing :: Maybe ByteString)
+        ogrFieldSpec driverName ("" :: ByteString)
+        ogrFieldSpec driverName ("\x0\x0\x0\0\xDE\xCA\xFF" :: ByteString)
 
-      ogrFieldSpec driverName ([0,34,76,0] :: [Float])
-      ogrFieldSpec driverName (Just [0,65] :: Maybe [Float])
-      ogrFieldSpec driverName (Nothing :: Maybe [Float])
-      ogrFieldSpec driverName ([0,34,76,0] :: U.Vector Float)
-      ogrFieldSpec driverName (Just [0,65] :: Maybe (U.Vector Float))
-      ogrFieldSpec driverName (Nothing :: Maybe (U.Vector Float))
-      ogrFieldSpec driverName ([0,34,76,0] :: [Double])
-      ogrFieldSpec driverName (Just [0,65] :: Maybe [Double])
-      ogrFieldSpec driverName (Nothing :: Maybe [Double])
-      ogrFieldSpec driverName ([0,34,76,0] :: U.Vector Double)
-      ogrFieldSpec driverName (Just [0,65] :: Maybe (U.Vector Double))
-      ogrFieldSpec driverName (Nothing :: Maybe (U.Vector Double))
+        ogrFieldSpec driverName ([0,34,76,0] :: [Float])
+        ogrFieldSpec driverName ([0,34,76,0] :: U.Vector Float)
+        ogrFieldSpec driverName ([0,34,76,0] :: [Double])
+        ogrFieldSpec driverName ([0,34,76,0] :: U.Vector Double)
 
-      ogrFieldSpec driverName (["foo","bar"] :: [Text])
-      ogrFieldSpec driverName (["foo","bar"] :: V.Vector Text)
-      ogrFieldSpec driverName (Just ["bar","foo"] :: Maybe [Text])
-      ogrFieldSpec driverName (Nothing :: Maybe [Text])
-      ogrFieldSpec driverName (["foo", "bar"] :: [String])
-      ogrFieldSpec driverName (["foo", "bar"] :: V.Vector String)
-      ogrFieldSpec driverName (Just ["bar", "foo"] :: Maybe [String])
-      ogrFieldSpec driverName (Nothing :: Maybe [String])
+        ogrFieldSpec driverName (["foo","bar"] :: [Text])
+        ogrFieldSpec driverName (["foo","bar"] :: V.Vector Text)
+        ogrFieldSpec driverName (["foo", "bar"] :: [String])
+        ogrFieldSpec driverName (["foo", "bar"] :: V.Vector String)
 
+        ogrFieldSpec driverName (UTCTime (fromGregorian 2010 01 04) 0)
+        ogrFieldSpec driverName (UTCTime (fromGregorian 2010 01 04) 5437)
+        ogrFieldSpec driverName
+          (LocalTime (fromGregorian 2010 01 04) (TimeOfDay 20 21 34))
+        ogrFieldSpec driverName
+          (ZonedTime
+            (LocalTime (fromGregorian 2010 01 04) (TimeOfDay 21 45 32))
+            utc)
+        ogrFieldSpec driverName
+          (ZonedTime
+            (LocalTime (fromGregorian 2010 01 04) (TimeOfDay 22 11 59))
+            (minutesToTimeZone 60))
+        ogrFieldSpec driverName
+          (ZonedTime
+            (LocalTime (fromGregorian 2010 01 04) (TimeOfDay 23 59 58))
+            (minutesToTimeZone (-60)))
+        ogrFieldSpec driverName (fromGregorian 2010 01 04)
+        ogrFieldSpec driverName (TimeOfDay 20 00 00)
 
-      ogrFieldSpec driverName (UTCTime (fromGregorian 2010 01 04) 0)
-      ogrFieldSpec driverName (UTCTime (fromGregorian 2010 01 04) 5437)
+instance Eq ZonedTime where
+  a == b = zonedTimeToUTC a == zonedTimeToUTC b
 
 getShapePath :: GDAL s FilePath
 getShapePath = liftIO $ getDataFileName "tests/fixtures/fondo.shp"
@@ -374,25 +345,42 @@ instance OGRField a => OGRFeatureDef (TestFeature a) where
     , fdGeoms  = mempty}
 
 ogrFieldSpec
-  :: forall a. (OGRFeatureDef (TestFeature a), Typeable a, Eq a, Show a)
+  :: forall a. ( OGRFeatureDef (TestFeature (Maybe a))
+               , OGRFeatureDef (TestFeature a)
+               , Typeable a
+               , OGRField a
+               , Typeable (Maybe a)
+               , Eq (Maybe a)
+               , Eq a
+               , Show (Maybe a)
+               , Show a
+               )
   => String -> a -> SpecWith (Arg (IO ()))
-ogrFieldSpec driverName value = do
-  let geom = either exc id (createFromWkt Nothing "POINT (45 87)")
-      exc  = error . ("Unexpected createFromWkt error: " ++) . show
-      typeName = show (typeOf (undefined :: a))
-      feature = TestFeature geom value
-      specName = "feature with '" ++ typeName ++ "' field comes out of '" ++
-                 driverName ++ "' layer as it got in"
+ogrFieldSpec driverName v = do
+  let typeName = show (typeOf (undefined :: a))
+      suiteName =
+        "feature with '"++typeName++"' field comes out of layer as it got in"
+  describe suiteName $ do
+    ogrFieldSpec_ v
+    ogrFieldSpec_ (Just v)
+    ogrFieldSpec_ (Nothing :: Maybe a)
 
-  withDir specName $ \tmpDir -> do
-    ds <- create driverName (joinPath [tmpDir, "test"]) []
-    r <- try $ do
-      l <- createLayer ds StrictOK []
-      createFeature l feature >>= getFeature l >>= (`shouldBe` Just feature)
-    case r of
-      Right () -> return ()
-      Left GDALException{gdalErrNum=NotSupported} ->
-        -- driver does not support it, oh well...
-        warn ("Not supported by driver: " ++ specName)
-      Left e  -> throwM e
+  where
+    ogrFieldSpec_ value = do
+      let geom = either exc id (createFromWkt Nothing "POINT (45 87)")
+          exc  = error . ("Unexpected createFromWkt error: " ++) . show
+          feature = TestFeature geom value
+          tyName  = show (typeOf value)
+
+      withDir (show value) $ \tmpDir -> do
+        ds <- create driverName (joinPath [tmpDir, "test"]) []
+        r <- try $ do
+          l <- createLayer ds StrictOK []
+          createFeature l feature >>= getFeature l >>= (`shouldBe` Just feature)
+        case r of
+          Right () -> return ()
+          Left GDALException{gdalErrNum=NotSupported} ->
+            -- driver does not support it, oh well...
+            warn ("Not supported by '"++driverName++"' driver: " ++ tyName)
+          Left e  -> throwM e
 
