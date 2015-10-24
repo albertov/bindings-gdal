@@ -22,8 +22,7 @@ module GDAL.Internal.CPLError (
 
 {# context lib = "gdal" prefix = "CPL" #}
 
-import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
-import Control.Exception (Exception(..), SomeException, bracket, throw)
+import Control.Exception (Exception(..), SomeException, finally, throw)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad.Catch (MonadThrow(throwM))
 
@@ -130,12 +129,7 @@ collectMessages act = do
   return (ret, msgs)
 
 withErrorHandler :: CErrorHandler -> IO a -> IO a
-withErrorHandler eh act =
-  bracket (mkErrorHandler eh) freeHaskellFunPtr $ \h -> do
-    runBounded $ bracket ({#call unsafe PushErrorHandler as ^#} h)
-                         (const {#call unsafe PopErrorHandler as ^#})
-                         (const act)
-  where
-    runBounded
-      | rtsSupportsBoundThreads = runInBoundThread
-      | otherwise               = id
+withErrorHandler eh act = do
+  h <- mkErrorHandler eh
+  ({#call unsafe PushErrorHandler as ^#} h >> act)
+    `finally` ({#call unsafe PopErrorHandler as ^#} >> freeHaskellFunPtr h)

@@ -26,14 +26,12 @@ module GDAL.Internal.Types (
   , isNoData
   , fromValue
   , runGDAL
-  , gdalForkIO
   , registerFinalizer
 ) where
 
 import Control.Applicative (Applicative(..), liftA2)
-import Control.Concurrent (ThreadId)
-import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar, newEmptyMVar)
-import Control.Exception (evaluate, catchJust, fromException)
+import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
+import Control.Exception (evaluate)
 import Control.DeepSeq (NFData(rnf), force)
 import Control.Monad (liftM, void)
 import Control.Monad.Base (MonadBase)
@@ -42,11 +40,9 @@ import Control.Monad.Trans.Resource (
   , MonadResource
   , runResourceT
   , register
-  , resourceForkIO
   )
-import Control.Monad.Catch (MonadThrow(..), MonadCatch, MonadMask, finally)
+import Control.Monad.Catch (MonadThrow(..), MonadCatch, MonadMask, catch)
 import Control.Monad.IO.Class (MonadIO(..))
-import Control.Monad.Reader (ReaderT, runReaderT, ask)
 
 import Data.Typeable (Typeable)
 import Data.Coerce (coerce)
@@ -271,7 +267,7 @@ instance Storable a => G.Vector U.Vector (Value a) where
 
 
 
-newtype GDAL s a = GDAL (ResourceT (ReaderT (MVar [MVar ()]) IO) a)
+newtype GDAL s a = GDAL (ResourceT IO a)
 
 deriving instance Functor (GDAL s)
 deriving instance Applicative (GDAL s)
@@ -284,34 +280,14 @@ deriving instance MonadBase IO (GDAL s)
 deriving instance MonadResource (GDAL s)
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
-runGDAL (GDAL a) =
-  catchJust fromException (liftM Right run) (evaluate . Left . force)
+runGDAL (GDAL a) = runBounded $ runResourceT $
+  (a >>= liftIO . liftM Right . evaluate . force)
+    `catch`
+  (liftIO . evaluate . force . Left)
   where
-    run = do
-      children <- newMVar []
-      runReaderT
-        (runResourceT (finally (a >>= liftIO . evaluate . force)
-                               (liftIO (waitForChildren children))))
-        children
-
-    waitForChildren children = do
-      cs <- takeMVar children
-      case cs of
-        []   -> return ()
-        m:ms -> do
-           putMVar children ms
-           _ <- takeMVar m
-           waitForChildren children
-
-gdalForkIO :: GDAL s () -> GDAL s ThreadId
-gdalForkIO (GDAL a) = GDAL $ do
-  children <- ask
-  mvar <- liftIO $ do
-    childs <- takeMVar children
-    mvar <- newEmptyMVar
-    putMVar children (mvar:childs)
-    return mvar
-  resourceForkIO (finally a (liftIO (putMVar mvar ())))
+    runBounded
+      | rtsSupportsBoundThreads = runInBoundThread
+      | otherwise               = id
 
 
 registerFinalizer :: IO () -> GDAL s ()

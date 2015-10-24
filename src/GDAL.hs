@@ -30,7 +30,6 @@ module GDAL (
   , ContinueOrStop (..)
 
   , runGDAL
-  , gdalForkIO
   , isNoData
   , fromValue
   , allRegister
