@@ -25,8 +25,12 @@ gdalConf (pkg0, pbi) flags = do
                       }
      updLib lib = lib { libBuildInfo  = updBinfo (libBuildInfo lib)}
      updTs  ts  = ts  { testBuildInfo = updBinfo (testBuildInfo ts)}
+     updBm  bm  = bm  { benchmarkBuildInfo = updBinfo (benchmarkBuildInfo bm)}
+     updExe ex  = ex  { buildInfo     = updBinfo (buildInfo ex)}
      updLpd lpd = lpd { library       = fmap updLib (library lpd)
                       , testSuites    = map updTs (testSuites lpd)
+                      , benchmarks    = map updBm (benchmarks lpd)
+                      , executables   = map updExe (executables lpd)
                       }
  lbi <- confHook simpleUserHooks (pkg0, pbi) flags
  return $ lbi { localPkgDescr = updLpd (localPkgDescr lbi)}
