@@ -90,7 +90,6 @@ before_install:
   fi
 
   export PATH=$GDAL_BIN:$PATH
-  export LD_LIBRARY_PATH=$GDAL_LIB:$LD_LIBRARY_PATH
 
 - gdal-config --version
 

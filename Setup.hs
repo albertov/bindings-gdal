@@ -9,37 +9,29 @@ import Distribution.Simple.LocalBuildInfo
 
 main = defaultMainWithHooks simpleUserHooks {confHook = gdalConf}
 
-
 gdalConf (pkg0, pbi) flags = do
- lbi <- confHook simpleUserHooks (pkg0, pbi) flags
- gdalInclude <- getIncludeDirs
- gdalLibDirs <- getExtraLibDirs
- gdalLibs    <- getExtraLibs
+ gdalInclude <- liftM (getFlagValues 'I') $ getOutput "gdal-config" ["--cflags"]
+ gdalLibDirs <- liftM (getFlagValues 'L') $ getOutput "gdal-config" ["--libs"]
+ gdalLibs    <- liftM (getFlagValues 'l') $ getOutput "gdal-config" ["--libs"]
  gdalVers    <- getOutput "gdal-config" ["--version"]
- let lpd        = localPkgDescr lbi
-     (gdalMajor,rVers) = break (=='.') gdalVers
-     (gdalMinor,_)     = break (=='.') (tail rVers)
-     lib        = fromJust (library lpd)
-     libbi      = libBuildInfo lib
-     libbi'     = libbi {
-                     extraLibDirs = extraLibDirs libbi ++ gdalLibDirs
-                   , extraLibs    = extraLibs    libbi ++ gdalLibs
-                   , includeDirs  = includeDirs  libbi ++ gdalInclude
-                   , cppOptions   = cppOptions   libbi ++
-                                     [ "-DGDAL_VERSION_MAJOR=" ++ gdalMajor
-                                     , "-DGDAL_VERSION_MINOR=" ++ gdalMinor]
-                   }
-     lib'       = lib { libBuildInfo = libbi' }
-     lpd'       = lpd { library = Just lib' }
- return $ lbi { localPkgDescr = lpd' }
+ let (vMajor,r) = break (=='.') gdalVers
+     (vMinor,_) = break (=='.') (tail r)
+     updBinfo bi = bi { extraLibDirs = extraLibDirs bi ++ gdalLibDirs
+                      , extraLibs    = extraLibs    bi ++ gdalLibs
+                      , includeDirs  = includeDirs  bi ++ gdalInclude
+                      , cppOptions   = cppOptions   bi ++
+                                         [ "-DGDAL_VERSION_MAJOR=" ++ vMajor
+                                         , "-DGDAL_VERSION_MINOR=" ++ vMinor]
+                      }
+     updLib lib = lib { libBuildInfo  = updBinfo (libBuildInfo lib)}
+     updTs  ts  = ts  { testBuildInfo = updBinfo (testBuildInfo ts)}
+     updLpd lpd = lpd { library       = fmap updLib (library lpd)
+                      , testSuites    = map updTs (testSuites lpd)
+                      }
+ lbi <- confHook simpleUserHooks (pkg0, pbi) flags
+ return $ lbi { localPkgDescr = updLpd (localPkgDescr lbi)}
 
 getOutput s a = readProcess s a ""
-
-getExtraLibs = liftM (getFlagValues 'l') $ getOutput "gdal-config" ["--libs"]
-
-getExtraLibDirs = liftM (getFlagValues 'L') $ getOutput "gdal-config" ["--libs"]
-
-getIncludeDirs = liftM (getFlagValues 'I') $ getOutput "gdal-config" ["--cflags"]
 
 getFlagValues f s = map (\(_:_:v) -> v) filtered
   where filtered = filter (\(_:f':_) -> f==f') (words . init $ s)
