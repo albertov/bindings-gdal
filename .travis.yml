@@ -99,7 +99,7 @@ before_install:
 
 script:
 - stack $ARGS --no-terminal test --haddock
-- find .stack-work -type f -name spec -exec valgrind --leak-check=full --show-reachable=yes {} ';'
+- travis_wait find .stack-work -type f -name spec -exec valgrind --leak-check=full --show-reachable=yes {} ';'
 
 cache:
   apt: true
