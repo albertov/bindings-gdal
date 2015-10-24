@@ -13,6 +13,7 @@ module GDAL.Internal.OGRFeature (
     OGRFeature (..)
   , OGRFeatureDef (..)
   , OGRField   (..)
+  , OGRTimeZone (..)
   , Fid (..)
   , FieldType (..)
   , Field (..)
@@ -34,7 +35,7 @@ module GDAL.Internal.OGRFeature (
   , withFieldDefnH
   , fieldDefFromHandle
   , featureDefFromHandle
-#if MULTI_GEOM_FIELDS
+#if SUPPORTS_MULTI_GEOM_FIELDS
   , GeomFieldDefnH (..)
   , withGeomFieldDefnH
 #endif
@@ -128,16 +129,18 @@ class OGRFeature a => OGRFeatureDef a where
 data Field
   = OGRInteger       !Int32
   | OGRIntegerList   !(St.Vector Int32)
+#if SUPPORTS_64_BIT_INT_FIELDS
   | OGRInteger64     !Int64
   | OGRInteger64List !(St.Vector Int64)
+#endif
   | OGRReal          !Double
   | OGRRealList      !(St.Vector Double)
   | OGRString        !Text
   | OGRStringList    !(V.Vector Text)
   | OGRBinary        !ByteString
   | OGRDateTime      !LocalTime !OGRTimeZone
-  | OGRDate          !Day       !OGRTimeZone
-  | OGRTime          !TimeOfDay !OGRTimeZone
+  | OGRDate          !Day
+  | OGRTime          !TimeOfDay
   | OGRNullField
   deriving (Show, Eq)
 
@@ -215,7 +218,7 @@ withFieldDefnH fldName FieldDef{..} f =
       case fldJust of
         Just j  -> {#call unsafe OGR_Fld_SetJustify as ^#} h (fromEnumC j)
         Nothing -> return ()
-#if GDAL_VERSION_MAJOR >= 2
+#if SUPPORTS_NULLABLE_FIELD_DEFS
       {#call unsafe OGR_Fld_SetNullable as ^#} h (fromBool fldNullable)
 #endif
 
@@ -226,7 +229,7 @@ fieldDefFromHandle p =
     <*> liftM iToMaybe ({#call unsafe OGR_Fld_GetWidth as ^#} p)
     <*> liftM iToMaybe ({#call unsafe OGR_Fld_GetPrecision as ^#} p)
     <*> liftM jToMaybe ({#call unsafe OGR_Fld_GetJustify as ^#} p)
-#if GDAL_VERSION_MAJOR >= 2
+#if SUPPORTS_NULLABLE_FIELD_DEFS
     <*> liftM toBool ({#call unsafe OGR_Fld_IsNullable as ^#} p)
 #else
     <*> pure True
@@ -237,7 +240,7 @@ fieldDefFromHandle p =
 
 featureDefFromHandle :: GeomFieldDef -> FeatureDefnH -> IO FeatureDef
 featureDefFromHandle gfd p = do
-#if MULTI_GEOM_FIELDS
+#if SUPPORTS_MULTI_GEOM_FIELDS
   gfields <- geomFieldDefsFromFeatureDefnH p
   let (gfd', gfields')
         -- should not happen but just in case
@@ -263,7 +266,7 @@ fieldDefsFromFeatureDefnH p = do
 
 
 
-#if MULTI_GEOM_FIELDS
+#if SUPPORTS_MULTI_GEOM_FIELDS
 
 geomFieldDefsFromFeatureDefnH
   :: FeatureDefnH -> IO (V.Vector (Text, GeomFieldDef))
@@ -281,7 +284,7 @@ geomFieldDefsFromFeatureDefnH p = do
               <$> liftM toEnumC ({#call unsafe OGR_GFld_GetType as ^#} g)
               <*> ({#call unsafe OGR_GFld_GetSpatialRef as ^#} g >>=
                     maybeNewSpatialRefBorrowedHandle)
-#if (GDAL_VERSION_MAJOR >= 2)
+#if SUPPORTS_NULLABLE_FIELD_DEFS
               <*> liftM toBool ({#call unsafe OGR_GFld_IsNullable as ^#} g)
 #else
               <*> pure True
@@ -297,11 +300,11 @@ withGeomFieldDefnH gfdName GeomFieldDef{..} f =
     populate p = do
       withMaybeSpatialReference gfdSrs $
         {#call unsafe OGR_GFld_SetSpatialRef as ^#} p
-#if (GDAL_VERSION_MAJOR >= 2)
+#if SUPPORTS_NULLABLE_FIELD_DEFS
       {#call unsafe OGR_GFld_SetNullable as ^#} p (fromBool gfdNullable)
 #endif
 
-#endif -- MULTI_GEOM_FIELDS
+#endif -- SUPPORTS_MULTI_GEOM_FIELDS
 
 nullFID :: Fid
 nullFID = Fid ({#const OGRNullFID#})
@@ -325,7 +328,7 @@ featureToHandle fdH fId ft act =
       Just g  -> void $ withGeometry g ({#call OGR_F_SetGeometry as ^#} pF)
       Nothing -> return ()
     when (not (HM.null fGeoms)) $ do
-#if MULTI_GEOM_FIELDS
+#if SUPPORTS_MULTI_GEOM_FIELDS
       geomFieldDefs <- geomFieldDefsFromFeatureDefnH fdH
       flip imapM_ (V.tail geomFieldDefs) $ \ix (name, _) -> do
         case join (HM.lookup name fGeoms) of
@@ -370,7 +373,7 @@ featureFromHandle fdH act =
         geom <- if geomRef /= nullPtr
                   then liftM Just (newGeometryHandle geomRef)
                   else return Nothing
-#if MULTI_GEOM_FIELDS
+#if SUPPORTS_MULTI_GEOM_FIELDS
         geomFieldDefs <- geomFieldDefsFromFeatureDefnH fdH
         geoms <- flip imapM (V.tail geomFieldDefs) $ \ix (gfdName, _) -> do
           pG <- {#call unsafe OGR_F_GetGeomFieldRef as ^#} pF (ix + 1)
@@ -404,7 +407,7 @@ setField (OGRIntegerList v) ix f =
     {#call OGR_F_SetFieldIntegerList as ^#} f (fromIntegral ix)
       (fromIntegral (St.length v)) . castPtr
 
-#if (GDAL_VERSION_MAJOR >= 2)
+#if SUPPORTS_64_BIT_INT_FIELDS
 setField (OGRInteger64 v) ix f =
   {#call OGR_F_SetFieldInteger64 as ^#} f (fromIntegral ix) (fromIntegral v)
 
@@ -412,13 +415,6 @@ setField (OGRInteger64List v) ix f =
   St.unsafeWith v $
     {#call OGR_F_SetFieldInteger64List as ^#} f (fromIntegral ix)
       (fromIntegral (St.length v)) . castPtr
-#else
--- | TODO: check for overflow
-setField (OGRInteger64 v)     ix f =
-  setField (OGRInteger (fromIntegral v)) ix f
-
-setField (OGRInteger64List v) ix f =
-  setField (OGRIntegerList (St.map fromIntegral v)) ix f
 #endif
 
 setField (OGRReal v) ix f =
@@ -450,14 +446,16 @@ setField (OGRDateTime (LocalTime day (TimeOfDay h mn s)) tz) ix f =
   (fromIntegral h) (fromIntegral mn) (truncate s) (fromOGRTimeZone tz)
   where (y, m, d) = toGregorian day
 
-setField (OGRDate day tz) ix f =
+setField (OGRDate day) ix f =
   {#call OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix)
   (fromIntegral y) (fromIntegral m) (fromIntegral d) 0 0 0 (fromOGRTimeZone tz)
   where (y, m, d) = toGregorian day
+        tz = UnknownTimeZone
 
-setField (OGRTime (TimeOfDay h mn s) tz) ix f =
+setField (OGRTime (TimeOfDay h mn s)) ix f =
   {#call OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix) 0 0 0
   (fromIntegral h) (fromIntegral mn) (truncate s) (fromOGRTimeZone tz)
+  where tz = UnknownTimeZone
 
 setField OGRNullField ix f = {#call OGR_F_UnsetField as ^#} f ix
 
@@ -479,7 +477,7 @@ getField OFTIntegerList ix f = alloca $ \lenP -> do
     copyBytes vP (buf :: Ptr CInt) (nElems * sizeOf (undefined :: CInt))
   liftM (Just . OGRIntegerList) (St.unsafeFreeze (Stm.unsafeCast vec))
 
-#if (GDAL_VERSION_MAJOR >= 2)
+#if SUPPORTS_64_BIT_INT_FIELDS
 getField OFTInteger64 ix f
   = liftM (Just . OGRInteger64 . fromIntegral)
     ({#call unsafe OGR_F_GetFieldAsInteger64 as ^#} f ix)
@@ -526,10 +524,10 @@ getField OFTDateTime ix f =
   liftM (fmap (uncurry OGRDateTime)) (getDateTime ix f)
 
 getField OFTDate ix f =
-  liftM (fmap (\(LocalTime d _,tz) -> OGRDate d tz)) (getDateTime ix f)
+  liftM (fmap (\(LocalTime d _,_) -> OGRDate d)) (getDateTime ix f)
 
 getField OFTTime ix f =
-  liftM (fmap (\(LocalTime _ t,tz) -> OGRTime t tz)) (getDateTime ix f)
+  liftM (fmap (\(LocalTime _ t,_) -> OGRTime t)) (getDateTime ix f)
 
 
 getDateTime :: CInt -> FeatureH -> IO (Maybe (LocalTime, OGRTimeZone))

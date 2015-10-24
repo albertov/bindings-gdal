@@ -11,6 +11,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 
 #include "bindings.h"
 
@@ -49,6 +50,7 @@ module GDAL.Internal.OGR (
   , layerFeatureDef
 
   , createFeature
+  , createFeature_
   , getFeature
   , setFeature
   , deleteFeature
@@ -88,6 +90,7 @@ import Foreign.Marshal.Utils (toBool)
 import Foreign.Storable (Storable)
 
 import System.IO.Unsafe (unsafePerformIO)
+
 
 {#import GDAL.Internal.OSR#}
 {#import GDAL.Internal.OGRGeometry#}
@@ -234,7 +237,7 @@ createLayerWithDef ds FeatureDef{..} approxOk options = liftIO $
       when (not (V.null fdGeoms)) $
         if supportsMultiGeomFields pL
           then
-#if MULTI_GEOM_FIELDS
+#if SUPPORTS_MULTI_GEOM_FIELDS
             V.forM_ fdGeoms $ \(n,f) -> withGeomFieldDefnH n f $ \pGFld ->
               {#call OGR_L_CreateGeomField as ^#} pL pGFld iApproxOk
 #else
@@ -259,6 +262,12 @@ createFeature layer feature = liftIO $ throwIfError "createFeature" $
       void $ {#call OGR_L_CreateFeature as ^#} pL pF
       getFid pF >>= maybe (throwBindingException UnexpectedNullFid) return
 
+createFeature_ :: OGRFeature a => RWLayer s a -> a -> GDAL s ()
+createFeature_ layer feature =
+  catchJust (\case {UnexpectedNullFid -> Just (); _ -> Nothing})
+            (void (createFeature layer feature))
+            return
+
 
 setFeature :: OGRFeature a => RWLayer s a -> Fid -> a -> GDAL s ()
 setFeature layer fid feature = liftIO $ throwIfError "setFeature" $
@@ -268,8 +277,10 @@ setFeature layer fid feature = liftIO $ throwIfError "setFeature" $
       ({#call OGR_L_SetFeature as ^#} pL)
 
 getFeature :: OGRFeature a => Layer s t a -> Fid -> GDAL s (Maybe a)
-getFeature layer (Fid fid) = liftIO $
+getFeature layer (Fid fid) = liftIO $ do
   withLockedLayerPtr layer $ \pL -> do
+    when (not (pL `layerHasCapability` RandomRead)) $
+      throwBindingException (UnsupportedLayerCapability RandomRead)
     pFd <- {#call unsafe OGR_L_GetLayerDefn as ^#} pL
     liftM (fmap snd) $ featureFromHandle pFd $
       {#call OGR_L_GetFeature as ^#} pL (fromIntegral fid)
@@ -282,7 +293,7 @@ deleteFeature layer (Fid fid) = liftIO $
 
 canCreateMultipleGeometryFields :: Bool
 canCreateMultipleGeometryFields =
-#if MULTI_GEOM_FIELDS
+#if SUPPORTS_MULTI_GEOM_FIELDS
   True
 #else
   False
@@ -379,47 +390,17 @@ setSpatialFilter l g = liftIO $
   withLockedLayerPtr l $ \lPtr -> withGeometry g$ \gPtr ->
     {#call unsafe OGR_L_SetSpatialFilter as ^#} lPtr gPtr
 
-data LayerCapability
-  = RandomRead
-  | SequentialWrite
-  | RandomWrite
-  | FastSpatialFilter
-  | FastFeatureCount
-  | FastGetExtent
-  | CreateField
-  | DeleteField
-  | ReorderFields
-  | AlterFieldDefn
-  | Transactions
-  | DeleteFeature
-  | FastSetNextByIndex
-  | StringsAsUTF8
-  | IgnoreFields
-  | CreateGeomField
-  deriving (Eq, Show, Enum, Bounded)
+driverHasCapability :: DriverH -> DriverCapability -> Bool
+driverHasCapability d c = unsafePerformIO $ do
+  withCString (show c)
+    (liftM toBool . {#call unsafe OGR_Dr_TestCapability as ^#} d)
 
 layerHasCapability :: LayerH -> LayerCapability -> Bool
 layerHasCapability l c = unsafePerformIO $ do
   withCString (show c)
     (liftM toBool . {#call unsafe OGR_L_TestCapability as ^#} l)
 
-data DataSourceCapability
-  = CreateLayer
-  | DeleteLayer
-  | CreateGeomFieldAfterCreateLayer
-  deriving (Eq, Show, Enum, Bounded)
-
 dataSourceHasCapability :: DataSourceH -> DataSourceCapability -> Bool
 dataSourceHasCapability d c = unsafePerformIO $ do
   withCString (show c)
     (liftM toBool . {#call unsafe OGR_DS_TestCapability as ^#} d)
-
-data DriverCapability
-  = CreateDataSource
-  | DeleteDataSource
-  deriving (Eq, Show, Enum, Bounded)
-
-driverHasCapability :: DriverH -> DriverCapability -> Bool
-driverHasCapability d c = unsafePerformIO $ do
-  withCString (show c)
-    (liftM toBool . {#call unsafe OGR_Dr_TestCapability as ^#} d)

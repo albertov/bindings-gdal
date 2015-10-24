@@ -4,6 +4,9 @@
 module GDAL.Internal.OGRError (
     OGRError (..)
   , OGRException (..)
+  , DriverCapability(..)
+  , LayerCapability(..)
+  , DataSourceCapability(..)
 
   , isOGRException
   , checkOGRError
@@ -41,6 +44,7 @@ data OGRException
   | NoSuchField       !Text
   | MultipleGeomFieldsNotSupported
   | UnsupportedFieldType
+  | UnsupportedLayerCapability !LayerCapability
   deriving (Show, Eq, Typeable)
 
 instance NFData OGRException where
@@ -76,3 +80,34 @@ checkOGRError act ret = do
   case err of
     None -> liftM Right ret
     e    -> return (Left e)
+
+
+data LayerCapability
+  = RandomRead
+  | SequentialWrite
+  | RandomWrite
+  | FastSpatialFilter
+  | FastFeatureCount
+  | FastGetExtent
+  | CreateField
+  | DeleteField
+  | ReorderFields
+  | AlterFieldDefn
+  | Transactions
+  | DeleteFeature
+  | FastSetNextByIndex
+  | StringsAsUTF8
+  | IgnoreFields
+  | CreateGeomField
+  deriving (Eq, Show, Enum, Bounded)
+
+data DataSourceCapability
+  = CreateLayer
+  | DeleteLayer
+  | CreateGeomFieldAfterCreateLayer
+  deriving (Eq, Show, Enum, Bounded)
+
+data DriverCapability
+  = CreateDataSource
+  | DeleteDataSource
+  deriving (Eq, Show, Enum, Bounded)

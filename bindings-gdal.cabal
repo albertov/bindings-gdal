@@ -10,6 +10,7 @@ copyright:           2013-2015
 category:            Bindings
 build-type:          Custom
 cabal-version:       >=1.10
+extra-source-files: src/GDAL/Internal/bindings.h
 Data-Files:
   tests/fixtures/fondo.shp
   tests/fixtures/fondo.shx
@@ -57,6 +58,7 @@ library
                    , data-default
                    , unordered-containers
   ghc-options:       -funbox-strict-fields -Wall
+  default-extensions: CPP
   default-language: Haskell2010
   include-dirs:    src/GDAL/Internal/
 
@@ -67,6 +69,7 @@ test-suite spec
   type:             exitcode-stdio-1.0
   build-depends:    base
                   , filepath
+                  , ansi-terminal
                   , hspec
                   , hspec-core >= 1.13
                   , bindings-gdal
@@ -76,6 +79,7 @@ test-suite spec
                   , temporary
                   , exceptions
                   , transformers
+                  , time
                   , data-default
   hs-source-dirs:   tests
   main-is:          Spec.hs
@@ -87,5 +91,7 @@ test-suite spec
                   , Paths_bindings_gdal
   default-language: Haskell2010
   ghc-options:     -Wall -rtsopts -threaded -with-rtsopts=-N
+  default-extensions: CPP
+  include-dirs:    src/GDAL/Internal/
   if impl(ghc >= 7.10.0)
     cpp-options: -DSTORABLE_COMPLEX

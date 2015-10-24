@@ -8,18 +8,21 @@ module TestUtils (
   , expectationFailure
   , existsAndSizeIsGreaterThan
   , it
+  , warn
   , withDir
 ) where
 
 import Control.Monad (guard, unless)
 import Control.Monad.Catch (Exception, tryJust, try)
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Typeable (typeOf)
 
+import System.Console.ANSI
 import System.IO (IOMode(ReadMode), withBinaryFile, hFileSize)
 import System.IO.Error (isDoesNotExistError)
 import System.IO.Temp (withSystemTempDirectory)
+import System.IO (hPutStrLn, stderr)
 
 import Test.Hspec (SpecWith, Arg, Selector)
 import qualified Test.Hspec as Hspec
@@ -40,13 +43,13 @@ runGDAL' a = do
   case (r,msgs) of
     (Right (),[]) ->
       return ()
-    (Right (),msgs) ->
-      Hspec.expectationFailure ("Uncollected messages: " ++ show msgs)
+    (Right (),msgs') ->
+      Hspec.expectationFailure ("Uncollected messages: " ++ show msgs')
     (Left e,[])   ->
       Hspec.expectationFailure ("Unexpected GDALException: " ++ show e)
-    (Left e, msgs) ->
+    (Left e, msgs') ->
       Hspec.expectationFailure ("Unexpected GDALException: " ++ show e ++
-                                " and uncollected messages: " ++ show msgs)
+                                " and uncollected messages: " ++ show msgs')
 
 existsAndSizeIsGreaterThan :: FilePath -> Integer -> GDAL s ()
 existsAndSizeIsGreaterThan p s = do
@@ -86,3 +89,10 @@ shouldNotBe a  = liftIO . flip Hspec.shouldSatisfy (/=a)
 
 expectationFailure :: String -> GDAL s ()
 expectationFailure = liftIO . Hspec.expectationFailure
+
+warn :: MonadIO m => String -> m ()
+warn msg = liftIO $ do
+  hSetSGR stderr [SetColor Foreground Vivid Yellow]
+  hPutStrLn stderr msg
+  hSetSGR stderr [Reset]
+
