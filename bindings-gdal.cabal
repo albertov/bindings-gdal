@@ -10,7 +10,6 @@ copyright:           2013-2015
 category:            Bindings
 build-type:          Custom
 cabal-version:       >=1.10
-extra-source-files: src/GDAL/Internal/bindings.h
 Data-Files:
   tests/fixtures/fondo.shp
   tests/fixtures/fondo.shx
@@ -58,6 +57,7 @@ library
                    , data-default
                    , unordered-containers
   ghc-options:       -funbox-strict-fields -Wall
+  install-includes: bindings.h
   default-extensions: CPP
   default-language: Haskell2010
   include-dirs:    src/GDAL/Internal/

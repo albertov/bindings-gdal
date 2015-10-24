@@ -33,7 +33,7 @@ gdalConf (pkg0, pbi) flags = do
                       , executables   = map updExe (executables lpd)
                       }
  lbi <- confHook simpleUserHooks (pkg0, pbi) flags
- return $ lbi { localPkgDescr = updLpd (localPkgDescr lbi)}
+ return (lbi { localPkgDescr = updLpd (localPkgDescr lbi) })
 
 getOutput s a = readProcess s a ""
 

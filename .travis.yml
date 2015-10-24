@@ -90,6 +90,10 @@ before_install:
   fi
 
   export PATH=$GDAL_BIN:$PATH
+  # It seems stack doesn't use the extraLibs and extraLibDirs that we set in
+  # Setup.hs so the test suite can't link to the library unless we set
+  # LD_LIBRARY_PATH
+  export LD_LIBRARY_PATH=$GDAL_LIB:$LD_LIBRARY_PATH
 
 - gdal-config --version
 
