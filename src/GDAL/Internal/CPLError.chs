@@ -26,8 +26,8 @@ module GDAL.Internal.CPLError (
 import Control.Exception (Exception(..), SomeException, bracket, finally)
 import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
 import Control.DeepSeq (NFData(rnf))
-import Control.Monad (void, (>=>), liftM)
-import Control.Monad.Catch (MonadCatch, MonadThrow(throwM), tryJust)
+import Control.Monad (void, liftM)
+import Control.Monad.Catch (MonadCatch, MonadThrow(throwM))
 import Control.Monad.IO.Class (MonadIO(..))
 
 import Data.Maybe (isJust, fromMaybe)
@@ -42,7 +42,7 @@ import Foreign.Storable (peekByteOff)
 -- work around  https://github.com/haskell/c2hs/issues/151
 import qualified Foreign.C.Types as C2HSImp
 
-import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr)
+import Foreign.Ptr (Ptr)
 
 import GDAL.Internal.Util (toEnumC, peekEncodedCString)
 

@@ -76,8 +76,6 @@ module GDAL.Internal.GDAL (
 
   , unDataset
   , unBand
-  , withLockedDatasetPtr
-  , withLockedBandPtr
   , newDerivedDatasetHandle
   , version
   , checkCPLErr
@@ -96,7 +94,6 @@ import Data.Bits ((.&.))
 import Data.Complex (Complex(..), realPart)
 import Data.Coerce (coerce)
 import Data.Proxy (Proxy(..))
-import Data.Text (Text)
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
@@ -196,33 +193,20 @@ nullDatasetH = DatasetH nullPtr
 
 deriving instance Eq DatasetH
 
-newtype Dataset s (t::AccessMode)
-  = Dataset (Mutex, DatasetH)
-
-unDataset :: Dataset s t -> DatasetH
-unDataset (Dataset (_,p)) = p
-
-withLockedDatasetPtr
-  :: Dataset s t -> (DatasetH -> IO b) -> IO b
-withLockedDatasetPtr (Dataset (m,p)) f = withMutex m (f p)
+newtype Dataset s (t::AccessMode) =
+  Dataset { unDataset :: DatasetH }
 
 type RODataset s = Dataset s ReadOnly
 type RWDataset s = Dataset s ReadWrite
 
 {#pointer RasterBandH newtype #}
 
-newtype Band s (t::AccessMode) = Band (Mutex, RasterBandH)
-
-unBand :: Band s t -> RasterBandH
-unBand (Band (_,p)) = p
+newtype Band s (t::AccessMode) =
+  Band { unBand :: RasterBandH }
 
 reifyBandDataType
   :: Band s t -> (forall a. GDALType a => Proxy a -> b) -> b
 reifyBandDataType b = reifyDataType (bandDataType b)
-
-withLockedBandPtr
-  :: Band s t -> (RasterBandH -> IO b) -> IO b
-withLockedBandPtr (Band (m,p)) f = withMutex m (f p)
 
 type ROBand s = Band s ReadOnly
 type RWBand s = Band s ReadWrite
@@ -288,9 +272,8 @@ createCopy driver path ds strict options progressFun = do
            withOptionList options $ \o -> do
              validateCreationOptions d o
              withCString path $ \p ->
-               withLockedDatasetPtr ds $ \dsPtr ->
-                 {#call GDALCreateCopy as ^#}
-                   d p dsPtr (fromBool strict) o pFunc (castPtr nullPtr)
+               {#call GDALCreateCopy as ^#}
+                 d p (unDataset ds) (fromBool strict) o pFunc (castPtr nullPtr)
   newDatasetHandle pDs
 
 
@@ -299,16 +282,15 @@ newDatasetHandle dh
   | dh==nullDatasetH = throwBindingException NullDataset
   | otherwise        = do
       registerFinalizer (safeCloseDataset dh)
-      m <- liftIO newMutex
-      return $ Dataset (m,dh)
+      return (Dataset dh)
 
 newDerivedDatasetHandle
   :: Dataset s t' -> DatasetH -> GDAL s (Dataset s t)
-newDerivedDatasetHandle (Dataset (m,_)) dh
+newDerivedDatasetHandle _ dh
   | dh==nullDatasetH = throwBindingException NullDataset
   | otherwise        = do
       registerFinalizer (safeCloseDataset dh)
-      return $ Dataset (m,dh)
+      return (Dataset dh)
 
 safeCloseDataset :: DatasetH -> IO ()
 safeCloseDataset = {#call GDALClose as ^#}
@@ -318,7 +300,7 @@ createMem
 createMem = create MEM ""
 
 flushCache :: forall s. RWDataset s -> GDAL s ()
-flushCache = liftIO . flip withLockedDatasetPtr {#call GDALFlushCache as ^#}
+flushCache = liftIO . {#call GDALFlushCache as ^#} . unDataset
 
 datasetSize :: Dataset s t -> Size
 datasetSize ds =
@@ -339,10 +321,8 @@ datasetProjection ds = do
 
 setDatasetProjection :: RWDataset s -> SpatialReference -> GDAL s ()
 setDatasetProjection ds srs =
-  liftIO $
-    checkCPLErr $
-      withLockedDatasetPtr ds $
-        withCString (toWkt srs) . {#call unsafe SetProjection as ^#}
+  liftIO $ checkCPLErr $
+    withCString (toWkt srs) ({#call unsafe SetProjection as ^#} (unDataset ds))
 
 checkCPLErr :: IO CInt -> IO ()
 checkCPLErr = checkReturns_ (==fromEnumC CE_None)
@@ -389,8 +369,7 @@ datasetGeotransform ds = liftIO $ alloca $ \p -> do
 setDatasetGeotransform :: RWDataset s -> Geotransform -> GDAL s ()
 setDatasetGeotransform ds gt = liftIO $
   checkCPLErr $
-    withLockedDatasetPtr ds $ \d ->
-      with gt ({#call unsafe SetGeoTransform as ^#} d . castPtr)
+    with gt ({#call unsafe SetGeoTransform as ^#} (unDataset ds) . castPtr)
 
 
 datasetBandCount :: Dataset s t -> GDAL s Int
@@ -398,9 +377,8 @@ datasetBandCount =
   liftM fromIntegral . liftIO . {#call unsafe GetRasterCount as ^#} . unDataset
 
 getBand :: Int -> Dataset s t -> GDAL s (Band s t)
-getBand b (Dataset (m,dp)) = throwIfError "getBand" $ liftIO $ do
-  p <- {#call GetRasterBand as ^#} dp (fromIntegral b)
-  return (Band (m, p))
+getBand b ds = throwIfError "getBand" $ liftIO $
+  liftM Band ({#call GetRasterBand as ^#} (unDataset ds) (fromIntegral b))
 
 
 reifyDataType :: DataType -> (forall a. GDALType a => Proxy a -> b) -> b
@@ -548,9 +526,9 @@ readMasked
   => Band s t
   -> (forall a'. GDALType a' => RasterBandH -> IO (St.Vector a'))
   -> IO (Vector (Value a))
-readMasked band reader = withLockedBandPtr band $ \bPtr -> do
-  flags <- {#call unsafe GetMaskFlags as ^#} bPtr
-  reader bPtr >>= fmap stToUValue . mask flags bPtr
+readMasked band reader = do
+  flags <- {#call unsafe GetMaskFlags as ^#} (unBand band)
+  reader (unBand band) >>= fmap stToUValue . mask flags (unBand band)
   where
     mask fs
       | hasFlag fs MaskPerDataset = useMaskBand
@@ -584,31 +562,30 @@ writeBand :: forall s a. GDALType a
   -> Size
   -> Vector (Value a)
   -> GDAL s ()
-writeBand band win sz@(XY bx by) uvec = liftIO $
-  withLockedBandPtr band $ \bPtr -> do
-    bNodata <- fmap (maybe nodata fromCDouble) (bandNodataValueIO bPtr)
-    let nElems    = bx * by
-        (fp, len) = St.unsafeToForeignPtr0 vec
-        vec       = St.map (fromValue bNodata) (uToStValue uvec)
-        XY sx sy     = winSize win
-        XY xoff yoff = winMin win
-    if nElems /= len
-      then throwBindingException (InvalidRasterSize sz)
-      else withForeignPtr fp $ \ptr ->
-        checkCPLErr $
-          {#call RasterIO as ^#}
-            bPtr
-            (fromEnumC GF_Write)
-            (fromIntegral xoff)
-            (fromIntegral yoff)
-            (fromIntegral sx)
-            (fromIntegral sy)
-            (castPtr ptr)
-            (fromIntegral bx)
-            (fromIntegral by)
-            (fromEnumC (dataType (Proxy :: Proxy a)))
-            0
-            0
+writeBand band win sz@(XY bx by) uvec = liftIO $ do
+  bNodata <- fmap (maybe nodata fromCDouble) (bandNodataValueIO (unBand band))
+  let nElems    = bx * by
+      (fp, len) = St.unsafeToForeignPtr0 vec
+      vec       = St.map (fromValue bNodata) (uToStValue uvec)
+      XY sx sy     = winSize win
+      XY xoff yoff = winMin win
+  if nElems /= len
+    then throwBindingException (InvalidRasterSize sz)
+    else withForeignPtr fp $ \ptr ->
+      checkCPLErr $
+        {#call RasterIO as ^#}
+          (unBand band)
+          (fromEnumC GF_Write)
+          (fromIntegral xoff)
+          (fromIntegral yoff)
+          (fromIntegral sx)
+          (fromIntegral sy)
+          (castPtr ptr)
+          (fromIntegral bx)
+          (fromIntegral by)
+          (fromEnumC (dataType (Proxy :: Proxy a)))
+          0
+          0
 {-# INLINE writeBand #-}
 
 readBandBlock
@@ -657,10 +634,9 @@ ifoldlM' f initialAcc band = do
                         \v -> if toCDouble v == nd then NoData else Value v
           goB !iB !jB !acc
             | iB < nx   = do
-                withLockedBandPtr band $ \b ->
-                  checkCPLErr $
-                    {#call ReadBlock as ^#}
-                      b (fromIntegral iB) (fromIntegral jB) (castPtr ptr)
+                checkCPLErr $
+                  {#call ReadBlock as ^#}
+                    pBand (fromIntegral iB) (fromIntegral jB) (castPtr ptr)
                 go 0 0 acc >>= goB (iB+1) jB
             | jB+1 < ny = goB 0 (jB+1) acc
             | otherwise = return acc
@@ -679,6 +655,7 @@ ifoldlM' f initialAcc band = do
                 | otherwise   = return acc'
       goB 0 0 initialAcc
   where
+    pBand       = unBand band
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
@@ -689,16 +666,17 @@ writeBandBlock
   => RWBand s -> BlockIx  -> Vector (Value a) -> GDAL s ()
 writeBandBlock band blockIx uvec = do
   checkType band (Proxy :: Proxy a)
-  liftIO $ withLockedBandPtr band $ \b -> do
-    bNodata <- fmap (maybe nodata fromCDouble) (bandNodataValueIO b)
+  liftIO $ do
+    bNodata <- fmap (maybe nodata fromCDouble) (bandNodataValueIO pBand)
     let (fp, len) = St.unsafeToForeignPtr0 vec
         vec       = St.map (fromValue bNodata) (uToStValue uvec)
         nElems    = bandBlockLen band
     if nElems /= len
       then throwBindingException (InvalidBlockSize len)
       else withForeignPtr fp $
-             checkCPLErr . {#call WriteBlock as ^#} b x y . castPtr
+             checkCPLErr . {#call WriteBlock as ^#} pBand x y . castPtr
   where XY x y = fmap fromIntegral blockIx
+        pBand  = unBand band
 {-# INLINE writeBandBlock #-}
 
 

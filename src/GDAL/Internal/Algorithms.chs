@@ -251,7 +251,6 @@ rasterizeLayersBufIO
 rasterizeLayersBufIO size layers srs geotransform mTransformer nodataValue
                      burnValue options progressFun =
   withProgressFun RasterizeStopped progressFun $ \pFun ->
-  withLockedLayerPtrs layers $ \layerPtrs ->
   withArrayLen layerPtrs $ \len lPtrPtr ->
   with geotransform $ \gt ->
   withMaybeSRAsCString (Just srs) $ \srsPtr ->
@@ -266,6 +265,7 @@ rasterizeLayersBufIO size layers srs geotransform mTransformer nodataValue
         (castPtr tArg) bValue opts pFun nullPtr
     liftM (stToUValue . St.map toValue) (St.unsafeFreeze vec)
   where
+    layerPtrs = map unLayer layers
     toValue v = if toCDouble v == ndValue then NoData else Value v
     dt        = fromEnumC (dataType (Proxy :: Proxy a))
     bValue    = toCDouble burnValue

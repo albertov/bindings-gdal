@@ -60,11 +60,8 @@ module GDAL.Internal.OGR (
   , registerAll
   , cleanupAll
 
-  , withLockedLayerPtr
-  , withLockedLayerPtrs
   , unDataSource
   , unLayer
-  , withLockedDataSourcePtr
   , layerHasCapability
   , driverHasCapability
   , dataSourceHasCapability
@@ -119,24 +116,16 @@ nullDriverH = DriverH nullPtr
 
 
 {#pointer DataSourceH newtype#}
-newtype DataSource s (t::AccessMode) = DataSource (Mutex, DataSourceH)
+newtype DataSource s (t::AccessMode) =
+  DataSource { unDataSource :: DataSourceH }
 
 deriving instance Eq DataSourceH
 
 nullDataSourceH :: DataSourceH
 nullDataSourceH = DataSourceH nullPtr
 
-unDataSource :: DataSource s t -> DataSourceH
-unDataSource (DataSource (_,p)) = p
-
 type RODataSource s = DataSource s ReadOnly
 type RWDataSource s = DataSource s ReadWrite
-
-withLockedDataSourcePtr
-  :: DataSource s t -> (DataSourceH -> IO b) -> IO b
-withLockedDataSourcePtr (DataSource (m,p)) f = withMutex m (f p)
-
-
 
 {#pointer LayerH newtype#}
 
@@ -146,23 +135,8 @@ deriving instance Eq LayerH
 nullLayerH :: LayerH
 nullLayerH = LayerH nullPtr
 
-newtype (Layer s (t::AccessMode) a) = Layer (Mutex, LayerH)
-
-
-unLayer :: Layer s t a -> LayerH
-unLayer (Layer (_,p)) = p
-
-lMutex :: Layer s t a -> Mutex
-lMutex (Layer (m,_)) = m
-
-withLockedLayerPtr
-  :: Layer s t a -> (LayerH -> IO b) -> IO b
-withLockedLayerPtr (Layer (m,p)) f = withMutex m $ f p
-
-withLockedLayerPtrs
-  :: [Layer s t a] -> ([LayerH] -> IO b) -> IO b
-withLockedLayerPtrs ls f
-  = withMutexes (map lMutex ls) (f (map unLayer ls))
+newtype (Layer s (t::AccessMode) a) =
+  Layer { unLayer :: LayerH }
 
 type ROLayer s = Layer s ReadOnly
 type RWLayer s = Layer s ReadWrite
@@ -192,8 +166,7 @@ newDataSourceHandle p
   | p==nullDataSourceH = throwBindingException NullDataSource
   | otherwise          = do
       registerFinalizer (void ({#call unsafe ReleaseDataSource as ^#} p))
-      m <- liftIO newMutex
-      return $ DataSource (m,p)
+      return (DataSource p)
 
 type Driver = String
 
@@ -235,22 +208,21 @@ createLayerWithDef ds FeatureDef{..} approxOk options =
   useAsEncodedCString fdName $ \pName ->
   withMaybeSpatialReference (gfdSrs fdGeom) $ \pSrs ->
   withOptionList options $ \pOpts -> do
-    fpL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts >>=
-              newLayerHandle ds NullLayer
-    withLockedLayerPtr fpL $ \pL -> do
-      V.forM_ fdFields $ \(n,f) -> withFieldDefnH n f $ \pFld ->
-        checkOGRErr $ {#call OGR_L_CreateField as ^#} pL pFld iApproxOk
-      when (not (V.null fdGeoms)) $
-        if supportsMultiGeomFields pL
-          then
+    pL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts
+    when (pL == nullLayerH) (throwBindingException NullLayer)
+    V.forM_ fdFields $ \(n,f) -> withFieldDefnH n f $ \pFld ->
+      checkOGRErr $ {#call OGR_L_CreateField as ^#} pL pFld iApproxOk
+    when (not (V.null fdGeoms)) $
+      if supportsMultiGeomFields pL
+        then
 #if SUPPORTS_MULTI_GEOM_FIELDS
-            V.forM_ fdGeoms $ \(n,f) -> withGeomFieldDefnH n f $ \pGFld ->
-              {#call OGR_L_CreateGeomField as ^#} pL pGFld iApproxOk
+          V.forM_ fdGeoms $ \(n,f) -> withGeomFieldDefnH n f $ \pGFld ->
+            {#call OGR_L_CreateGeomField as ^#} pL pGFld iApproxOk
 #else
-            error "should never reach here"
+          error "should never reach here"
 #endif
-          else throwBindingException MultipleGeomFieldsNotSupported
-      return fpL
+        else throwBindingException MultipleGeomFieldsNotSupported
+    return (Layer pL)
   where
     supportsMultiGeomFields pL =
       layerHasCapability pL CreateGeomField &&
@@ -263,12 +235,12 @@ getLayerSchema :: LayerH -> IO FeatureDefnH
 getLayerSchema = {#call OGR_L_GetLayerDefn as ^#}
 
 createFeature :: OGRFeature a => RWLayer s a -> a -> GDAL s Fid
-createFeature layer feat = liftIO $
-  withLockedLayerPtr layer $ \pL -> do
-    pFd <- getLayerSchema pL
-    featureToHandle pFd Nothing feat $ \pF -> do
-      checkOGRErr ({#call OGR_L_CreateFeature as ^#} pL pF)
-      getFid pF >>= maybe (throwBindingException UnexpectedNullFid) return
+createFeature layer feat = liftIO $ do
+  pFd <- getLayerSchema pL
+  featureToHandle pFd Nothing feat $ \pF -> do
+    checkOGRErr ({#call OGR_L_CreateFeature as ^#} pL pF)
+    getFid pF >>= maybe (throwBindingException UnexpectedNullFid) return
+  where pL = unLayer layer
 
 createFeature_ :: OGRFeature a => RWLayer s a -> a -> GDAL s ()
 createFeature_ layer feat =
@@ -280,26 +252,25 @@ checkOGRErr :: IO CInt -> IO ()
 checkOGRErr = checkReturns_ (==fromEnumC None)
 
 setFeature :: OGRFeature a => RWLayer s a -> Fid -> a -> GDAL s ()
-setFeature layer fid feat = liftIO $
-  withLockedLayerPtr layer $ \pL -> do
-    pFd <- getLayerSchema pL
-    featureToHandle pFd (Just fid) feat $
-      checkOGRErr . {#call OGR_L_SetFeature as ^#} pL
+setFeature layer fid feat = liftIO $ do
+  pFd <- getLayerSchema pL
+  featureToHandle pFd (Just fid) feat $
+    checkOGRErr . {#call OGR_L_SetFeature as ^#} pL
+  where pL = unLayer layer
 
 getFeature :: OGRFeature a => Layer s t a -> Fid -> GDAL s (Maybe a)
 getFeature layer (Fid fid) = liftIO $ do
-  withLockedLayerPtr layer $ \pL -> do
-    when (not (pL `layerHasCapability` RandomRead)) $
-      throwBindingException (UnsupportedLayerCapability RandomRead)
-    fDef <- layerFeatureDefIO pL
-    liftM (fmap snd) $ featureFromHandle fDef $
-      {#call OGR_L_GetFeature as ^#} pL (fromIntegral fid)
+  when (not (pL `layerHasCapability` RandomRead)) $
+    throwBindingException (UnsupportedLayerCapability RandomRead)
+  fDef <- layerFeatureDefIO pL
+  liftM (fmap snd) $ featureFromHandle fDef $
+    {#call OGR_L_GetFeature as ^#} pL (fromIntegral fid)
+  where pL = unLayer layer
 
 deleteFeature :: Layer s t a -> Fid -> GDAL s ()
 deleteFeature layer (Fid fid) = liftIO $
   checkOGRErr $
-    withLockedLayerPtr layer $
-      flip {#call OGR_L_DeleteFeature as ^#} (fromIntegral fid)
+    {#call OGR_L_DeleteFeature as ^#} (unLayer layer) (fromIntegral fid)
 
 canCreateMultipleGeometryFields :: Bool
 canCreateMultipleGeometryFields =
@@ -314,18 +285,20 @@ syncToDisk =
   liftIO . checkOGRErr . {#call OGR_L_SyncToDisk as ^#} . unLayer
 
 getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
-getLayer ix ds = liftIO $
-  {#call OGR_DS_GetLayer as ^#} p i >>=
-    newLayerHandle ds (InvalidLayerIndex ix)
+getLayer ix ds = liftIO $ do
+  pL <- {#call OGR_DS_GetLayer as ^#} p i
+  when (pL == nullLayerH) (throwBindingException (InvalidLayerIndex ix))
+  return (Layer pL)
   where
     p = unDataSource ds
     i = fromIntegral ix
 
 
 getLayerByName :: Text -> DataSource s t -> GDAL s (Layer s t a)
-getLayerByName layer ds = liftIO $ useAsEncodedCString layer $
-  newLayerHandle ds (InvalidLayerName layer) <=<
-      {#call OGR_DS_GetLayerByName as ^#} (unDataSource ds)
+getLayerByName layer ds = liftIO $ useAsEncodedCString layer $ \lName -> do
+  pL <- {#call OGR_DS_GetLayerByName as ^#} (unDataSource ds) lName
+  when (pL==nullLayerH) (throwBindingException (InvalidLayerName layer))
+  return (Layer pL)
 
 type LayerSource s a = Source (GDAL s) a
 
@@ -362,12 +335,6 @@ layerGeomFieldDef p =
           maybeNewSpatialRefBorrowedHandle)
     <*> pure True
 
-newLayerHandle
-  :: DataSource s t -> OGRException -> LayerH -> IO (Layer s t a)
-newLayerHandle (DataSource (m,_)) exc p
-  | p==nullLayerH = throwBindingException exc
-  | otherwise     = return (Layer (m,p))
-
 layerCount :: DataSource s t -> GDAL s Int
 layerCount = liftM fromIntegral
            . liftIO . {#call unsafe OGR_DS_GetLayerCount as ^#} . unDataSource
@@ -391,22 +358,22 @@ withSQLDialect OGRDialect     = withCString "OGRSQL"
 executeSQL
   :: SQLDialect -> Text -> Maybe Geometry -> RODataSource s
   -> GDAL s (ROLayer s a)
-executeSQL dialect query mSpatialFilter ds@(DataSource (m,dsP)) = do
+executeSQL dialect query mSpatialFilter ds = do
   p <- catchJust selectExc execute (throwBindingException . SQLQueryError)
   when (p==nullLayerH) $ throwBindingException NullLayer
-  registerFinalizer ({#call unsafe OGR_DS_ReleaseResultSet as ^#} dsP p)
-  return (Layer (m, p))
+  registerFinalizer $
+    {#call unsafe OGR_DS_ReleaseResultSet as ^#} (unDataSource ds) p
+  return (Layer p)
   where
     selectExc GDALException{..} | gdalErrNum==AppDefined = Just gdalErrMsg
     selectExc _                                          = Nothing
     execute =
       throwIfError "executeSQL" $
       liftIO $
-      withLockedDataSourcePtr ds $ \dsPtr ->
       withMaybeGeometry mSpatialFilter $ \sFilter ->
-      withSQLDialect dialect $ \sDialect ->
       useAsEncodedCString query $ \sQuery ->
-        {#call OGR_DS_ExecuteSQL as ^#} dsPtr sQuery sFilter sDialect
+      withSQLDialect dialect $
+        {#call OGR_DS_ExecuteSQL as ^#} (unDataSource ds) sQuery sFilter
 
 layerName :: Layer s t a -> GDAL s Text
 layerName =
@@ -422,16 +389,15 @@ layerFeatureDefIO pL = do
 
 
 getSpatialFilter :: Layer s t a -> GDAL s (Maybe Geometry)
-getSpatialFilter l = liftIO $ withLockedLayerPtr l $ \lPtr -> do
-  p <- {#call unsafe OGR_L_GetSpatialFilter as ^#} lPtr
+getSpatialFilter l = liftIO $ do
+  p <- {#call unsafe OGR_L_GetSpatialFilter as ^#} (unLayer l)
   if p == nullPtr
     then return Nothing
     else liftM Just (cloneGeometry p)
 
 setSpatialFilter :: Layer s t a -> Geometry -> GDAL s ()
 setSpatialFilter l g = liftIO $
-  withLockedLayerPtr l $ \lPtr -> withGeometry g$ \gPtr ->
-    {#call unsafe OGR_L_SetSpatialFilter as ^#} lPtr gPtr
+  withGeometry g $ {#call unsafe OGR_L_SetSpatialFilter as ^#} (unLayer l)
 
 driverHasCapability :: DriverH -> DriverCapability -> Bool
 driverHasCapability d c = unsafePerformIO $ do

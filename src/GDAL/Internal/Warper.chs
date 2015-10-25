@@ -200,14 +200,14 @@ reprojectImage srcDs srcSrs dstDs dstSrs algo memLimit maxError progressFun
   liftIO $
     withProgressFun WarpStopped progressFun $ \pFun ->
     throwIfError "reprojectImage" $
-    withLockedDatasetPtr srcDs $ \srcPtr ->
-    withLockedDatasetPtr dstDs $ \dstPtr ->
     withMaybeSRAsCString srcSrs $ \srcSrs' ->
     withMaybeSRAsCString dstSrs $ \dstSrs' ->
     withWarpOptionsH srcDs options' $ \wopts ->
     checkCPLErr $ {#call GDALReprojectImage as ^#}
       srcPtr srcSrs' dstPtr dstSrs' algo' memLimit' maxError' pFun nullPtr wopts
   where
+    srcPtr    = unDataset srcDs
+    dstPtr    = unDataset dstDs
     algo'     = fromEnumC algo
     maxError' = realToFrac maxError
     memLimit' = realToFrac memLimit
