@@ -82,8 +82,10 @@ expectationFailure :: String -> GDAL s ()
 expectationFailure = liftIO . Hspec.expectationFailure
 
 warn :: MonadIO m => String -> m ()
+warn _ = return () -- TODO: add mutex in order not to clobber output
+{-
 warn msg = liftIO $ do
   hSetSGR stderr [SetColor Foreground Vivid Yellow]
   hPutStrLn stderr msg
   hSetSGR stderr [Reset]
-
+-}

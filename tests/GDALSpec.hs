@@ -25,10 +25,12 @@ import Test.Hspec (
   , SpecWith
   , Arg
   , after_
-  , before_
+  , afterAll_
+  , beforeAll_
   , describe
   , errorCall
   , hspec
+  , parallel
   )
 
 import GDAL
@@ -47,7 +49,7 @@ main :: IO ()
 main = hspec spec
 
 spec :: Spec
-spec = setupAndTeardown $ do
+spec = setupAndTeardown $ parallel $ do
 
   it "cannot open non-existent file" $ do
     openReadOnly "foo.tif" `shouldThrow` ((==OpenFailed) . gdalErrNum)
@@ -308,12 +310,11 @@ spec = setupAndTeardown $ do
 #endif
 
 
--- | Makes sure (or tries) that we're not double-freeing, etc by destroying
---   the driver manager after every test and peformimg a major garbage
---   collection to force (really?) the finalizers to run.
 setupAndTeardown :: SpecWith a -> SpecWith a
 setupAndTeardown
-  = before_ allRegister . after_  (performMajorGC >> destroyDriverManager)
+  = beforeAll_ allRegister
+  . after_     performMajorGC
+  -- . afterAll_  destroyDriverManager
 
 
 it_can_write_and_read_band

@@ -1,7 +1,7 @@
 module GDAL.OSRSpec (main, spec) where
 
 import Data.Either (isRight, isLeft)
-import Test.Hspec (Spec, hspec, describe, it, shouldSatisfy)
+import Test.Hspec (Spec, hspec, describe, it, shouldSatisfy, parallel)
 
 import GDAL.OSR
 
@@ -9,7 +9,7 @@ main :: IO ()
 main = hspec spec
 
 spec :: Spec
-spec = do
+spec = parallel $ do
   it "can created from EPSG number" $
     fromEPSG 23030 `shouldSatisfy` isRight
 

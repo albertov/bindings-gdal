@@ -7,7 +7,7 @@ import Data.Default (def)
 import Data.Int (Int16, Int32)
 import qualified Data.Vector.Unboxed as U
 
-import Test.Hspec (Spec, SpecWith, hspec, describe)
+import Test.Hspec (Spec, SpecWith, hspec, describe, parallel)
 
 import System.FilePath (joinPath)
 
@@ -34,7 +34,7 @@ main :: IO ()
 main = hspec spec
 
 spec :: Spec
-spec = setupAndTeardown $ do
+spec = setupAndTeardown $ parallel $ do
 
   describe "reprojectImage" $ do
 

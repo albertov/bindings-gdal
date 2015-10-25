@@ -36,9 +36,10 @@ import Test.Hspec (
   , Arg
   , hspec
   , describe
-  , before_
   , after_
   , afterAll_
+  , beforeAll_
+  , parallel
   )
 
 import GDAL (
@@ -66,7 +67,7 @@ main :: IO ()
 main = hspec spec
 
 spec :: Spec
-spec = setupAndTeardown $ do
+spec = setupAndTeardown $ parallel $ do
 
   describe "DataSource and layer" $ do
 
@@ -336,12 +337,11 @@ instance Eq ZonedTime where
 getShapePath :: GDAL s FilePath
 getShapePath = liftIO $ getDataFileName "tests/fixtures/fondo.shp"
 
--- | Makes sure (or tries) that we're not double-freeing, etc by destroying
---   the driver manager after every test and peformimg a major garbage
---   collection to force (really?) the finalizers to run.
 setupAndTeardown :: SpecWith a -> SpecWith a
-setupAndTeardown =
-  before_ OGR.registerAll . after_  performMajorGC . afterAll_ OGR.cleanupAll
+setupAndTeardown
+  = beforeAll_ OGR.registerAll
+  . after_     performMajorGC
+  . afterAll_  OGR.cleanupAll
 
 strField, realField :: Text -> (Text, FieldDef)
 strField  name = (name, FieldDef OFTString  Nothing Nothing Nothing True)
