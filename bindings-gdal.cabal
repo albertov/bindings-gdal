@@ -88,7 +88,7 @@ test-suite spec
                   , data-default
                   , conduit
   hs-source-dirs:   tests
-  main-is:          Spec.hs
+  main-is:          Main.hs
   other-modules:    GDALSpec
                   , TestUtils
                   , GDAL.OSRSpec

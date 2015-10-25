@@ -37,8 +37,6 @@ import Test.Hspec (
   , hspec
   , describe
   , after_
-  , afterAll_
-  , beforeAll_
   , parallel
   )
 
@@ -338,10 +336,7 @@ getShapePath :: GDAL s FilePath
 getShapePath = liftIO $ getDataFileName "tests/fixtures/fondo.shp"
 
 setupAndTeardown :: SpecWith a -> SpecWith a
-setupAndTeardown
-  = beforeAll_ OGR.registerAll
-  . after_     performMajorGC
-  . afterAll_  OGR.cleanupAll
+setupAndTeardown = after_ performMajorGC
 
 strField, realField :: Text -> (Text, FieldDef)
 strField  name = (name, FieldDef OFTString  Nothing Nothing Nothing True)

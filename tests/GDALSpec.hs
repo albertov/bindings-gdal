@@ -25,8 +25,6 @@ import Test.Hspec (
   , SpecWith
   , Arg
   , after_
-  , afterAll_
-  , beforeAll_
   , describe
   , errorCall
   , hspec
@@ -311,10 +309,7 @@ spec = setupAndTeardown $ parallel $ do
 
 
 setupAndTeardown :: SpecWith a -> SpecWith a
-setupAndTeardown
-  = beforeAll_ allRegister
-  . after_     performMajorGC
-  -- . afterAll_  destroyDriverManager
+setupAndTeardown = after_ performMajorGC
 
 
 it_can_write_and_read_band
