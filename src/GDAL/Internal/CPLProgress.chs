@@ -10,18 +10,23 @@ module GDAL.Internal.CPLProgress (
 ) where
 
 import Control.Monad (when)
-import Control.Monad.Catch (bracket, catchAll, throwM, catchJust)
+import Control.Monad.Catch (
+    Exception
+  , SomeException
+  , bracket
+  , catchAll
+  , throwM
+  , try
+  )
+import Control.Monad.IO.Class (liftIO)
 import Data.IORef (newIORef, readIORef, writeIORef)
 
 import Foreign.C.String (CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..))
 import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr, nullPtr)
 
+import GDAL.Internal.Types
 import GDAL.Internal.Util (fromEnumC)
-import GDAL.Internal.CPLError (
-    GDALException(gdalErrNum)
-  , ErrorNum(UserInterrupt)
-  )
 
 #include "cpl_progress.h"
 
@@ -36,11 +41,13 @@ type ProgressFunPtr = FunPtr CProgressFun
 
 instance Show ProgressFun where show _ = "ProgressFun"
 
-withProgressFun :: Maybe ProgressFun -> (ProgressFunPtr -> IO c) -> IO (Maybe c)
-withProgressFun Nothing  act = fmap Just (act c_dummyProgress)
-withProgressFun (Just f) act = do
-  excRef <- newIORef Nothing
-  stoppedRef <- newIORef False
+withProgressFun
+  :: Exception e
+  => e -> Maybe ProgressFun -> (ProgressFunPtr -> GDAL s a) -> GDAL s a
+withProgressFun _ Nothing  act = act c_dummyProgress
+withProgressFun stopExc (Just f) act = do
+  excRef <- liftIO $ newIORef Nothing
+  stoppedRef <- liftIO $ newIORef False
   let progressFunc progress cmsg _ = do
         msg <- if cmsg == nullPtr
                  then return Nothing
@@ -49,15 +56,22 @@ withProgressFun (Just f) act = do
         when (ret == Stop) (writeIORef stoppedRef True)
         return (fromEnumC ret)
       catcher exc = writeIORef excRef (Just exc) >> return Stop
-  ret <- catchJust
-          (\e->if gdalErrNum e==UserInterrupt then Just e else Nothing)
-          (bracket (c_wrapProgressFun progressFunc) freeHaskellFunPtr act)
-          (const (writeIORef stoppedRef True >> return undefined))
-  stopped <- readIORef stoppedRef
-  let retWhenNoException
-        | stopped   = return Nothing
-        | otherwise = return (Just ret)
-  readIORef excRef >>= maybe retWhenNoException throwM
+  mRet <- try $ bracket
+            (liftIO (c_wrapProgressFun progressFunc))
+            (liftIO . freeHaskellFunPtr)
+            act
+  stopped <- liftIO $ readIORef stoppedRef
+  mExc <- liftIO $ readIORef excRef
+  case (stopped, mRet, mExc) of
+    -- An error ocurred inside the progress function
+    (True,  _       , Just e)  -> throwM e
+    -- The progress function stopped the action
+    (True,  _       , Nothing) -> throwM stopExc
+    -- action completed without interruptions
+    (False, Right v , Nothing) -> return v
+    -- action threw an exception
+    (False, Left  e , Nothing) -> throwM (e :: SomeException)
+    _                          -> error "withProgressFun: shouldn't happen"
 
 
 foreign import ccall "wrapper"

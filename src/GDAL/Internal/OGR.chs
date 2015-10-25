@@ -182,7 +182,7 @@ openReadWrite p = openWithMode OGR_Update p
 openWithMode :: OGRAccess -> String -> GDAL s (DataSource s t)
 openWithMode m p = do
   ptr <- liftIO $ withCString p $ \p' ->
-           throwIfError "open" ({#call OGROpen as ^#} p' (fromEnumC m) nullPtr)
+          {#call OGROpen as ^#} p' (fromEnumC m) nullPtr
   newDataSourceHandle ptr `catch` (\NullDataSource ->
     throwM (GDALException CE_Failure OpenFailed "OGROpen returned a NULL ptr"))
 
@@ -199,7 +199,7 @@ type Driver = String
 
 create :: Driver -> String -> OptionList -> GDAL s (RWDataSource s)
 create driverName name options = newDataSourceHandle <=<
-  liftIO $ throwIfError "create" $ do
+  liftIO $ do
     pDr <- driverByName driverName
     withCString name $ \pName ->
       withOptionList options $ {#call OGR_Dr_CreateDataSource as ^#} pDr pName
@@ -229,16 +229,17 @@ createLayer ds = createLayerWithDef ds (featureDef (Proxy :: Proxy a))
 createLayerWithDef
   :: RWDataSource s -> FeatureDef -> ApproxOK -> OptionList
   -> GDAL s (RWLayer s a)
-createLayerWithDef ds FeatureDef{..} approxOk options = liftIO $
+createLayerWithDef ds FeatureDef{..} approxOk options =
+  throwIfError "createLayerWithDef" $
+  liftIO $
   useAsEncodedCString fdName $ \pName ->
   withMaybeSpatialReference (gfdSrs fdGeom) $ \pSrs ->
-  withOptionList options $ \pOpts ->
-  throwIfError "createLayer" $ do
+  withOptionList options $ \pOpts -> do
     fpL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts >>=
               newLayerHandle ds NullLayer
     withLockedLayerPtr fpL $ \pL -> do
       V.forM_ fdFields $ \(n,f) -> withFieldDefnH n f $ \pFld ->
-        {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
+        checkOGRErr $ {#call OGR_L_CreateField as ^#} pL pFld iApproxOk
       when (not (V.null fdGeoms)) $
         if supportsMultiGeomFields pL
           then
@@ -263,11 +264,10 @@ getLayerSchema = {#call OGR_L_GetLayerDefn as ^#}
 
 createFeature :: OGRFeature a => RWLayer s a -> a -> GDAL s Fid
 createFeature layer feat = liftIO $
-  throwIfError "createFeature" $
   withLockedLayerPtr layer $ \pL -> do
     pFd <- getLayerSchema pL
     featureToHandle pFd Nothing feat $ \pF -> do
-      void $ {#call OGR_L_CreateFeature as ^#} pL pF
+      checkOGRErr ({#call OGR_L_CreateFeature as ^#} pL pF)
       getFid pF >>= maybe (throwBindingException UnexpectedNullFid) return
 
 createFeature_ :: OGRFeature a => RWLayer s a -> a -> GDAL s ()
@@ -276,14 +276,15 @@ createFeature_ layer feat =
             (void (createFeature layer feat))
             return
 
+checkOGRErr :: IO CInt -> IO ()
+checkOGRErr = checkReturns_ (==fromEnumC None)
 
 setFeature :: OGRFeature a => RWLayer s a -> Fid -> a -> GDAL s ()
 setFeature layer fid feat = liftIO $
-  throwIfError "setFeature" $
   withLockedLayerPtr layer $ \pL -> do
     pFd <- getLayerSchema pL
-    void $ featureToHandle pFd (Just fid) feat
-      ({#call OGR_L_SetFeature as ^#} pL)
+    featureToHandle pFd (Just fid) feat $
+      checkOGRErr . {#call OGR_L_SetFeature as ^#} pL
 
 getFeature :: OGRFeature a => Layer s t a -> Fid -> GDAL s (Maybe a)
 getFeature layer (Fid fid) = liftIO $ do
@@ -296,8 +297,8 @@ getFeature layer (Fid fid) = liftIO $ do
 
 deleteFeature :: Layer s t a -> Fid -> GDAL s ()
 deleteFeature layer (Fid fid) = liftIO $
-  throwIfError "deleteFeature" $
-    void $ withLockedLayerPtr layer $
+  checkOGRErr $
+    withLockedLayerPtr layer $
       flip {#call OGR_L_DeleteFeature as ^#} (fromIntegral fid)
 
 canCreateMultipleGeometryFields :: Bool
@@ -310,21 +311,20 @@ canCreateMultipleGeometryFields =
 
 syncToDisk :: RWLayer s a -> GDAL s ()
 syncToDisk =
-  liftIO . throwIfError_ "syncToDisk" . {#call OGR_L_SyncToDisk as ^#} . unLayer
+  liftIO . checkOGRErr . {#call OGR_L_SyncToDisk as ^#} . unLayer
 
 getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
 getLayer ix ds = liftIO $
-  newLayerHandle ds (InvalidLayerIndex ix) <=<
-    throwIfError "getLayer" $ {#call OGR_DS_GetLayer as ^#} dsH lyr
+  {#call OGR_DS_GetLayer as ^#} p i >>=
+    newLayerHandle ds (InvalidLayerIndex ix)
   where
-    dsH = unDataSource ds
-    lyr = fromIntegral ix
+    p = unDataSource ds
+    i = fromIntegral ix
 
 
 getLayerByName :: Text -> DataSource s t -> GDAL s (Layer s t a)
 getLayerByName layer ds = liftIO $ useAsEncodedCString layer $
   newLayerHandle ds (InvalidLayerName layer) <=<
-    throwIfError "getLayerByName" .
       {#call OGR_DS_GetLayerByName as ^#} (unDataSource ds)
 
 type LayerSource s a = Source (GDAL s) a
@@ -334,7 +334,7 @@ sourceFromLayer
   => IO LayerH -> LayerSource s (Maybe Fid, a)
 sourceFromLayer getHandle = bracketP initialize cleanUp getFeatures
   where
-    initialize = throwIfError "sourceFromLayer: initialize" $ do
+    initialize = do
       pL <- getHandle
       when (pL == nullLayerH) (throwBindingException NullLayer)
       void $ {#call OGR_L_StartTransaction as ^#} pL
@@ -345,7 +345,6 @@ sourceFromLayer getHandle = bracketP initialize cleanUp getFeatures
     getFeatures info@(pL, fDef) = do
       next <- liftIO $
               featureFromHandle fDef $
-              throwIfError "getNextFeature" $
               {#call OGR_L_GetNextFeature as ^#} pL
       case next of
         Just v  -> yield v >> getFeatures info
@@ -400,8 +399,9 @@ executeSQL dialect query mSpatialFilter ds@(DataSource (m,dsP)) = do
   where
     selectExc GDALException{..} | gdalErrNum==AppDefined = Just gdalErrMsg
     selectExc _                                          = Nothing
-    execute = liftIO $
+    execute =
       throwIfError "executeSQL" $
+      liftIO $
       withLockedDataSourcePtr ds $ \dsPtr ->
       withMaybeGeometry mSpatialFilter $ \sFilter ->
       withSQLDialect dialect $ \sDialect ->

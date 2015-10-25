@@ -11,20 +11,22 @@ module GDAL.Internal.CPLError (
   , CErrorHandler
   , isGDALException
   , isBindingException
-  , throwIfError
-  , throwIfError_
   , throwBindingException
   , bindingExceptionToException
   , bindingExceptionFromException
   , collectMessages
   , withErrorHandler
+  , checkReturns
+  , checkReturns_
 ) where
 
 {# context lib = "gdal" prefix = "CPL" #}
 
-import Control.Exception (Exception(..), SomeException, finally, throw)
+import Control.Exception (Exception(..), SomeException)
 import Control.DeepSeq (NFData(rnf))
-import Control.Monad.Catch (MonadThrow(throwM))
+import Control.Monad (void)
+import Control.Monad.Catch (MonadThrow(throwM), MonadMask, finally)
+import Control.Monad.IO.Class (MonadIO(..))
 
 import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Maybe (isJust)
@@ -56,8 +58,8 @@ data GDALException
     GDALBindingException !e
   | GDALException        { gdalErrType :: !ErrorType
                          , gdalErrNum  :: !ErrorNum
-                         , gdalErrMsg  :: !Text
-                         }
+                         , gdalErrMsg  :: !Text}
+  | ReturnsError
   deriving Typeable
 
 deriving instance Show GDALException
@@ -108,28 +110,33 @@ instance NFData ErrorType where
 foreign import ccall safe "wrapper"
   mkErrorHandler :: CErrorHandler -> IO ErrorHandler
 
-throwIfError_ :: Text -> IO a -> IO ()
-throwIfError_ prefix act = throwIfError prefix act >> return ()
+checkReturns
+  :: (Eq a, MonadIO m, MonadThrow m)
+  => (a -> Bool) -> m a -> m a
+checkReturns isOk act = do
+  a <- act
+  if isOk a then return a else throwM ReturnsError
 
-throwIfError :: Text -> IO a -> IO a
-throwIfError prefix act = do
-  (ret, msgs) <- collectMessages act
-  case msgs of
-    []          -> return ret
-    ((a,b,c):_) -> throw (GDALException a b (mconcat [prefix,": ", c]))
+checkReturns_
+  :: (Eq a, MonadIO m, MonadThrow m)
+  => (a -> Bool) -> m a -> m ()
+checkReturns_ isOk = void . checkReturns isOk
 
-collectMessages :: IO a -> IO (a, [(ErrorType,ErrorNum,Text)])
+collectMessages
+  :: (MonadMask m, MonadIO m)
+  => m a -> m (a, [(ErrorType,ErrorNum,Text)])
 collectMessages act = do
-  msgsRef <- newIORef []
+  msgsRef <- liftIO $ newIORef []
   let handler err errno cmsg = do
         msg <- peekEncodedCString cmsg
         modifyIORef' msgsRef ((:) (toEnumC err, toEnumC errno, msg))
   ret <- withErrorHandler handler act
-  msgs <- readIORef msgsRef
+  msgs <- liftIO $ readIORef msgsRef
   return (ret, msgs)
 
-withErrorHandler :: CErrorHandler -> IO a -> IO a
+withErrorHandler :: (MonadMask m, MonadIO m) => CErrorHandler -> m a -> m a
 withErrorHandler eh act = do
-  h <- mkErrorHandler eh
-  ({#call unsafe PushErrorHandler as ^#} h >> act)
-    `finally` ({#call unsafe PopErrorHandler as ^#} >> freeHaskellFunPtr h)
+  h <- liftIO (mkErrorHandler eh)
+  (liftIO ({#call unsafe PushErrorHandler as ^#} h) >> act)
+    `finally`
+      (liftIO (({#call unsafe PopErrorHandler as ^#} >> freeHaskellFunPtr h)))

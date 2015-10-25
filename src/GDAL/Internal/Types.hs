@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -8,6 +9,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE LambdaCase #-}
 
 module GDAL.Internal.Types (
     Value(..)
@@ -27,12 +29,14 @@ module GDAL.Internal.Types (
   , fromValue
   , runGDAL
   , registerFinalizer
+
+  , throwIfError
+  , throwIfError_
 ) where
 
 import Control.Applicative (Applicative(..), liftA2)
 import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
-import Control.Exception (evaluate)
-import Control.DeepSeq (NFData(rnf), force)
+import Control.DeepSeq (NFData(rnf))
 import Control.Monad (liftM, void)
 import Control.Monad.Base (MonadBase)
 import Control.Monad.Trans.Resource (
@@ -41,9 +45,16 @@ import Control.Monad.Trans.Resource (
   , runResourceT
   , register
   )
-import Control.Monad.Catch (MonadThrow(..), MonadCatch, MonadMask, catch)
+import Control.Monad.Catch (
+    MonadThrow(..)
+  , MonadCatch
+  , MonadMask
+  , catch
+  , tryJust
+  )
 import Control.Monad.IO.Class (MonadIO(..))
 
+import Data.Text (Text)
 import Data.Typeable (Typeable)
 import Data.Coerce (coerce)
 import Data.Word (Word8)
@@ -56,7 +67,7 @@ import qualified Data.Vector.Unboxed.Base as U
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (Storable(..))
 
-import GDAL.Internal.CPLError (GDALException)
+import GDAL.Internal.CPLError
 
 data AccessMode = ReadOnly | ReadWrite
 
@@ -279,11 +290,9 @@ deriving instance MonadMask (GDAL s)
 deriving instance MonadBase IO (GDAL s)
 deriving instance MonadResource (GDAL s)
 
-runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
+runGDAL :: (forall s. GDAL s a) -> IO (Either GDALException a)
 runGDAL (GDAL a) = runBounded $ runResourceT $
-  (a >>= liftIO . liftM Right . evaluate . force)
-    `catch`
-  (liftIO . evaluate . force . Left)
+  (liftM Right a) `catch` (return . Left)
   where
     runBounded
       | rtsSupportsBoundThreads = runInBoundThread
@@ -292,3 +301,20 @@ runGDAL (GDAL a) = runBounded $ runResourceT $
 
 registerFinalizer :: IO () -> GDAL s ()
 registerFinalizer = GDAL . void . register
+
+throwIfError_ :: Text -> GDAL s a -> GDAL s ()
+--throwIfError_ :: Text -> IO a -> IO ()
+throwIfError_ prefix act = throwIfError prefix act >> return ()
+
+throwIfError :: Text -> GDAL s a -> GDAL s a
+--throwIfError :: Text -> IO a -> IO a
+throwIfError prefix act = do
+  (ret, msgs) <- collectMessages $
+                  tryJust (\case {ReturnsError->Just(); _->Nothing}) act
+  case (ret,msgs) of
+    (Right a, [])  -> return a
+    (Left (), [])  ->
+      throwM (GDALException CE_Failure AssertionFailed "checkReturns")
+    (_, (a,b,c):_) ->
+      throwM (GDALException a b (mconcat [prefix,": ", c]))
+

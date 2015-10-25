@@ -20,7 +20,7 @@ module GDAL.Internal.Warper (
 {#context lib = "gdal" prefix = "GDAL" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Monad (when, void, forM_, forM)
+import Control.Monad (when, forM_, forM)
 import Control.Monad.IO.Class (liftIO)
 import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), bracket)
@@ -194,21 +194,19 @@ reprojectImage
   -> Maybe ProgressFun
   -> OptionList
   -> GDAL s ()
-reprojectImage srcDs srcSrs dstDs dstSrs algo memLimit maxError progressFun opts
-  = do options' <- setOptionDefaults srcDs (Just dstDs)
-                     (def {woWarpOptions=opts})
-       ret <- liftIO $
-          withProgressFun progressFun $ \pFun ->
-          throwIfError "reprojectImage" $
-          withLockedDatasetPtr srcDs $ \srcPtr ->
-          withLockedDatasetPtr dstDs $ \dstPtr ->
-          withMaybeSRAsCString srcSrs $ \srcSrs' ->
-          withMaybeSRAsCString dstSrs $ \dstSrs' ->
-          withWarpOptionsH srcDs options' $ \wopts ->
-            void $ {#call GDALReprojectImage as ^#}
-               srcPtr srcSrs' dstPtr dstSrs' algo' memLimit' maxError' pFun
-               nullPtr wopts
-       maybe (throwBindingException WarpStopped) return ret
+reprojectImage srcDs srcSrs dstDs dstSrs algo memLimit maxError progressFun
+               opts = do
+  options' <- setOptionDefaults srcDs (Just dstDs) (def {woWarpOptions=opts})
+  withProgressFun WarpStopped progressFun $ \pFun ->
+    throwIfError "reprojectImage" $
+    liftIO $
+    withLockedDatasetPtr srcDs $ \srcPtr ->
+    withLockedDatasetPtr dstDs $ \dstPtr ->
+    withMaybeSRAsCString srcSrs $ \srcSrs' ->
+    withMaybeSRAsCString dstSrs $ \dstSrs' ->
+    withWarpOptionsH srcDs options' $ \wopts ->
+    checkCPLErr $ {#call GDALReprojectImage as ^#}
+      srcPtr srcSrs' dstPtr dstSrs' algo' memLimit' maxError' pFun nullPtr wopts
   where
     algo'     = fromEnumC algo
     maxError' = realToFrac maxError
@@ -223,7 +221,6 @@ createWarpedVRT
 createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
   options'' <- setOptionDefaults srcDs Nothing options'
   newDsPtr <- liftIO $
-    throwIfError "createWarpedVRT" $
     withWarpOptionsH srcDs options'' $ \opts ->
     with geotransform $ \gt -> do
       pArg <- {#get GDALWarpOptions->pTransformerArg #} opts

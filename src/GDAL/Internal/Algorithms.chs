@@ -28,6 +28,7 @@ import Control.Monad (liftM)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
 import Data.Proxy (Proxy(Proxy))
+import Data.Text (Text)
 import Data.Typeable (Typeable)
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Storable as St
@@ -55,6 +56,7 @@ import GDAL.Internal.Types
 
 data GDALAlgorithmException
   = RasterizeStopped
+  | NullTransformer !Text
   deriving (Typeable, Show, Eq)
 
 instance NFData GDALAlgorithmException where
@@ -125,7 +127,7 @@ instance Transformer GenImgProjTransformer where
   createTransformerFun _ = return c_GDALGenImgProjTransform
   createTransformerArg GenImgProjTransformer{..} =
     liftM castPtr $
-    throwIfError "GDALCreateGenImgProjTransformer" $
+    checkReturns (/=nullPtr) $
     withMaybeSRAsCString giptSrcSrs $ \sSr ->
     withMaybeSRAsCString giptDstSrs $ \dSr ->
       {#call CreateGenImgProjTransformer as ^#}
@@ -163,7 +165,7 @@ instance Transformer GenImgProjTransformer2 where
   createTransformerFun _ = return c_GDALGenImgProjTransform2
   createTransformerArg GenImgProjTransformer2{..} =
     liftM castPtr $
-    throwIfError "GDALCreateGenImgProjTransformer2" $
+    checkReturns (/=nullPtr) $
     withOptionList gipt2Options $ \opts ->
       {#call CreateGenImgProjTransformer2 as ^#}
         (maybe nullDatasetH unDataset gipt2SrcDs)
@@ -197,7 +199,7 @@ instance Transformer GenImgProjTransformer3 where
   createTransformerFun _ = return c_GDALGenImgProjTransform3
   createTransformerArg GenImgProjTransformer3{..} =
     liftM castPtr $
-    throwIfError "GDALCreateGenImgProjTransformer3" $
+    checkReturns (/=nullPtr) $
     withMaybeSRAsCString gipt3SrcSrs $ \sSr ->
     withMaybeSRAsCString gipt3DstSrs $ \dSr ->
     withMaybeGeotransformPtr gipt3SrcGt $ \sGt ->
@@ -229,11 +231,11 @@ rasterizeLayersBuf
   -> OptionList
   -> Maybe ProgressFun
   -> GDAL s (U.Vector (Value a))
-rasterizeLayersBuf
-  size layers srs geotransform mTransformer nodataValue burnValue options
-  progressFun
-  = liftIO $ rasterizeLayersBufIO size layers srs geotransform
-               mTransformer nodataValue burnValue options progressFun
+rasterizeLayersBuf size layers srs geotransform mTransformer nodataValue
+                   burnValue options progressFun =
+  withProgressFun RasterizeStopped progressFun $
+    liftIO . rasterizeLayersBufIO size layers srs geotransform
+               mTransformer nodataValue burnValue options
 
 rasterizeLayersBufIO
   :: forall t s a l. (GDALType a, Transformer t)
@@ -245,28 +247,24 @@ rasterizeLayersBufIO
   -> a
   -> a
   -> OptionList
-  -> Maybe ProgressFun
+  -> ProgressFunPtr
   -> IO (U.Vector (Value a))
-rasterizeLayersBufIO
-  size layers srs geotransform mTransformer nodataValue burnValue options
-  progressFun = do
-    ret <- withLockedLayerPtrs layers $ \layerPtrs ->
-             withArrayLen layerPtrs $ \len lPtrPtr ->
-             with geotransform $ \gt ->
-             withMaybeSRAsCString (Just srs) $ \srsPtr ->
-             withOptionList options $ \opts ->
-             withTransformerAndArg mTransformer $ \trans tArg ->
-             withProgressFun progressFun $ \pFun -> do
-              mVec <- Stm.replicate (sizeLen size) nodataValue
-              Stm.unsafeWith mVec $ \vecPtr ->
-                 throwIfError_ "rasterizeLayersBuf" $
-                   {#call GDALRasterizeLayersBuf as ^#}
-                     (castPtr vecPtr) nx ny dt 0 0 (fromIntegral len)
-                     lPtrPtr srsPtr (castPtr gt) (getTransformerFunPtr trans)
-                     (castPtr tArg) bValue opts pFun nullPtr
-              return mVec
-    maybe (throwBindingException RasterizeStopped)
-          (liftM (stToUValue . St.map toValue) . St.unsafeFreeze) ret
+rasterizeLayersBufIO size layers srs geotransform mTransformer nodataValue
+                     burnValue options pFun =
+  withLockedLayerPtrs layers $ \layerPtrs ->
+  withArrayLen layerPtrs $ \len lPtrPtr ->
+  with geotransform $ \gt ->
+  withMaybeSRAsCString (Just srs) $ \srsPtr ->
+  withOptionList options $ \opts ->
+  withTransformerAndArg mTransformer $ \trans tArg -> do
+    vec <- Stm.replicate (sizeLen size) nodataValue
+    Stm.unsafeWith vec $ \vecPtr ->
+      checkReturns_ (==(fromEnumC CE_None)) $
+      {#call GDALRasterizeLayersBuf as ^#}
+        (castPtr vecPtr) nx ny dt 0 0 (fromIntegral len)
+        lPtrPtr srsPtr (castPtr gt) (getTransformerFunPtr trans)
+        (castPtr tArg) bValue opts pFun nullPtr
+    liftM (stToUValue . St.map toValue) (St.unsafeFreeze vec)
   where
     toValue v = if toCDouble v == ndValue then NoData else Value v
     dt        = fromEnumC (dataType (Proxy :: Proxy a))

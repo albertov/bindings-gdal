@@ -28,7 +28,6 @@ import Test.Hspec (SpecWith, Arg, Selector)
 import qualified Test.Hspec as Hspec
 
 import GDAL (GDAL, runGDAL)
-import GDAL.Internal.CPLError (collectMessages)
 
 it :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
 it n a = Hspec.it n (runGDAL' a)
@@ -38,18 +37,10 @@ withDir n a =
   Hspec.it n (withSystemTempDirectory "test." (\f -> runGDAL' (a f)))
 
 runGDAL' :: (forall s. GDAL s ()) -> IO ()
-runGDAL' a = do
-  (r,msgs) <- collectMessages (runGDAL a)
-  case (r,msgs) of
-    (Right (),[]) ->
-      return ()
-    (Right (),msgs') ->
-      Hspec.expectationFailure ("Uncollected messages: " ++ show msgs')
-    (Left e,[])   ->
-      Hspec.expectationFailure ("Unexpected GDALException: " ++ show e)
-    (Left e, msgs') ->
-      Hspec.expectationFailure ("Unexpected GDALException: " ++ show e ++
-                                " and uncollected messages: " ++ show msgs')
+runGDAL' a =
+  runGDAL a >>=
+    either (Hspec.expectationFailure . ("Unexpected GDALException: " ++) . show)
+    return
 
 existsAndSizeIsGreaterThan :: FilePath -> Integer -> GDAL s ()
 existsAndSizeIsGreaterThan p s = do
