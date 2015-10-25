@@ -67,7 +67,7 @@ spec = setupAndTeardown $ do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("zlevel", "bad level")]
         action = create GTIFF p (pure 3000) 1 GDT_Int16 o
-    action `shouldThrow` (\case {InvalidDriverOptions _ ->True; _->False})
+    action `shouldThrow` (==InvalidDriverOptions)
 
   withDir "can create and open dataset" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]

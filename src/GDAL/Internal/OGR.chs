@@ -350,7 +350,7 @@ sourceFromLayer getHandle = bracketP initialize cleanUp getFeatures
         Just v  -> yield v >> getFeatures info
         Nothing -> return ()
 
-    cleanUp = void . {#call unsafe OGR_L_RollbackTransaction as ^#} . fst
+    cleanUp = void . {#call OGR_L_RollbackTransaction as ^#} . fst
 
 
 -- | GDAL < 1.11 only supports 1 geometry field and associates it the layer

@@ -139,7 +139,7 @@ data GDALRasterException
   | InvalidBlockSize  !Int
   | InvalidDataType   !DataType
   | InvalidProjection !OGRException
-  | InvalidDriverOptions ![Text]
+  | InvalidDriverOptions
   | NullDataset
   | CopyStopped
   | UnknownRasterDataType
@@ -244,10 +244,8 @@ driverCreationOptionList driver = unsafePerformIO $ do
 
 validateCreationOptions :: DriverH -> Ptr CString -> IO ()
 validateCreationOptions d o = do
-  (valid,errs) <- collectMessages $
-                  liftM toBool ({#call GDALValidateCreationOptions as ^ #} d o)
-  let msgs = map (\(_,_,m)->m) errs
-  when (not valid) (throwBindingException (InvalidDriverOptions msgs))
+  valid <- liftM toBool ({#call GDALValidateCreationOptions as ^ #} d o)
+  when (not valid) (throwBindingException InvalidDriverOptions)
 
 create
   :: Driver -> String -> Size -> Int -> DataType -> OptionList

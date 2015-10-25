@@ -39,6 +39,7 @@ import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (liftM, void)
 import Control.Monad.Base (MonadBase)
+import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
 import Control.Monad.Trans.Resource (
     ResourceT
   , MonadResource
@@ -278,7 +279,7 @@ instance Storable a => G.Vector U.Vector (Value a) where
 
 
 
-newtype GDAL s a = GDAL (ResourceT IO a)
+newtype GDAL s a = GDAL (ReaderT ErrorStack (ResourceT IO) a)
 
 deriving instance Functor (GDAL s)
 deriving instance Applicative (GDAL s)
@@ -291,8 +292,10 @@ deriving instance MonadBase IO (GDAL s)
 deriving instance MonadResource (GDAL s)
 
 runGDAL :: (forall s. GDAL s a) -> IO (Either GDALException a)
-runGDAL (GDAL a) = runBounded $ runResourceT $
-  (liftM Right a) `catch` (return . Left)
+runGDAL (GDAL a) = runBounded $ do
+  (stack, collect) <- errorCollector
+  collect $ runResourceT $ flip runReaderT stack $
+    (liftM Right a) `catch` (return . Left)
   where
     runBounded
       | rtsSupportsBoundThreads = runInBoundThread
@@ -309,12 +312,14 @@ throwIfError_ prefix act = throwIfError prefix act >> return ()
 throwIfError :: Text -> GDAL s a -> GDAL s a
 --throwIfError :: Text -> IO a -> IO a
 throwIfError prefix act = do
-  (ret, msgs) <- collectMessages $
-                  tryJust (\case {ReturnsError->Just(); _->Nothing}) act
-  case (ret,msgs) of
-    (Right a, [])  -> return a
-    (Left (), [])  ->
+  errStack <- GDAL ask
+  liftIO $ clearErrors errStack
+  ret <- tryJust (\case {ReturnsError->Just(); _->Nothing}) act
+  eInfo <- liftIO $ popLastError errStack
+  case (ret,eInfo) of
+    (Right a, Nothing)  -> return a
+    (Left (), Nothing)  ->
       throwM (GDALException CE_Failure AssertionFailed "checkReturns")
-    (_, (a,b,c):_) ->
-      throwM (GDALException a b (mconcat [prefix,": ", c]))
+    (_, Just e) ->
+      throwM (e {gdalErrMsg = mconcat [prefix,": ", gdalErrMsg e]})
 

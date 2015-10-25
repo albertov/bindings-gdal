@@ -8,13 +8,16 @@ module GDAL.Internal.CPLError (
     GDALException (..)
   , ErrorType (..)
   , ErrorNum (..)
+  , ErrorStack
   , CErrorHandler
   , isGDALException
   , isBindingException
   , throwBindingException
   , bindingExceptionToException
   , bindingExceptionFromException
-  , collectMessages
+  , errorCollector
+  , popLastError
+  , clearErrors
   , withErrorHandler
   , checkReturns
   , checkReturns_
@@ -22,13 +25,13 @@ module GDAL.Internal.CPLError (
 
 {# context lib = "gdal" prefix = "CPL" #}
 
-import Control.Exception (Exception(..), SomeException)
+import Control.Exception (Exception(..), SomeException, finally)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (void)
-import Control.Monad.Catch (MonadThrow(throwM), MonadMask, finally)
+import Control.Monad.Catch (MonadThrow(throwM))
 import Control.Monad.IO.Class (MonadIO(..))
 
-import Data.IORef (newIORef, readIORef, modifyIORef')
+import Data.IORef (IORef, newIORef, atomicModifyIORef', writeIORef)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Typeable (Typeable, cast)
@@ -111,32 +114,41 @@ foreign import ccall safe "wrapper"
   mkErrorHandler :: CErrorHandler -> IO ErrorHandler
 
 checkReturns
-  :: (Eq a, MonadIO m, MonadThrow m)
+  :: (Eq a, MonadThrow m)
   => (a -> Bool) -> m a -> m a
 checkReturns isOk act = do
   a <- act
   if isOk a then return a else throwM ReturnsError
 
 checkReturns_
-  :: (Eq a, MonadIO m, MonadThrow m)
+  :: (Eq a, MonadThrow m)
   => (a -> Bool) -> m a -> m ()
 checkReturns_ isOk = void . checkReturns isOk
 
-collectMessages
-  :: (MonadMask m, MonadIO m)
-  => m a -> m (a, [(ErrorType,ErrorNum,Text)])
-collectMessages act = do
-  msgsRef <- liftIO $ newIORef []
+newtype ErrorStack = ErrorStack (IORef [GDALException])
+
+popLastError :: ErrorStack -> IO (Maybe GDALException)
+popLastError (ErrorStack ref) =
+  atomicModifyIORef' ref $ \errors ->
+    case errors of
+      []     -> ([], Nothing)
+      (x:xs) -> (xs, Just x)
+
+clearErrors :: ErrorStack -> IO ()
+clearErrors (ErrorStack ref) = writeIORef ref []
+
+errorCollector
+  :: IO (ErrorStack, IO a -> IO a)
+errorCollector = do
+  msgsRef <- newIORef []
   let handler err errno cmsg = do
         msg <- peekEncodedCString cmsg
-        modifyIORef' msgsRef ((:) (toEnumC err, toEnumC errno, msg))
-  ret <- withErrorHandler handler act
-  msgs <- liftIO $ readIORef msgsRef
-  return (ret, msgs)
+        atomicModifyIORef' msgsRef $ \errors ->
+          ((GDALException (toEnumC err) (toEnumC errno) msg):errors, ())
+  return (ErrorStack msgsRef, withErrorHandler handler)
 
-withErrorHandler :: (MonadMask m, MonadIO m) => CErrorHandler -> m a -> m a
+withErrorHandler :: CErrorHandler -> IO a -> IO a
 withErrorHandler eh act = do
-  h <- liftIO (mkErrorHandler eh)
-  (liftIO ({#call unsafe PushErrorHandler as ^#} h) >> act)
-    `finally`
-      (liftIO (({#call unsafe PopErrorHandler as ^#} >> freeHaskellFunPtr h)))
+  h <- mkErrorHandler eh
+  ({#call unsafe PushErrorHandler as ^#} h >> act)
+    `finally` ({#call unsafe PopErrorHandler as ^#} >> freeHaskellFunPtr h)
