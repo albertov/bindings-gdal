@@ -1,6 +1,9 @@
 {-# LANGUAGE RankNTypes #-}
 module TestUtils (
-    shouldSatisfy
+    Spec
+  , SpecWith
+  , Arg
+  , shouldSatisfy
   , shouldBe
   , shouldNotBe
   , shouldThrow
@@ -8,8 +11,12 @@ module TestUtils (
   , expectationFailure
   , existsAndSizeIsGreaterThan
   , it
+  , describe
+  , hspec
   , warn
   , withDir
+  , after_
+  , errorCall
 ) where
 
 import Control.Monad (guard, unless)
@@ -18,16 +25,28 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Typeable (typeOf)
 
-import System.Console.ANSI
 import System.IO (IOMode(ReadMode), withBinaryFile, hFileSize)
 import System.IO.Error (isDoesNotExistError)
 import System.IO.Temp (withSystemTempDirectory)
-import System.IO (hPutStrLn, stderr)
 
-import Test.Hspec (SpecWith, Arg, Selector)
+import Test.Hspec (
+    Spec
+  , SpecWith
+  , Arg
+  , Selector
+  , pendingWith
+  , after_
+  , errorCall
+  )
 import qualified Test.Hspec as Hspec
 
 import GDAL (GDAL, runGDAL)
+
+hspec :: Spec -> IO ()
+hspec = Hspec.hspec . Hspec.parallel
+
+describe :: String -> SpecWith a -> SpecWith a
+describe name = Hspec.describe name . Hspec.parallel
 
 it :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
 it n a = Hspec.it n (runGDAL' a)
@@ -81,11 +100,5 @@ shouldNotBe a  = liftIO . flip Hspec.shouldSatisfy (/=a)
 expectationFailure :: String -> GDAL s ()
 expectationFailure = liftIO . Hspec.expectationFailure
 
-warn :: MonadIO m => String -> m ()
-warn _ = return () -- TODO: add mutex in order not to clobber output
-{-
-warn msg = liftIO $ do
-  hSetSGR stderr [SetColor Foreground Vivid Yellow]
-  hPutStrLn stderr msg
-  hSetSGR stderr [Reset]
--}
+warn :: String -> GDAL s ()
+warn = liftIO . pendingWith

@@ -20,34 +20,16 @@ import qualified Data.Vector.Unboxed as U
 import System.FilePath (joinPath)
 import System.Mem (performMajorGC)
 
-import Test.Hspec (
-    Spec
-  , SpecWith
-  , Arg
-  , after_
-  , describe
-  , errorCall
-  , hspec
-  , parallel
-  )
-
 import GDAL
 import GDAL.OSR
 
-import TestUtils (
-    shouldBe
-  , shouldSatisfy
-  , shouldThrow
-  , existsAndSizeIsGreaterThan
-  , it
-  , withDir
-  )
+import TestUtils
 
 main :: IO ()
 main = hspec spec
 
 spec :: Spec
-spec = setupAndTeardown $ parallel $ do
+spec = setupAndTeardown $ do
 
   it "cannot open non-existent file" $ do
     openReadOnly "foo.tif" `shouldThrow` ((==OpenFailed) . gdalErrNum)

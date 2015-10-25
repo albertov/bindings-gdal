@@ -74,7 +74,6 @@ test-suite spec
   type:             exitcode-stdio-1.0
   build-depends:    base
                   , filepath
-                  , ansi-terminal
                   , hspec
                   , hspec-core >= 1.13
                   , bindings-gdal
@@ -90,6 +89,7 @@ test-suite spec
   hs-source-dirs:   tests
   main-is:          Main.hs
   other-modules:    GDALSpec
+                  , Spec
                   , TestUtils
                   , GDAL.OSRSpec
                   , GDAL.OGRSpec

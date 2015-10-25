@@ -7,8 +7,6 @@ import Data.Default (def)
 import Data.Int (Int16, Int32)
 import qualified Data.Vector.Unboxed as U
 
-import Test.Hspec (Spec, SpecWith, hspec, describe, parallel)
-
 import System.FilePath (joinPath)
 
 import GDAL
@@ -18,15 +16,7 @@ import GDAL.Algorithms
 
 import Paths_bindings_gdal
 
-import TestUtils (
-    shouldThrow
-  , shouldBe
-  , shouldNotBe
-  , shouldContain
-  , shouldSatisfy
-  , it
-  , withDir
-  )
+import TestUtils
 
 import GDALSpec (setupAndTeardown)
 
@@ -34,7 +24,7 @@ main :: IO ()
 main = hspec spec
 
 spec :: Spec
-spec = setupAndTeardown $ parallel $ do
+spec = setupAndTeardown $ do
 
   describe "reprojectImage" $ do
 

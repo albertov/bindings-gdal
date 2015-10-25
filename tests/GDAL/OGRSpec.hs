@@ -20,7 +20,6 @@ import Data.Int
 import Data.Word
 import Data.Maybe (isNothing, isJust)
 import Data.Monoid (mempty)
-import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
 import Data.Time
 import Data.Typeable (Typeable, typeOf)
@@ -29,16 +28,6 @@ import qualified Data.Vector.Unboxed as U
 
 import System.Mem (performMajorGC)
 import System.FilePath (joinPath)
-
-import Test.Hspec (
-    Spec
-  , SpecWith
-  , Arg
-  , hspec
-  , describe
-  , after_
-  , parallel
-  )
 
 import GDAL (
     GDAL
@@ -50,22 +39,13 @@ import GDAL.OSR (SpatialReference, fromEPSG)
 
 import Paths_bindings_gdal
 
-import TestUtils (
-    shouldThrow
-  , shouldBe
-  , shouldNotBe
-  , shouldContain
-  , shouldSatisfy
-  , it
-  , withDir
-  , warn
-  )
+import TestUtils
 
 main :: IO ()
 main = hspec spec
 
 spec :: Spec
-spec = setupAndTeardown $ parallel $ do
+spec = setupAndTeardown $ do
 
   describe "DataSource and layer" $ do
 
