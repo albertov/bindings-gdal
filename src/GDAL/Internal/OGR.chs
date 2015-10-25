@@ -211,13 +211,13 @@ createLayerWithDef ds FeatureDef{..} approxOk options =
     pL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts
     when (pL == nullLayerH) (throwBindingException NullLayer)
     V.forM_ fdFields $ \(n,f) -> withFieldDefnH n f $ \pFld ->
-      checkOGRErr $ {#call OGR_L_CreateField as ^#} pL pFld iApproxOk
+      {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
     when (not (V.null fdGeoms)) $
       if supportsMultiGeomFields pL
         then
 #if SUPPORTS_MULTI_GEOM_FIELDS
           V.forM_ fdGeoms $ \(n,f) -> withGeomFieldDefnH n f $ \pGFld ->
-            {#call OGR_L_CreateGeomField as ^#} pL pGFld iApproxOk
+            {#call unsafe OGR_L_CreateGeomField as ^#} pL pGFld iApproxOk
 #else
           error "should never reach here"
 #endif

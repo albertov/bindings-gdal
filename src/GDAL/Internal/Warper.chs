@@ -199,11 +199,11 @@ reprojectImage srcDs srcSrs dstDs dstSrs algo memLimit maxError progressFun
   options' <- setOptionDefaults srcDs (Just dstDs) (def {woWarpOptions=opts})
   liftIO $
     withProgressFun WarpStopped progressFun $ \pFun ->
-    throwIfError "reprojectImage" $
+    throwIfError_ "reprojectImage" $
     withMaybeSRAsCString srcSrs $ \srcSrs' ->
     withMaybeSRAsCString dstSrs $ \dstSrs' ->
     withWarpOptionsH srcDs options' $ \wopts ->
-    checkCPLErr $ {#call GDALReprojectImage as ^#}
+    {#call GDALReprojectImage as ^#}
       srcPtr srcSrs' dstPtr dstSrs' algo' memLimit' maxError' pFun nullPtr wopts
   where
     srcPtr    = unDataset srcDs
