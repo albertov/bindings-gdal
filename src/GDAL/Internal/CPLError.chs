@@ -3,42 +3,41 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 
 module GDAL.Internal.CPLError (
     GDALException (..)
   , ErrorType (..)
   , ErrorNum (..)
-  , ErrorStack
-  , CErrorHandler
   , isGDALException
   , isBindingException
   , throwBindingException
   , bindingExceptionToException
   , bindingExceptionFromException
-  , errorCollector
-  , popLastError
-  , clearErrors
   , withErrorHandler
+  , throwIfError
+  , throwIfError_
   , checkReturns
   , checkReturns_
 ) where
 
 {# context lib = "gdal" prefix = "CPL" #}
 
-import Control.Exception (Exception(..), SomeException, finally)
+import Control.Exception (Exception(..), SomeException, bracket, finally)
+import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
 import Control.DeepSeq (NFData(rnf))
-import Control.Monad (void)
-import Control.Monad.Catch (MonadThrow(throwM))
+import Control.Monad (void, (>=>), liftM)
+import Control.Monad.Catch (MonadCatch, MonadThrow(throwM), tryJust)
 import Control.Monad.IO.Class (MonadIO(..))
 
-import Data.IORef (IORef, newIORef, atomicModifyIORef', writeIORef)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, fromMaybe)
 import Data.Text (Text)
 import Data.Typeable (Typeable, cast)
 import Data.Monoid (mconcat)
 
-import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CChar(..))
+import Foreign.Ptr (nullPtr)
+import Foreign.Storable (peekByteOff)
 
 -- work around  https://github.com/haskell/c2hs/issues/151
 import qualified Foreign.C.Types as C2HSImp
@@ -48,13 +47,10 @@ import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr)
 import GDAL.Internal.Util (toEnumC, peekEncodedCString)
 
 #include "cpl_error.h"
+#include "cbits.h"
 
 {# enum CPLErr as ErrorType {upcaseFirstLetter} deriving (Eq, Show) #}
 
-
-type CErrorHandler = CInt -> CInt -> CString -> IO ()
-
-{#pointer ErrorHandler#}
 
 data GDALException
   = forall e. Exception e =>
@@ -62,7 +58,6 @@ data GDALException
   | GDALException        { gdalErrType :: !ErrorType
                          , gdalErrNum  :: !ErrorNum
                          , gdalErrMsg  :: !Text}
-  | ReturnsError
   deriving Typeable
 
 deriving instance Show GDALException
@@ -110,45 +105,56 @@ isBindingException e
 instance NFData ErrorType where
   rnf a = a `seq` ()
 
-foreign import ccall safe "wrapper"
-  mkErrorHandler :: CErrorHandler -> IO ErrorHandler
-
 checkReturns
-  :: (Eq a, MonadThrow m)
+  :: (Eq a, MonadIO m, MonadThrow m)
   => (a -> Bool) -> m a -> m a
 checkReturns isOk act = do
   a <- act
-  if isOk a then return a else throwM ReturnsError
+  if isOk a
+    then return a
+    else liftIO popLastError >>= throwM . fromMaybe defaultExc
+  where defaultExc = GDALException CE_Failure AssertionFailed "checkReturns"
 
 checkReturns_
-  :: (Eq a, MonadThrow m)
+  :: (Eq a, MonadIO m, MonadThrow m)
   => (a -> Bool) -> m a -> m ()
 checkReturns_ isOk = void . checkReturns isOk
 
-newtype ErrorStack = ErrorStack (IORef [GDALException])
+{#pointer ErrorCell #}
 
-popLastError :: ErrorStack -> IO (Maybe GDALException)
-popLastError (ErrorStack ref) =
-  atomicModifyIORef' ref $ \errors ->
-    case errors of
-      []     -> ([], Nothing)
-      (x:xs) -> (xs, Just x)
+popLastError :: IO (Maybe GDALException)
+popLastError =
+  bracket {#call unsafe pop_last as ^#}
+          {#call unsafe destroy_ErrorCell as ^#} $ \ec -> do
+  if ec == nullPtr
+    then return Nothing
+    else do
+      msg <- peekEncodedCString =<< {#get ErrorCell->msg #} ec
+      errClass <- liftM toEnumC ({#get ErrorCell->errClass#} ec)
+      errNo <- liftM toEnumC ({#get ErrorCell->errNo#} ec)
+      return (Just (GDALException errClass errNo msg))
 
-clearErrors :: ErrorStack -> IO ()
-clearErrors (ErrorStack ref) = writeIORef ref []
+clearErrors :: IO ()
+clearErrors = {#call unsafe clear_stack as ^#}
 
-errorCollector
-  :: IO (ErrorStack, IO a -> IO a)
-errorCollector = do
-  msgsRef <- newIORef []
-  let handler err errno cmsg = do
-        msg <- peekEncodedCString cmsg
-        atomicModifyIORef' msgsRef $ \errors ->
-          ((GDALException (toEnumC err) (toEnumC errno) msg):errors, ())
-  return (ErrorStack msgsRef, withErrorHandler handler)
+withErrorHandler :: IO a -> IO a
+withErrorHandler act = runBounded $
+  ({#call unsafe push_error_handler as ^#} >> act)
+    `finally` {#call unsafe pop_error_handler as ^#}
+  where
+    runBounded
+      | rtsSupportsBoundThreads = runInBoundThread
+      | otherwise               = id
 
-withErrorHandler :: CErrorHandler -> IO a -> IO a
-withErrorHandler eh act = do
-  h <- mkErrorHandler eh
-  ({#call unsafe PushErrorHandler as ^#} h >> act)
-    `finally` ({#call unsafe PopErrorHandler as ^#} >> freeHaskellFunPtr h)
+
+throwIfError_ :: (MonadCatch m, MonadIO m) => Text -> m a -> m ()
+throwIfError_ prefix act = throwIfError prefix act >> return ()
+
+throwIfError :: (MonadCatch m, MonadIO m) => Text -> m a -> m a
+throwIfError prefix act = do
+  ret <- act
+  mErr <- liftIO popLastError
+  case mErr of
+    Nothing -> return ret
+    Just e  ->
+      throwM (e {gdalErrMsg = mconcat [prefix,": ", gdalErrMsg e]})

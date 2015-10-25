@@ -9,7 +9,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE LambdaCase #-}
 
 module GDAL.Internal.Types (
     Value(..)
@@ -29,17 +28,12 @@ module GDAL.Internal.Types (
   , fromValue
   , runGDAL
   , registerFinalizer
-
-  , throwIfError
-  , throwIfError_
 ) where
 
 import Control.Applicative (Applicative(..), liftA2)
-import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (liftM, void)
 import Control.Monad.Base (MonadBase)
-import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
 import Control.Monad.Trans.Resource (
     ResourceT
   , MonadResource
@@ -51,7 +45,6 @@ import Control.Monad.Catch (
   , MonadCatch
   , MonadMask
   , catch
-  , tryJust
   )
 import Control.Monad.IO.Class (MonadIO(..))
 
@@ -279,7 +272,7 @@ instance Storable a => G.Vector U.Vector (Value a) where
 
 
 
-newtype GDAL s a = GDAL (ReaderT ErrorStack (ResourceT IO) a)
+newtype GDAL s a = GDAL (ResourceT IO a)
 
 deriving instance Functor (GDAL s)
 deriving instance Applicative (GDAL s)
@@ -292,34 +285,9 @@ deriving instance MonadBase IO (GDAL s)
 deriving instance MonadResource (GDAL s)
 
 runGDAL :: (forall s. GDAL s a) -> IO (Either GDALException a)
-runGDAL (GDAL a) = runBounded $ do
-  (stack, collect) <- errorCollector
-  collect $ runResourceT $ flip runReaderT stack $
+runGDAL (GDAL a) = withErrorHandler $ runResourceT $
     (liftM Right a) `catch` (return . Left)
-  where
-    runBounded
-      | rtsSupportsBoundThreads = runInBoundThread
-      | otherwise               = id
 
 
 registerFinalizer :: IO () -> GDAL s ()
 registerFinalizer = GDAL . void . register
-
-throwIfError_ :: Text -> GDAL s a -> GDAL s ()
---throwIfError_ :: Text -> IO a -> IO ()
-throwIfError_ prefix act = throwIfError prefix act >> return ()
-
-throwIfError :: Text -> GDAL s a -> GDAL s a
---throwIfError :: Text -> IO a -> IO a
-throwIfError prefix act = do
-  errStack <- GDAL ask
-  liftIO $ clearErrors errStack
-  ret <- tryJust (\case {ReturnsError->Just(); _->Nothing}) act
-  eInfo <- liftIO $ popLastError errStack
-  case (ret,eInfo) of
-    (Right a, Nothing)  -> return a
-    (Left (), Nothing)  ->
-      throwM (GDALException CE_Failure AssertionFailed "checkReturns")
-    (_, Just e) ->
-      throwM (e {gdalErrMsg = mconcat [prefix,": ", gdalErrMsg e]})
-

@@ -62,7 +62,10 @@ library
   install-includes: bindings.h
   default-extensions: CPP
   default-language: Haskell2010
-  include-dirs:    src/GDAL/Internal/
+  include-dirs:    src/GDAL/Internal/ cbits
+  cc-options:      -Wall -O2
+  c-sources:       cbits/cbits.c
+  includes:        cbits/cbits.h
 
   if impl(ghc >= 7.10.0)
     cpp-options: -DSTORABLE_COMPLEX
