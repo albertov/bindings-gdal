@@ -106,7 +106,7 @@ instance NFData ErrorType where
   rnf a = a `seq` ()
 
 checkReturns
-  :: (Eq a, MonadIO m, MonadThrow m)
+  :: (Eq a, Functor m, MonadIO m, MonadThrow m)
   => (a -> Bool) -> m a -> m a
 checkReturns isOk act = do
   a <- act
@@ -114,11 +114,13 @@ checkReturns isOk act = do
     then return a
     else liftIO popLastError >>= throwM . fromMaybe defaultExc
   where defaultExc = GDALException CE_Failure AssertionFailed "checkReturns"
+{-# INLINE checkReturns #-}
 
 checkReturns_
-  :: (Eq a, MonadIO m, MonadThrow m)
+  :: (Eq a, Functor m, MonadIO m, MonadThrow m)
   => (a -> Bool) -> m a -> m ()
 checkReturns_ isOk = void . checkReturns isOk
+{-# INLINE checkReturns_ #-}
 
 {#pointer ErrorCell #}
 
@@ -147,8 +149,9 @@ withErrorHandler act = runBounded $
       | otherwise               = id
 
 
-throwIfError_ :: (MonadCatch m, MonadIO m) => Text -> m a -> m ()
-throwIfError_ prefix act = throwIfError prefix act >> return ()
+throwIfError_ :: (MonadCatch m, MonadIO m, Functor m) => Text -> m a -> m ()
+throwIfError_ prefix = void . throwIfError prefix
+{-# INLINE throwIfError_ #-}
 
 throwIfError :: (MonadCatch m, MonadIO m) => Text -> m a -> m a
 throwIfError prefix act = do
@@ -158,3 +161,4 @@ throwIfError prefix act = do
     Nothing -> return ret
     Just e  ->
       throwM (e {gdalErrMsg = mconcat [prefix,": ", gdalErrMsg e]})
+{-# INLINE throwIfError #-}

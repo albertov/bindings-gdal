@@ -371,7 +371,7 @@ featureToHandle fdH fId ft act =
         Just f  -> setField f ix pF
         Nothing -> return ()
     case fGeom of
-      Just g  -> void $ withGeometry g ({#call OGR_F_SetGeometry as ^#} pF)
+      Just g  -> void $ withGeometry g ({#call unsafe OGR_F_SetGeometry as ^#} pF)
       Nothing -> return ()
     when (not (HM.null fGeoms)) $ do
 #if SUPPORTS_MULTI_GEOM_FIELDS
@@ -379,7 +379,7 @@ featureToHandle fdH fId ft act =
       flip imapM_ (V.tail geomFieldDefs) $ \ix (name, _) -> do
         case join (HM.lookup name fGeoms) of
           Just g  ->
-            void $ withGeometry g ({#call OGR_F_SetGeomField as ^#} pF (ix+1))
+            void $ withGeometry g ({#call unsafe OGR_F_SetGeomField as ^#} pF (ix+1))
           Nothing ->
             return ()
 #else
@@ -445,64 +445,64 @@ featureFromHandle FeatureDef{..} act =
 setField :: Field -> CInt -> FeatureH -> IO ()
 
 setField (OGRInteger v) ix f =
-  {#call OGR_F_SetFieldInteger as ^#} f (fromIntegral ix) (fromIntegral v)
+  {#call unsafe OGR_F_SetFieldInteger as ^#} f (fromIntegral ix) (fromIntegral v)
 
 setField (OGRIntegerList v) ix f =
   St.unsafeWith v $
-    {#call OGR_F_SetFieldIntegerList as ^#} f (fromIntegral ix)
+    {#call unsafe OGR_F_SetFieldIntegerList as ^#} f (fromIntegral ix)
       (fromIntegral (St.length v)) . castPtr
 
 #if SUPPORTS_64_BIT_INT_FIELDS
 setField (OGRInteger64 v) ix f =
-  {#call OGR_F_SetFieldInteger64 as ^#} f (fromIntegral ix) (fromIntegral v)
+  {#call unsafe OGR_F_SetFieldInteger64 as ^#} f (fromIntegral ix) (fromIntegral v)
 
 setField (OGRInteger64List v) ix f =
   St.unsafeWith v $
-    {#call OGR_F_SetFieldInteger64List as ^#} f (fromIntegral ix)
+    {#call unsafe OGR_F_SetFieldInteger64List as ^#} f (fromIntegral ix)
       (fromIntegral (St.length v)) . castPtr
 #endif
 
 setField (OGRReal v) ix f =
-  {#call OGR_F_SetFieldDouble as ^#} f (fromIntegral ix) (realToFrac v)
+  {#call unsafe OGR_F_SetFieldDouble as ^#} f (fromIntegral ix) (realToFrac v)
 
 setField (OGRRealList v) ix f =
   St.unsafeWith v $
-    {#call OGR_F_SetFieldDoubleList as ^#} f (fromIntegral ix)
+    {#call unsafe OGR_F_SetFieldDoubleList as ^#} f (fromIntegral ix)
       (fromIntegral (St.length v)) . castPtr
 
 setField (OGRString v) ix f = useAsEncodedCString v $
-  {#call OGR_F_SetFieldString as ^#} f (fromIntegral ix)
+  {#call unsafe OGR_F_SetFieldString as ^#} f (fromIntegral ix)
 
 setField (OGRStringList v) ix f =
   bracket createList {#call unsafe CSLDestroy as ^#} $
-    {#call OGR_F_SetFieldStringList as ^#} f (fromIntegral ix)
+    {#call unsafe OGR_F_SetFieldStringList as ^#} f (fromIntegral ix)
   where
     createList = V.foldM' folder nullPtr v
     folder acc k =
       useAsEncodedCString k $ {#call unsafe CSLAddString as ^#} acc
 
 setField (OGRBinary v) ix f = unsafeUseAsCStringLen v $ \(p,l) ->
-  {#call OGR_F_SetFieldBinary as ^#}
+  {#call unsafe OGR_F_SetFieldBinary as ^#}
     f (fromIntegral ix) (fromIntegral l) (castPtr p)
 
 setField (OGRDateTime (LocalTime day (TimeOfDay h mn s)) tz) ix f =
-  {#call OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix)
+  {#call unsafe OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix)
   (fromIntegral y) (fromIntegral m) (fromIntegral d)
   (fromIntegral h) (fromIntegral mn) (truncate s) (fromOGRTimeZone tz)
   where (y, m, d) = toGregorian day
 
 setField (OGRDate day) ix f =
-  {#call OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix)
+  {#call unsafe OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix)
   (fromIntegral y) (fromIntegral m) (fromIntegral d) 0 0 0 (fromOGRTimeZone tz)
   where (y, m, d) = toGregorian day
         tz = UnknownTimeZone
 
 setField (OGRTime (TimeOfDay h mn s)) ix f =
-  {#call OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix) 0 0 0
+  {#call unsafe OGR_F_SetFieldDateTime as ^#} f (fromIntegral ix) 0 0 0
   (fromIntegral h) (fromIntegral mn) (truncate s) (fromOGRTimeZone tz)
   where tz = UnknownTimeZone
 
-setField OGRNullField ix f = {#call OGR_F_UnsetField as ^#} f ix
+setField OGRNullField ix f = {#call unsafe OGR_F_UnsetField as ^#} f ix
 
 -- ############################################################################
 -- getField
@@ -512,7 +512,7 @@ getField :: FieldType -> CInt -> FeatureH -> IO (Maybe Field)
 
 getField OFTInteger ix f =
   liftM (Just . OGRInteger . fromIntegral)
-    ({#call OGR_F_GetFieldAsInteger as ^#} f ix)
+    ({#call unsafe OGR_F_GetFieldAsInteger as ^#} f ix)
 
 getField OFTIntegerList ix f = alloca $ \lenP -> do
   buf <- {#call unsafe OGR_F_GetFieldAsIntegerList as ^#} f ix lenP

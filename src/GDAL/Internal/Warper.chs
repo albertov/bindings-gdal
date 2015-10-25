@@ -197,9 +197,9 @@ reprojectImage
 reprojectImage srcDs srcSrs dstDs dstSrs algo memLimit maxError progressFun
                opts = do
   options' <- setOptionDefaults srcDs (Just dstDs) (def {woWarpOptions=opts})
-  withProgressFun WarpStopped progressFun $ \pFun ->
+  liftIO $
+    withProgressFun WarpStopped progressFun $ \pFun ->
     throwIfError "reprojectImage" $
-    liftIO $
     withLockedDatasetPtr srcDs $ \srcPtr ->
     withLockedDatasetPtr dstDs $ \dstPtr ->
     withMaybeSRAsCString srcSrs $ \srcSrs' ->

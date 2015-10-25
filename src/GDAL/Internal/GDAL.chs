@@ -282,17 +282,16 @@ unsafeToReadOnly ds = flushCache ds >> return (coerce ds)
 createCopy
   :: Driver -> String -> Dataset s t -> Bool -> OptionList
   -> Maybe ProgressFun -> GDAL s (RWDataset s)
-createCopy driver path ds strict options progressFun =
-  withProgressFun CopyStopped progressFun $ \pFunc -> do
-    pDs <- liftIO $ do
-             d <- driverByName driver
-             withOptionList options $ \o -> do
-               validateCreationOptions d o
-               withCString path $ \p ->
-                 withLockedDatasetPtr ds $ \dsPtr ->
-                   {#call GDALCreateCopy as ^#}
-                     d p dsPtr (fromBool strict) o pFunc (castPtr nullPtr)
-    newDatasetHandle pDs
+createCopy driver path ds strict options progressFun = do
+  pDs <- liftIO $ withProgressFun CopyStopped progressFun $ \pFunc -> do
+           d <- driverByName driver
+           withOptionList options $ \o -> do
+             validateCreationOptions d o
+             withCString path $ \p ->
+               withLockedDatasetPtr ds $ \dsPtr ->
+                 {#call GDALCreateCopy as ^#}
+                   d p dsPtr (fromBool strict) o pFunc (castPtr nullPtr)
+  newDatasetHandle pDs
 
 
 newDatasetHandle :: DatasetH -> GDAL s (Dataset s t)
@@ -343,7 +342,7 @@ setDatasetProjection ds srs =
   liftIO $
     checkCPLErr $
       withLockedDatasetPtr ds $
-        withCString (toWkt srs) . {#call SetProjection as ^#}
+        withCString (toWkt srs) . {#call unsafe SetProjection as ^#}
 
 checkCPLErr :: IO CInt -> IO ()
 checkCPLErr = checkReturns_ (==fromEnumC CE_None)
@@ -391,7 +390,7 @@ setDatasetGeotransform :: RWDataset s -> Geotransform -> GDAL s ()
 setDatasetGeotransform ds gt = liftIO $
   checkCPLErr $
     withLockedDatasetPtr ds $ \d ->
-      with gt ({#call SetGeoTransform as ^#} d . castPtr)
+      with gt ({#call unsafe SetGeoTransform as ^#} d . castPtr)
 
 
 datasetBandCount :: Dataset s t -> GDAL s Int
@@ -477,7 +476,7 @@ setBandNodataValue :: GDALType a => RWBand s -> a -> GDAL s ()
 setBandNodataValue b v =
   liftIO $
     checkCPLErr $
-      {#call SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
+      {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
 
 fillRaster :: CDouble -> CDouble  -> RWBand s -> GDAL s ()
 fillRaster r i b =
@@ -517,7 +516,7 @@ readBandIO band win (XY bx by) = readMasked band read_
       let dtype = fromEnumC (dataType (Proxy :: Proxy a'))
       Stm.unsafeWith vec $ \ptr -> do
         checkCPLErr $
-          {#call RasterAdviseRead as ^#}
+          {#call unsafe RasterAdviseRead as ^#}
             b
             (fromIntegral xoff)
             (fromIntegral yoff)

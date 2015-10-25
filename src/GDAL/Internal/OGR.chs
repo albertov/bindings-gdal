@@ -338,7 +338,7 @@ sourceFromLayer getHandle = bracketP initialize cleanUp getFeatures
       pL <- getHandle
       when (pL == nullLayerH) (throwBindingException NullLayer)
       void $ {#call OGR_L_StartTransaction as ^#} pL
-      void $ {#call OGR_L_ResetReading as ^#}  pL
+      void $ {#call unsafe OGR_L_ResetReading as ^#}  pL
       fDef <- layerFeatureDefIO pL
       return (pL, fDef)
 

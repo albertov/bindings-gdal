@@ -233,9 +233,8 @@ rasterizeLayersBuf
   -> GDAL s (U.Vector (Value a))
 rasterizeLayersBuf size layers srs geotransform mTransformer nodataValue
                    burnValue options progressFun =
-  withProgressFun RasterizeStopped progressFun $
-    liftIO . rasterizeLayersBufIO size layers srs geotransform
-               mTransformer nodataValue burnValue options
+  liftIO $ rasterizeLayersBufIO size layers srs geotransform
+               mTransformer nodataValue burnValue options progressFun
 
 rasterizeLayersBufIO
   :: forall t s a l. (GDALType a, Transformer t)
@@ -247,10 +246,11 @@ rasterizeLayersBufIO
   -> a
   -> a
   -> OptionList
-  -> ProgressFunPtr
+  -> Maybe ProgressFun
   -> IO (U.Vector (Value a))
 rasterizeLayersBufIO size layers srs geotransform mTransformer nodataValue
-                     burnValue options pFun =
+                     burnValue options progressFun =
+  withProgressFun RasterizeStopped progressFun $ \pFun ->
   withLockedLayerPtrs layers $ \layerPtrs ->
   withArrayLen layerPtrs $ \len lPtrPtr ->
   with geotransform $ \gt ->

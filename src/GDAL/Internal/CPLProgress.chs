@@ -18,7 +18,6 @@ import Control.Monad.Catch (
   , throwM
   , try
   )
-import Control.Monad.IO.Class (liftIO)
 import Data.IORef (newIORef, readIORef, writeIORef)
 
 import Foreign.C.String (CString, peekCString)
@@ -43,11 +42,11 @@ instance Show ProgressFun where show _ = "ProgressFun"
 
 withProgressFun
   :: Exception e
-  => e -> Maybe ProgressFun -> (ProgressFunPtr -> GDAL s a) -> GDAL s a
+  => e -> Maybe ProgressFun -> (ProgressFunPtr -> IO a) -> IO a
 withProgressFun _ Nothing  act = act c_dummyProgress
 withProgressFun stopExc (Just f) act = do
-  excRef <- liftIO $ newIORef Nothing
-  stoppedRef <- liftIO $ newIORef False
+  excRef <- newIORef Nothing
+  stoppedRef <- newIORef False
   let progressFunc progress cmsg _ = do
         msg <- if cmsg == nullPtr
                  then return Nothing
@@ -56,12 +55,9 @@ withProgressFun stopExc (Just f) act = do
         when (ret == Stop) (writeIORef stoppedRef True)
         return (fromEnumC ret)
       catcher exc = writeIORef excRef (Just exc) >> return Stop
-  mRet <- try $ bracket
-            (liftIO (c_wrapProgressFun progressFunc))
-            (liftIO . freeHaskellFunPtr)
-            act
-  stopped <- liftIO $ readIORef stoppedRef
-  mExc <- liftIO $ readIORef excRef
+  mRet <- try $ bracket (c_wrapProgressFun progressFunc) freeHaskellFunPtr act
+  stopped <- readIORef stoppedRef
+  mExc <- readIORef excRef
   case (stopped, mRet, mExc) of
     -- An error ocurred inside the progress function
     (True,  _       , Just e)  -> throwM e
