@@ -11,7 +11,7 @@ module GDAL.Internal.OGRFieldInstances () where
 import Data.ByteString (ByteString)
 import Data.Int
 import Data.Word
-import Data.Monoid ((<>))
+import Data.Monoid (mempty, (<>))
 import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text, pack, unpack)
 import Data.Time
@@ -31,9 +31,17 @@ instance OGRField (ty) where {                                                 \
 ; fromField (tyCon v) = Right (to v)                                           \
 ; fromField f         = defaultFromField f};
 
+#define ogrMonoidField(ty,oft,tyCon,to,from)                                   \
+instance OGRField (ty) where {                                                 \
+  fieldDef _          = FieldDef oft Nothing Nothing Nothing False             \
+; toField             = tyCon . from                                           \
+; fromField (tyCon v)    = Right (to v)                                        \
+; fromField OGRNullField = Right mempty                                        \
+; fromField f         = defaultFromField f};
+
 #define integralElem(A,B,C) ogrField (A,B,C,fromIntegral,fromIntegral)
 #define integralList(A,B,C,to,from) \
-  ogrField (A,B,C,(to . St.map fromIntegral),St.map fromIntegral . from)
+  ogrMonoidField (A,B,C,(to . St.map fromIntegral),St.map fromIntegral . from)
 
 
 #define integral(A)                                                            \
@@ -51,7 +59,7 @@ integralList(U.Vector A,OFTInteger64List,OGRInteger64List,convert,convert)     \
 integralList(V.Vector A,OFTInteger64List,OGRInteger64List,convert,convert)
 
 #define realElem(A) ogrField (A,OFTReal,OGRReal,realToFrac,realToFrac)
-#define realList(A,to,from) ogrField (A,OFTRealList,OGRRealList                \
+#define realList(A,to,from) ogrMonoidField (A,OFTRealList,OGRRealList          \
                                      ,(to . St.map realToFrac)                 \
                                      ,St.map realToFrac . from)
 
@@ -101,15 +109,15 @@ integral(Word32)
 real(Float)
 real(Double)
 
-ogrField(Text,OFTString,OGRString,id,id)
-ogrField([Text],OFTStringList,OGRStringList,V.toList,V.fromList)
-ogrField(V.Vector Text,OFTStringList,OGRStringList,id,id)
+ogrMonoidField(Text,OFTString,OGRString,id,id)
+ogrMonoidField([Text],OFTStringList,OGRStringList,V.toList,V.fromList)
+ogrMonoidField(V.Vector Text,OFTStringList,OGRStringList,id,id)
 
-ogrField(String,OFTString,OGRString,unpack,pack)
-ogrField([String],OFTStringList,OGRStringList,(V.toList . V.map unpack),(V.map pack . V.fromList))
-ogrField(V.Vector String,OFTStringList,OGRStringList,(V.convert . V.map unpack),(V.map pack . V.convert))
+ogrMonoidField(String,OFTString,OGRString,unpack,pack)
+ogrMonoidField([String],OFTStringList,OGRStringList,(V.toList . V.map unpack),(V.map pack . V.fromList))
+ogrMonoidField(V.Vector String,OFTStringList,OGRStringList,(V.convert . V.map unpack),(V.map pack . V.convert))
 
-ogrField(ByteString,OFTBinary,OGRBinary,id,id)
+ogrMonoidField(ByteString,OFTBinary,OGRBinary,id,id)
 
 instance OGRField UTCTime where
   fieldDef _ =

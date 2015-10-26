@@ -304,7 +304,9 @@ spec = setupAndTeardown $ do
         ogrFieldSpec driverName (minBound :: Word)
         ogrFieldSpec driverName (maxBound :: Word)
 
+        ogrFieldSpec driverName (mempty :: [Int])
         ogrFieldSpec driverName ([0,34,76,minBound,maxBound] :: [Int])
+        ogrFieldSpec driverName (mempty :: U.Vector Int)
         ogrFieldSpec driverName ([0,34,76,minBound,maxBound] :: U.Vector Int)
 #else
         ogrFieldSpec driverName (34 :: Int32)
@@ -316,26 +318,42 @@ spec = setupAndTeardown $ do
         ogrFieldSpec driverName (minBound :: Word32)
         ogrFieldSpec driverName (maxBound :: Word32)
 
+        ogrFieldSpec driverName (mempty :: [Int32])
         ogrFieldSpec driverName ([0,34,76,minBound,maxBound] :: [Int32])
+        ogrFieldSpec driverName (mempty :: U.Vector Int32)
         ogrFieldSpec driverName ([0,34,76,minBound,maxBound] :: U.Vector Int32)
 #endif
         ogrFieldSpec driverName (3.4 :: Double)
         ogrFieldSpec driverName (3.4 :: Float)
 
+        if driverName == "ESRI Shapefile"
+           then it "" $
+                  warn "Need to fix empty non-nullable strings on shapefile"
+           else do
+             ogrFieldSpec driverName (mempty :: Text)
+             ogrFieldSpec driverName (mempty :: String)
         ogrFieldSpec driverName ("foo" :: Text)
         ogrFieldSpec driverName ("foo" :: String)
 
-        ogrFieldSpec driverName ("" :: ByteString)
+        ogrFieldSpec driverName (mempty :: ByteString)
         ogrFieldSpec driverName ("\x0\x0\x0\0\xDE\xCA\xFF" :: ByteString)
 
+        ogrFieldSpec driverName (mempty :: [Float])
         ogrFieldSpec driverName ([0,34,76,0] :: [Float])
+        ogrFieldSpec driverName (mempty :: U.Vector Float)
         ogrFieldSpec driverName ([0,34,76,0] :: U.Vector Float)
+        ogrFieldSpec driverName (mempty :: [Double])
         ogrFieldSpec driverName ([0,34,76,0] :: [Double])
+        ogrFieldSpec driverName (mempty :: U.Vector Double)
         ogrFieldSpec driverName ([0,34,76,0] :: U.Vector Double)
 
+        ogrFieldSpec driverName (mempty :: [Text])
         ogrFieldSpec driverName (["foo","bar"] :: [Text])
+        ogrFieldSpec driverName (mempty :: V.Vector Text)
         ogrFieldSpec driverName (["foo","bar"] :: V.Vector Text)
+        ogrFieldSpec driverName (mempty :: [String])
         ogrFieldSpec driverName (["foo", "bar"] :: [String])
+        ogrFieldSpec driverName (mempty :: V.Vector String)
         ogrFieldSpec driverName (["foo", "bar"] :: V.Vector String)
 
         ogrFieldSpec driverName (UTCTime (fromGregorian 2010 01 04) 0)

@@ -54,7 +54,7 @@ module GDAL.Internal.OGRFeature (
 {#context lib = "gdal" prefix = "OGR" #}
 
 import Control.Applicative ((<$>), (<*>), pure)
-import Control.Monad (liftM, liftM2, (>=>), (<=<), when, void, join)
+import Control.Monad (liftM, liftM2, (>=>), when, void)
 import Control.Monad.Catch (bracket)
 
 import Data.ByteString (ByteString)
@@ -517,10 +517,13 @@ getField OFTInteger ix f =
 getField OFTIntegerList ix f = alloca $ \lenP -> do
   buf <- {#call unsafe OGR_F_GetFieldAsIntegerList as ^#} f ix lenP
   nElems <- peekIntegral lenP
-  vec <- Stm.new nElems
-  Stm.unsafeWith vec $ \vP ->
-    copyBytes vP (buf :: Ptr CInt) (nElems * sizeOf (undefined :: CInt))
-  liftM (Just . OGRIntegerList) (St.unsafeFreeze (Stm.unsafeCast vec))
+  if nElems == 0
+    then return (Just (OGRIntegerList mempty))
+    else do
+      vec <- Stm.new nElems
+      Stm.unsafeWith vec $ \vP ->
+        copyBytes vP (buf :: Ptr CInt) (nElems * sizeOf (undefined :: CInt))
+      liftM (Just . OGRIntegerList) (St.unsafeFreeze (Stm.unsafeCast vec))
 
 #if SUPPORTS_64_BIT_INT_FIELDS
 getField OFTInteger64 ix f
@@ -530,10 +533,13 @@ getField OFTInteger64 ix f
 getField OFTInteger64List ix f = alloca $ \lenP -> do
   buf <- {#call unsafe OGR_F_GetFieldAsInteger64List as ^#} f ix lenP
   nElems <- peekIntegral lenP
-  vec <- Stm.new nElems
-  Stm.unsafeWith vec $ \vP ->
-    copyBytes vP (buf :: Ptr CLLong) (nElems * sizeOf (undefined :: CLLong))
-  liftM (Just . OGRInteger64List) (St.unsafeFreeze (Stm.unsafeCast vec))
+  if nElems == 0
+    then return (Just (OGRInteger64List mempty))
+    else do
+      vec <- Stm.new nElems
+      Stm.unsafeWith vec $ \vP ->
+        copyBytes vP (buf :: Ptr CLLong) (nElems * sizeOf (undefined :: CLLong))
+      liftM (Just . OGRInteger64List) (St.unsafeFreeze (Stm.unsafeCast vec))
 #endif
 
 getField OFTReal ix f
@@ -543,10 +549,13 @@ getField OFTReal ix f
 getField OFTRealList ix f = alloca $ \lenP -> do
   buf <- {#call unsafe OGR_F_GetFieldAsDoubleList as ^#} f ix lenP
   nElems <- peekIntegral lenP
-  vec <- Stm.new nElems
-  Stm.unsafeWith vec $ \vP ->
-     copyBytes vP (buf :: Ptr CDouble) (nElems * sizeOf (undefined :: CDouble))
-  liftM (Just . OGRRealList) (St.unsafeFreeze (Stm.unsafeCast vec))
+  if nElems == 0
+    then return (Just (OGRRealList mempty))
+    else do
+      vec <- Stm.new nElems
+      Stm.unsafeWith vec $ \vP ->
+         copyBytes vP (buf :: Ptr CDouble) (nElems * sizeOf (undefined :: CDouble))
+      liftM (Just . OGRRealList) (St.unsafeFreeze (Stm.unsafeCast vec))
 
 getField OFTString ix f = liftM (Just . OGRString)
   (({#call unsafe OGR_F_GetFieldAsString as ^#} f ix) >>= peekEncodedCString)
