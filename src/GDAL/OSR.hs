@@ -20,6 +20,6 @@ module GDAL.OSR (
   , getAngularUnits
   , getLinearUnits
 
-  , CoordinateTransformation
+  , coordinateTransformation
 ) where
 import GDAL.Internal.OSR

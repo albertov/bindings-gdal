@@ -91,6 +91,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Int (Int16, Int32)
 import Data.Bits ((.&.))
+import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Complex (Complex(..), realPart)
 import Data.Coerce (coerce)
 import Data.Proxy (Proxy(..))
@@ -309,20 +310,21 @@ datasetSize ds =
         ({#call pure unsafe GetRasterYSize as ^#} (unDataset ds))
 
 datasetProjection :: Dataset s t -> GDAL s (Maybe SpatialReference)
-datasetProjection ds = do
-  let d = unDataset ds
-  srs <- liftIO ({#call unsafe GetProjectionRef as ^#} d >>= peekCString)
-  if null srs
+datasetProjection ds = liftIO $ do
+  srs <- {#call unsafe GetProjectionRef as ^#} (unDataset ds)
+  c <- peek srs
+  if c == 0
     then return Nothing
-    else either (throwBindingException . InvalidProjection)
-                (return . Just)
-                (fromWkt srs)
+    else fromWktIO srs >>=
+          either (throwBindingException . InvalidProjection)
+                 (return . Just)
 
 
 setDatasetProjection :: RWDataset s -> SpatialReference -> GDAL s ()
 setDatasetProjection ds srs =
   liftIO $ checkCPLErr $
-    withCString (toWkt srs) ({#call unsafe SetProjection as ^#} (unDataset ds))
+    unsafeUseAsCString (toWkt srs)
+      ({#call unsafe SetProjection as ^#} (unDataset ds))
 
 checkCPLErr :: IO CInt -> IO ()
 checkCPLErr = checkReturns_ (==fromEnumC CE_None)

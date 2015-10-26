@@ -12,28 +12,31 @@ module GDAL.Internal.OGRGeometry (
   , Geometry (..)
   , WkbByteOrder (..)
 
-  , createFromWktIO
-  , createFromWkbIO
-  , exportToWktIO
-  , exportToWkbIO
-
   , createFromWkt
   , createFromWkb
   , exportToWkt
   , exportToWkb
+  , geometrySpatialReference
+
+  , transformWith
+  , transformTo
 
   , withGeometry
   , withMaybeGeometry
   , cloneGeometry
   , newGeometryHandle
+  , createFromWktIO
+  , createFromWkbIO
+  , exportToWktIO
+  , exportToWkbIO
 ) where
+
+#include "ogr_api.h"
 
 {#context lib = "gdal" prefix = "OGR_G_"#}
 
 import Control.Applicative ((<$>))
-import Control.Monad (liftM, when, void, (<=<), (>=>))
-import Control.Monad.Catch(throwM, catch, catchJust)
-import Control.Monad.IO.Class (MonadIO(liftIO))
+import Control.Monad (liftM, void, (>=>))
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (unpack)
@@ -41,19 +44,14 @@ import Data.ByteString.Unsafe (
     unsafeUseAsCString
   , unsafeUseAsCStringLen
   , unsafePackMallocCStringLen
-  , unsafePackCStringFinalizer
   )
-import Data.Coerce (coerce)
-import Data.Word (Word8)
 
-import Foreign.C.String (CString, peekCString, withCString)
 import Foreign.C.Types (CInt(..), CChar(..), CUChar(..))
-import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr, plusPtr)
+import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr)
 import Foreign.ForeignPtr (
     ForeignPtr
   , withForeignPtr
   , newForeignPtr
-  , newForeignPtr_
   )
 import Foreign.Marshal.Alloc (alloca, mallocBytes)
 import Foreign.Marshal.Utils (toBool)
@@ -61,14 +59,11 @@ import Foreign.Storable (peek, poke)
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import GDAL.Internal.Types
 {#import GDAL.Internal.OGRError#}
 {#import GDAL.Internal.OSR#}
+import GDAL.Internal.CPLString (peekCPLString)
 import GDAL.Internal.CPLError hiding (None)
-import GDAL.Internal.CPLConv (cplFree)
 import GDAL.Internal.Util
-
-#include "ogr_api.h"
 
 {#enum OGRwkbGeometryType as GeometryType {upcaseFirstLetter}
   deriving (Eq,Show)#}
@@ -99,6 +94,7 @@ newGeometryHandle p
 createFromWkb
   :: Maybe SpatialReference -> ByteString -> Either OGRError Geometry
 createFromWkb mSr = unsafePerformIO . createFromWkbIO mSr
+{-# NOINLINE createFromWkb #-}
 
 createFromWkbIO
   :: Maybe SpatialReference -> ByteString -> IO (Either OGRError Geometry)
@@ -114,6 +110,7 @@ createFromWkbIO mSrs bs =
 createFromWkt
   :: Maybe SpatialReference -> ByteString -> Either OGRError Geometry
 createFromWkt mSrs = unsafePerformIO . createFromWktIO mSrs
+{-# NOINLINE createFromWkt #-}
 
 createFromWktIO
   :: Maybe SpatialReference -> ByteString -> IO (Either OGRError Geometry)
@@ -126,40 +123,58 @@ createFromWktIO mSrs bs =
       (poke spp sp >> {#call unsafe OGR_G_CreateFromWkt as ^#} spp srs gPtr)
       (peek gPtr >>= newGeometryHandle)
 
-peekAndPack :: Ptr CString -> IO ByteString
-peekAndPack pptr = do
-  p <- liftM castPtr (peek pptr) :: IO (Ptr Word8)
-  let findLen !n = do
-        v <- peek (p `plusPtr` n) :: IO Word8
-        if v==0 then return n else findLen (n+1)
-  len <- findLen 0
-  unsafePackCStringFinalizer p len (cplFree p)
 
 
 exportToWktIO :: Geometry -> IO ByteString
 exportToWktIO g = withGeometry g $ \gPtr -> alloca $ \sPtrPtr -> do
-  void $ {#call OGR_G_ExportToWkt as ^ #} (castPtr gPtr) sPtrPtr
-  peekAndPack sPtrPtr
+  void $ {#call unsafe OGR_G_ExportToWkt as ^ #} (castPtr gPtr) sPtrPtr
+  peekCPLString sPtrPtr
 
 exportToWkt :: Geometry -> ByteString
 exportToWkt = unsafePerformIO . exportToWktIO
+{-# NOINLINE exportToWkt #-}
 
 exportToWkbIO :: WkbByteOrder -> Geometry -> IO ByteString
 exportToWkbIO bo g = withGeometry g $ \gPtr -> do
-  len <- liftM fromIntegral ({#call OGR_G_WkbSize as ^ #} (castPtr gPtr))
+  len <- liftM fromIntegral ({#call unsafe OGR_G_WkbSize as ^ #} (castPtr gPtr))
   buf <- mallocBytes len
-  void $ {#call OGR_G_ExportToWkb as ^ #} (castPtr gPtr) (fromEnumC bo) buf
+  void $ {#call unsafe OGR_G_ExportToWkb as ^ #}
+           (castPtr gPtr) (fromEnumC bo) buf
   unsafePackMallocCStringLen (castPtr buf, len)
 
 exportToWkb :: WkbByteOrder -> Geometry -> ByteString
 exportToWkb bo = unsafePerformIO . exportToWkbIO bo
+{-# NOINLINE exportToWkb #-}
 
 geomEqIO :: Geometry -> Geometry -> IO Bool
 geomEqIO a b = withGeometry a $ \aPtr -> withGeometry b $ \bPtr ->
-  liftM toBool ({#call OGR_G_Equals as ^#} (castPtr aPtr) (castPtr bPtr))
+  liftM toBool ({#call unsafe OGR_G_Equals as ^#} (castPtr aPtr) (castPtr bPtr))
+
+geometrySpatialReference
+  :: Geometry -> Maybe SpatialReference
+geometrySpatialReference g = unsafePerformIO $
+  withGeometry g $
+    {#call unsafe OGR_G_GetSpatialReference as ^#} >=>
+      maybeNewSpatialRefBorrowedHandle
 
 instance Show Geometry where
   show = unpack . exportToWkt
 
 instance Eq Geometry where
   a == b = unsafePerformIO (geomEqIO a b)
+
+transformWith :: Geometry -> CoordinateTransformation -> Maybe Geometry
+transformWith g ct = unsafePerformIO $ do
+  transformed <- withGeometry g cloneGeometry
+  withCoordinateTransformation ct $ \pCt ->
+    withGeometry transformed $ \pG -> do
+      err <- liftM toEnumC ({#call unsafe OGR_G_Transform as ^#} pG pCt)
+      return (if err==None then Just transformed else Nothing)
+
+transformTo :: Geometry -> SpatialReference -> Maybe Geometry
+transformTo g srs = unsafePerformIO $ do
+  transformed <- withGeometry g cloneGeometry
+  withSpatialReference srs $ \pSrs ->
+    withGeometry transformed $ \pG -> do
+      err <- liftM toEnumC ({#call unsafe OGR_G_TransformTo as ^#} pG pSrs)
+      return (if err==None then Just transformed else Nothing)

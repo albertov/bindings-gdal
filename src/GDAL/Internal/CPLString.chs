@@ -1,22 +1,29 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE BangPatterns #-}
 module GDAL.Internal.CPLString (
     OptionList
   , withOptionList
   , toOptionListPtr
   , fromOptionListPtr
+  , peekCPLString
 ) where
 
 import Control.Exception (bracket)
-import Control.Monad (forM, foldM)
+import Control.Monad (forM, foldM, liftM)
 
+import Data.ByteString (ByteString)
+import Data.ByteString.Unsafe (unsafePackCStringFinalizer)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Word (Word8)
 
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CChar(..))
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
+import Foreign.Storable (peek)
 
 import GDAL.Internal.Util (useAsEncodedCString, peekEncodedCString)
+import GDAL.Internal.CPLConv (cplFree)
 
 #include "cpl_string.h"
 
@@ -40,3 +47,12 @@ fromOptionListPtr ptr = do
   forM [0..n-1] $ \ix -> do
     s <- {#call unsafe CSLGetField as ^#} ptr ix >>= peekEncodedCString
     return $ T.break (/='=') s
+
+peekCPLString :: Ptr CString -> IO ByteString
+peekCPLString pptr = do
+  p <- liftM castPtr (peek pptr) :: IO (Ptr Word8)
+  let findLen !n = do
+        v <- peek (p `plusPtr` n) :: IO Word8
+        if v==0 then return n else findLen (n+1)
+  len <- findLen 0
+  unsafePackCStringFinalizer p len (cplFree p)

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module GDAL.OSRSpec (main, spec) where
 
 import Data.Either (isRight, isLeft)

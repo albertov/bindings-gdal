@@ -36,7 +36,7 @@ import GDAL (
   , GDALException(..)
   )
 import GDAL.OGR as OGR
-import GDAL.OSR (SpatialReference, fromEPSG)
+import GDAL.OSR
 
 import Paths_bindings_gdal
 
@@ -110,7 +110,7 @@ spec = setupAndTeardown $ do
       it "works with a single geometry field with srs" $ do
         check (FeatureDef { fdName   = "Barça Players"
                           , fdFields = mempty
-                          , fdGeom   = pointDef {gfdSrs = Just aSrs}
+                          , fdGeom   = pointDef {gfdSrs = Just srs23030}
                           , fdGeoms  = mempty})
 
       when canCreateMultipleGeometryFields $ do
@@ -125,7 +125,7 @@ spec = setupAndTeardown $ do
                             , fdFields = mempty
                             , fdGeom   = pointDef
                             , fdGeoms  = [( "another_geom"
-                                          , pointDef {gfdSrs = Just aSrs})]})
+                                          , pointDef {gfdSrs = Just srs23030})]})
     describe "layer CRUD" $ do
 
       it "can create and retrieve a feature" $ do
@@ -219,7 +219,7 @@ spec = setupAndTeardown $ do
         let eGeom = createFromWkt Nothing "im not wkt"
         eGeom `shouldBe` Left UnsupportedGeometryType
 
-      it "export is same as origin" $ do
+      it "export is same as original" $ do
         let Right g = createFromWkt Nothing wkt
             wkt     = "POINT (34 21)"
         exportToWkt g `shouldBe` wkt
@@ -236,13 +236,60 @@ spec = setupAndTeardown $ do
         eGeom `shouldBe` Left CorruptData
 
 
-    it "compares equal when equal" $ do
+    it "compares equal when equal with no srs" $ do
       createFromWkt Nothing "POINT (2 5)"
         `shouldBe` createFromWkt Nothing "POINT (2 5)"
+
+    it "compares equal when equal with srs" $ do
+      let Right srs = fromWkt (toWkt srs23030)
+      srs `shouldBe` srs23030
+      createFromWkt (Just srs) "POINT (2 5)"
+        `shouldBe` createFromWkt (Just srs23030) "POINT (2 5)"
 
     it "compares not equal when not equal" $ do
       createFromWkt Nothing "POINT (2 6)"
         `shouldNotBe` createFromWkt Nothing "POINT (2 5)"
+
+    describe "geometrySpatialReference" $ do
+
+      it "is Nothing when it has no srs" $ do
+        let Right g = createFromWkt Nothing "POINT (34 21)"
+        geometrySpatialReference g `shouldSatisfy` isNothing
+
+      it "is is the same as the one that was set" $ do
+        let Right g = createFromWkt (Just srs23030) "POINT (34 21)"
+        geometrySpatialReference g `shouldBe` Just srs23030
+
+    describe "transformWith" $ do
+
+      it "transforms a geometry without srs" $ do
+        let Right g         = createFromWkt Nothing "POINT (439466 4482586)"
+            Right expected  = createFromWkt (Just srs4326)
+                                "POINT (-3.715491503365956 40.489899869998304)"
+            Just coordTrans = coordinateTransformation srs23030 srs4326
+        case g `transformWith` coordTrans of
+          Nothing -> expectationFailure "Should have transformed the geom"
+          Just t  -> do
+            geometrySpatialReference t `shouldBe` Just srs4326
+            -- We compare WKT or else they won't match (TODO investigate why!)
+            --t  `shouldBe` expected
+            exportToWkt t  `shouldBe` exportToWkt expected
+
+    describe "transformTo" $ do
+
+      it "transforms a geometry" $ do
+        let Right g         = createFromWkt (Just srs23030)
+                                "POINT (439466 4482586)"
+            Right expected  = createFromWkt (Just srs4326)
+                                "POINT (-3.715491503365956 40.489899869998304)"
+        case g `transformTo` srs4326 of
+          Nothing -> expectationFailure "Should have transformed the geom"
+          Just t  -> do
+            geometrySpatialReference t `shouldBe` Just srs4326
+            -- We compare WKT or else they won't match (TODO investigate why!)
+            --t  `shouldBe` expected
+            exportToWkt t  `shouldBe` exportToWkt expected
+
 
   describe "OGRField instances" $
     forM_ (["Memory", "ESRI Shapefile"] :: [String]) $ \driverName -> do
@@ -330,8 +377,12 @@ aPoint :: Geometry
 aPoint = either exc id (createFromWkt Nothing "POINT (45 87)")
   where exc  = error . ("Unexpected createFromWkt error: " ++) . show
 
-aSrs :: SpatialReference
-aSrs = either exc id (fromEPSG 23030)
+srs23030 :: SpatialReference
+srs23030 = either exc id (fromEPSG 23030)
+  where exc = error . ("Unexpected fromEPSG error: " ++) . show
+
+srs4326 :: SpatialReference
+srs4326 = either exc id (fromEPSG 4326)
   where exc = error . ("Unexpected fromEPSG error: " ++) . show
 
 data TestFeature a

@@ -24,9 +24,11 @@ module GDAL.Internal.OSR (
   , getAngularUnits
   , getLinearUnits
 
+  , fromWktIO
   , withSpatialReference
   , withMaybeSRAsCString
   , withMaybeSpatialReference
+  , withCoordinateTransformation
   , newSpatialRefHandle
   , newSpatialRefBorrowedHandle
   , maybeNewSpatialRefHandle
@@ -39,18 +41,16 @@ module GDAL.Internal.OSR (
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Exception (catch)
-import Control.Monad (liftM, (>=>))
+import Control.Monad (liftM, (>=>), when, void)
 
-import Foreign.C.String (withCString, CString, peekCString)
+import Data.ByteString (ByteString)
+import Data.ByteString.Unsafe (unsafeUseAsCString)
+
+import Foreign.C.String (CString, peekCString)
 import Foreign.C.Types (CInt(..), CDouble(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr (
-    ForeignPtr
-  , withForeignPtr
-  , newForeignPtr
-  , newForeignPtr_
-  )
+import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (toBool)
 
@@ -59,22 +59,23 @@ import System.IO.Unsafe (unsafePerformIO)
 import GDAL.Internal.Util
 import GDAL.Internal.OGRError
 import GDAL.Internal.CPLError hiding (None)
+import GDAL.Internal.CPLString (peekCPLString)
 import GDAL.Internal.CPLConv (cplFree)
 
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
 
 instance Show SpatialReference where
-   show = toWkt
+   show = show . toWkt
 
-toWkt :: SpatialReference -> String
+toWkt :: SpatialReference -> ByteString
 toWkt s = exportWith fun s
   where
     fun s' p = {#call unsafe ExportToPrettyWkt as ^#} s' p 1
 
-toProj4 :: SpatialReference -> String
+toProj4 :: SpatialReference -> ByteString
 toProj4 = exportWith {#call unsafe ExportToProj4 as ^#}
 
-toXML :: SpatialReference -> String
+toXML :: SpatialReference -> ByteString
 toXML = exportWith fun
   where
     fun s' p = {#call unsafe ExportToXML as ^#} s' p (castPtr nullPtr)
@@ -82,19 +83,16 @@ toXML = exportWith fun
 exportWith
   :: (Ptr SpatialReference -> Ptr CString -> IO CInt)
   -> SpatialReference
-  -> String
+  -> ByteString
 exportWith fun s = unsafePerformIO $ alloca $ \ptr ->
   liftM (either (error "could not serialize SpatialReference") id) $
   checkOGRError
     (withSpatialReference s (\s' -> fun s' ptr))
-    (do str <- peek ptr
-        wkt <- peekCString str
-        cplFree str
-        return wkt)
+    (peekCPLString ptr)
 
 
-foreign import ccall "ogr_srs_api.h &OSRDestroySpatialReference"
-  c_destroySpatialReference :: FunPtr (Ptr SpatialReference -> IO ())
+foreign import ccall "ogr_srs_api.h &OSRRelease"
+  c_release :: FunPtr (Ptr SpatialReference -> IO ())
 
 newSpatialRefHandle
   :: Ptr SpatialReference -> IO SpatialReference
@@ -105,8 +103,7 @@ maybeNewSpatialRefHandle
   :: Ptr SpatialReference -> IO (Maybe SpatialReference)
 maybeNewSpatialRefHandle p
   | p==nullPtr = return Nothing
-  | otherwise  = (Just . SpatialReference)
-             <$> newForeignPtr c_destroySpatialReference p
+  | otherwise  = liftM (Just . SpatialReference) (newForeignPtr c_release p)
 
 newSpatialRefBorrowedHandle
   :: Ptr SpatialReference -> IO SpatialReference
@@ -116,26 +113,34 @@ newSpatialRefBorrowedHandle =
 
 maybeNewSpatialRefBorrowedHandle
   :: Ptr SpatialReference -> IO (Maybe SpatialReference)
-maybeNewSpatialRefBorrowedHandle p
-  | p==nullPtr = return Nothing
-  | otherwise  = liftM (Just . SpatialReference) (newForeignPtr_ p)
+maybeNewSpatialRefBorrowedHandle p = do
+  when (p /= nullPtr) (void ({#call unsafe OSRReference as ^#} p))
+  maybeNewSpatialRefHandle p
 
 emptySpatialRef :: IO SpatialReference
 emptySpatialRef =
   {#call unsafe NewSpatialReference as ^#} nullPtr >>= newSpatialRefHandle
 
-fromWkt, fromProj4, fromXML :: String -> Either OGRException SpatialReference
-fromWkt s = unsafePerformIO $
-  (withCString s $ \a ->
-    fmap Right
-      ({#call unsafe NewSpatialReference as ^#} a >>= newSpatialRefHandle))
-        `catch` (return . Left)
+fromWkt, fromProj4, fromXML
+  :: ByteString -> Either OGRException SpatialReference
+fromWkt = unsafePerformIO . (flip unsafeUseAsCString fromWktIO)
+{-# NOINLINE fromWkt #-}
+
+fromWktIO :: CString -> IO (Either OGRException SpatialReference)
+fromWktIO a =
+  (liftM Right
+    ({#call unsafe NewSpatialReference as ^#} a >>= newSpatialRefHandle))
+  `catch` (return . Left)
 
 fromProj4 = fromImporter importFromProj4
+{-# NOINLINE fromProj4 #-}
+
 fromXML = fromImporter importFromXML
+{-# NOINLINE fromXML #-}
 
 fromEPSG :: Int -> Either OGRException SpatialReference
 fromEPSG = fromImporter importFromEPSG
+{-# NOINLINE fromEPSG #-}
 
 fromImporter
   :: (SpatialReference -> a -> IO CInt)
@@ -150,13 +155,15 @@ fromImporter f s = unsafePerformIO $ do
 
 
 {#fun ImportFromProj4 as ^
-   {withSpatialReference* `SpatialReference', `String'} -> `CInt' id  #}
+   { withSpatialReference* `SpatialReference'
+   , unsafeUseAsCString* `ByteString'} -> `CInt' id  #}
 
 {#fun ImportFromEPSG as ^
    {withSpatialReference* `SpatialReference', `Int'} -> `CInt' id  #}
 
 {#fun ImportFromXML as ^
-   {withSpatialReference* `SpatialReference', `String'} -> `CInt' id  #}
+   { withSpatialReference* `SpatialReference'
+   , unsafeUseAsCString* `ByteString'} -> `CInt' id  #}
 
 {#fun pure unsafe IsGeographic as ^
    {withSpatialReference * `SpatialReference'} -> `Bool'#}
@@ -197,7 +204,7 @@ getUnitsWith fun s = unsafePerformIO $
 
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
 withMaybeSRAsCString Nothing    = ($ nullPtr)
-withMaybeSRAsCString (Just srs) = withCString (toWkt srs)
+withMaybeSRAsCString (Just srs) = unsafeUseAsCString (toWkt srs)
 
 withMaybeSpatialReference
   :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a
@@ -218,6 +225,7 @@ coordinateTransformation source target = unsafePerformIO $
       then return Nothing
       else liftM (Just . CoordinateTransformation)
                  (newForeignPtr c_destroyCT pCt)
+{-# NOINLINE coordinateTransformation #-}
 
 foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
   c_destroyCT :: FunPtr (Ptr CoordinateTransformation -> IO ())
