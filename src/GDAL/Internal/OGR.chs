@@ -165,7 +165,7 @@ newDataSourceHandle :: DataSourceH -> GDAL s (DataSource s t)
 newDataSourceHandle p
   | p==nullDataSourceH = throwBindingException NullDataSource
   | otherwise          = do
-      registerFinalizer (void ({#call unsafe ReleaseDataSource as ^#} p))
+      registerFinalizer (void ({#call unsafe OGR_DS_Destroy as ^#} p))
       return (DataSource p)
 
 type Driver = String

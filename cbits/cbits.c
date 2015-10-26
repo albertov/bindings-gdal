@@ -4,7 +4,7 @@ typedef ErrorCell* error_stack;
 
 static error_stack get_stack()
 {
-  return (error_stack) CPLGetErrorHandlerUserData();
+  return CPLGetErrorHandlerUserData();
 }
 
 static void error_handler(CPLErr errClass, int errNo, const char *msg);
@@ -58,15 +58,17 @@ void destroy_ErrorCell(ErrorCell cell)
 
 static void error_handler(CPLErr errClass, int errNo, const char *msg)
 {
-  ErrorCell cell = malloc(sizeof(struct error_cell));
-  if (cell) {
-    cell->errClass = errClass;
-    cell->errNo    = errNo;
-    cell->msg      = strdup(msg);
-  }
   error_stack stack = get_stack();
-  cell->next = *stack;
-  *stack = cell;
+  if (stack) {
+    ErrorCell cell = malloc(sizeof(struct error_cell));
+    if (cell) {
+      cell->errClass = errClass;
+      cell->errNo    = errNo;
+      cell->msg      = strdup(msg);
+      cell->next     = *stack;
+      *stack         = cell;
+    }
+  }
 }
 
 static void destroy_stack (error_stack stack)
@@ -91,6 +93,9 @@ static void clear_stack_ (error_stack stack)
 
 static error_stack new_stack()
 {
-  error_stack stack = calloc(1, sizeof(error_stack));
+  error_stack stack = malloc(sizeof(error_stack));
+  if (stack) {
+    *stack = NULL;
+  }
   return stack;
 }

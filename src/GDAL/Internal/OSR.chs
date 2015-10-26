@@ -24,6 +24,7 @@ module GDAL.Internal.OSR (
   , getAngularUnits
   , getLinearUnits
 
+  , cleanup
   , fromWktIO
   , withSpatialReference
   , withMaybeSRAsCString
@@ -40,7 +41,7 @@ module GDAL.Internal.OSR (
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (catch)
+import Control.Exception (catch, onException)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
@@ -52,7 +53,7 @@ import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Utils (toBool)
+import Foreign.Marshal.Utils (toBool, with)
 
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -84,11 +85,11 @@ exportWith
   :: (Ptr SpatialReference -> Ptr CString -> IO CInt)
   -> SpatialReference
   -> ByteString
-exportWith fun s = unsafePerformIO $ alloca $ \ptr ->
-  liftM (either (error "could not serialize SpatialReference") id) $
-  checkOGRError
-    (withSpatialReference s (\s' -> fun s' ptr))
-    (peekCPLString ptr)
+exportWith fun s = unsafePerformIO $ with nullPtr $ \ptr ->
+  (do checkReturns_ ((==None).toEnumC)
+        (withSpatialReference s (\s' -> fun s' ptr))
+      peekCPLString ptr
+  ) `onException` (peek ptr >>= (\p -> when (p/=nullPtr) (cplFree p)))
 
 
 foreign import ccall "ogr_srs_api.h &OSRRelease"
@@ -229,3 +230,5 @@ coordinateTransformation source target = unsafePerformIO $
 
 foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
   c_destroyCT :: FunPtr (Ptr CoordinateTransformation -> IO ())
+
+{#fun OSRCleanup as cleanup {} -> `()'#}

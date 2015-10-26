@@ -30,10 +30,9 @@ module GDAL (
   , ContinueOrStop (..)
 
   , runGDAL
+  , withGDAL
   , isNoData
   , fromValue
-  , allRegister
-  , destroyDriverManager
   , create
   , createMem
   , flushCache
@@ -80,8 +79,20 @@ module GDAL (
   , version
 ) where
 
+import Control.Exception (finally)
+
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
 import GDAL.Internal.CPLProgress
-import GDAL.Internal.GDAL
+import GDAL.Internal.GDAL as GDAL
 import GDAL.Internal.Types
+
+import qualified GDAL.Internal.OGR as OGR
+import qualified GDAL.Internal.OSR as OSR
+
+-- | Performs process-wide initialization and cleanup
+--   Should only be called from the main thread
+withGDAL :: IO a -> IO a
+withGDAL a =
+    (GDAL.allRegister >> OGR.registerAll >> a)
+      `finally` (OGR.cleanupAll >> GDAL.destroyDriverManager >> OSR.cleanup)

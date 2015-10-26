@@ -164,7 +164,7 @@ withWarpOptionsH ds wo@WarpOptions{..}
         listToArray (map (fromIntegral . biSrc) woBands)
       {#set GDALWarpOptions->panDstBands #} p =<<
         listToArray (map (fromIntegral . biDst) woBands)
-      -- ignores finalizer since destroyWarpOptions takes care of it
+      -- ignores finalizer since GDALClose from WarpedVRT takes care of it
       (t, tArg, _) <- createTransformerAndArg woTransfomer
       {#set GDALWarpOptions->pfnTransformer #} p (getTransformerFunPtr t)
       {#set GDALWarpOptions->pTransformerArg #} p (castPtr tArg)

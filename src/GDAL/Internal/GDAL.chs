@@ -104,8 +104,9 @@ import Foreign.C.String (withCString, CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrArray)
+import Foreign.ForeignPtr (withForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Array (allocaArray)
 import Foreign.Marshal.Utils (toBool, fromBool, with)
 
 import System.IO.Unsafe (unsafePerformIO)
@@ -628,8 +629,7 @@ ifoldlM' f initialAcc band = do
   checkType band (Proxy :: Proxy a)
   liftIO $ do
     mNodata <- bandNodataValueIO (unBand band)
-    fp <- mallocForeignPtrArray (sx*sy)
-    withForeignPtr fp $ \ptr -> do
+    allocaArray (sx*sy) $ \ptr -> do
       let toValue = case mNodata of
                       Nothing -> Value
                       Just nd ->
