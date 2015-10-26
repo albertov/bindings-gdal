@@ -5,9 +5,10 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module GDAL.OGRSpec (main, spec, setupAndTeardown) where
 
 #include "bindings.h"
+
+module GDAL.OGRSpec (main, spec, setupAndTeardown) where
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (void, when, forM_)
@@ -353,16 +354,17 @@ instance OGRField a => OGRFeatureDef (TestFeature a) where
     , fdGeoms  = mempty}
 
 ogrFieldSpec
-  :: forall a. ( OGRFeatureDef (TestFeature (Maybe a))
-               , OGRFeatureDef (TestFeature a)
-               , Typeable a
-               , OGRField a
-               , Typeable (Maybe a)
-               , Eq (Maybe a)
-               , Eq a
-               , Show (Maybe a)
-               , Show a
-               )
+  :: forall a. (
+    OGRFeatureDef (TestFeature (Maybe a))
+  , OGRFeatureDef (TestFeature a)
+  , Typeable a
+  , OGRField a
+  , Typeable (Maybe a)
+  , Eq (Maybe a)
+  , Eq a
+  , Show (Maybe a)
+  , Show a
+  )
   => String -> a -> SpecWith (Arg (IO ()))
 ogrFieldSpec driverName v = do
   let typeName = show (typeOf (undefined :: a))
@@ -389,4 +391,3 @@ ogrFieldSpec driverName v = do
             -- driver does not support it, oh well...
             warn ("Not supported by '"++driverName++"' driver: " ++ tyName)
           Left e  -> throwM e
-

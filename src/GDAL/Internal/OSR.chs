@@ -2,6 +2,7 @@
 
 module GDAL.Internal.OSR (
     SpatialReference
+  , CoordinateTransformation
 
   , fromWkt
   , fromProj4
@@ -11,6 +12,8 @@ module GDAL.Internal.OSR (
   , toWkt
   , toProj4
   , toXML
+
+  , coordinateTransformation
 
   , isGeographic
   , isLocal
@@ -29,6 +32,8 @@ module GDAL.Internal.OSR (
   , maybeNewSpatialRefHandle
   , maybeNewSpatialRefBorrowedHandle
 ) where
+
+#include "ogr_srs_api.h"
 
 {# context lib = "gdal" prefix = "OSR" #}
 
@@ -55,8 +60,6 @@ import GDAL.Internal.Util
 import GDAL.Internal.OGRError
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLConv (cplFree)
-
-#include "ogr_srs_api.h"
 
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
 
@@ -200,3 +203,21 @@ withMaybeSpatialReference
   :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a
 withMaybeSpatialReference Nothing  = ($ nullPtr)
 withMaybeSpatialReference (Just s) = withSpatialReference s
+
+{#pointer OGRCoordinateTransformationH as CoordinateTransformation
+  foreign newtype#}
+
+coordinateTransformation
+  :: SpatialReference -> SpatialReference -> Maybe CoordinateTransformation
+coordinateTransformation source target = unsafePerformIO $
+  withSpatialReference source $ \pSource ->
+  withSpatialReference target $ \pTarget -> do
+    pCt <- {#call unsafe OCTNewCoordinateTransformation as ^#}
+            pSource pTarget
+    if pCt == nullPtr
+      then return Nothing
+      else liftM (Just . CoordinateTransformation)
+                 (newForeignPtr c_destroyCT pCt)
+
+foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
+  c_destroyCT :: FunPtr (Ptr CoordinateTransformation -> IO ())

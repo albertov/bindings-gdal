@@ -326,7 +326,7 @@ sourceFromLayer getHandle = bracketP initialize cleanUp getFeatures
     cleanUp = void . {#call OGR_L_RollbackTransaction as ^#} . fst
 
 
--- | GDAL < 1.11 only supports 1 geometry field and associates it the layer
+-- | GDAL < 1.11 only supports 1 geometry field and associates it to the layer
 layerGeomFieldDef :: LayerH -> IO GeomFieldDef
 layerGeomFieldDef p =
   GeomFieldDef
@@ -365,8 +365,8 @@ executeSQL dialect query mSpatialFilter ds = do
     {#call unsafe OGR_DS_ReleaseResultSet as ^#} (unDataSource ds) p
   return (Layer p)
   where
-    selectExc GDALException{..} | gdalErrNum==AppDefined = Just gdalErrMsg
-    selectExc _                                          = Nothing
+    selectExc GDALException{gdalErrNum=AppDefined,..} = Just gdalErrMsg
+    selectExc _                                       = Nothing
     execute =
       throwIfError "executeSQL" $
       liftIO $

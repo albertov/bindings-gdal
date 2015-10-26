@@ -1,5 +1,6 @@
 module GDAL.OSR (
     SpatialReference
+  , CoordinateTransformation
 
   , fromWkt
   , fromProj4
@@ -18,5 +19,7 @@ module GDAL.OSR (
 
   , getAngularUnits
   , getLinearUnits
+
+  , CoordinateTransformation
 ) where
 import GDAL.Internal.OSR
