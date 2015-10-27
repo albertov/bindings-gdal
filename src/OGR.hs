@@ -4,8 +4,8 @@ module OGR (
   , ApproxOK (..)
   , Layer
   , FeatureSource
-  , FeatureCreator
-  , FeatureUpdater
+  , FeatureConduit
+  , FeatureSink
   , RODataSource
   , RWDataSource
   , ROLayer
@@ -71,14 +71,14 @@ module OGR (
   , getLayer
   , getLayerByName
 
-  , getFeatureSource
-  , getFeatureSourceByName
+  , sourceFeatures
+  , sourceFeaturesByName
 
-  , getFeatureCreator
-  , getFeatureCreatorByName
+  , conduitCreateFeatures
+  , conduitCreateFeaturesByName
 
-  , getFeatureUpdater
-  , getFeatureUpdaterByName
+  , sinkUpdateFeatures
+  , sinkUpdateFeaturesByName
 
   , syncToDisk
 
@@ -93,7 +93,7 @@ module OGR (
   , createFeatureWithFid
   , createFeature_
   , getFeature
-  , setFeature
+  , updateFeature
   , deleteFeature
 ) where
 

@@ -76,9 +76,9 @@ module GDAL.Internal.GDAL (
 
   , unDataset
   , unBand
-  , newDerivedDatasetHandle
   , version
   , checkCPLErr
+  , newDatasetHandle
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
@@ -238,8 +238,8 @@ create
   -> GDAL s (Dataset s ReadWrite)
 create _   _    _          _     GDT_Unknown _       =
   throwBindingException UnknownRasterDataType
-create drv path (XY nx ny) bands dtype       options = do
-  ptr <- liftIO $ withCString path $ \path' -> do
+create drv path (XY nx ny) bands dtype  options =
+  newDatasetHandle $ withCString path $ \path' -> do
     let nx'    = fromIntegral nx
         ny'    = fromIntegral ny
         bands' = fromIntegral bands
@@ -248,7 +248,6 @@ create drv path (XY nx ny) bands dtype       options = do
     withOptionList options $ \opts -> do
       validateCreationOptions d opts
       {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' opts
-  newDatasetHandle ptr
 
 openReadOnly :: String -> GDAL s (RODataset s)
 openReadOnly p = openWithMode GA_ReadOnly p
@@ -257,10 +256,11 @@ openReadWrite :: String -> GDAL s (RWDataset s)
 openReadWrite p = openWithMode GA_Update p
 
 openWithMode :: Access -> String -> GDAL s (Dataset s t)
-openWithMode m path = do
-  dsH <- throwIfError "open" $
-         liftIO $ withCString path $ flip {#call GDALOpen as ^#} (fromEnumC m)
-  newDatasetHandle dsH
+openWithMode m path =
+  newDatasetHandle $
+  throwIfError "open" $
+  withCString path $
+  flip {#call GDALOpen as ^#} (fromEnumC m)
 
 unsafeToReadOnly :: RWDataset s -> GDAL s (RODataset s)
 unsafeToReadOnly ds = flushCache ds >> return (coerce ds)
@@ -268,34 +268,23 @@ unsafeToReadOnly ds = flushCache ds >> return (coerce ds)
 createCopy
   :: Driver -> String -> Dataset s t -> Bool -> OptionList
   -> Maybe ProgressFun -> GDAL s (RWDataset s)
-createCopy driver path ds strict options progressFun = do
-  pDs <- liftIO $ withProgressFun CopyStopped progressFun $ \pFunc -> do
-           d <- driverByName driver
-           withOptionList options $ \o -> do
-             validateCreationOptions d o
-             withCString path $ \p ->
-               {#call GDALCreateCopy as ^#}
-                 d p (unDataset ds) (fromBool strict) o pFunc (castPtr nullPtr)
-  newDatasetHandle pDs
+createCopy driver path ds strict options progressFun =
+  newDatasetHandle $
+  withProgressFun CopyStopped progressFun $ \pFunc -> do
+    d <- driverByName driver
+    withOptionList options $ \o -> do
+      validateCreationOptions d o
+      withCString path $ \p ->
+        {#call GDALCreateCopy as ^#}
+          d p (unDataset ds) (fromBool strict) o pFunc (castPtr nullPtr)
 
 
-newDatasetHandle :: DatasetH -> GDAL s (Dataset s t)
-newDatasetHandle dh
-  | dh==nullDatasetH = throwBindingException NullDataset
-  | otherwise        = do
-      registerFinalizer (safeCloseDataset dh)
-      return (Dataset dh)
+newDatasetHandle :: IO DatasetH -> GDAL s (Dataset s t)
+newDatasetHandle act = liftM snd $ allocate alloc free
+  where
+    alloc = liftM Dataset (checkReturns (/=nullDatasetH) act)
+    free  = {#call GDALClose as ^#} . unDataset
 
-newDerivedDatasetHandle
-  :: Dataset s t' -> DatasetH -> GDAL s (Dataset s t)
-newDerivedDatasetHandle _ dh
-  | dh==nullDatasetH = throwBindingException NullDataset
-  | otherwise        = do
-      registerFinalizer (safeCloseDataset dh)
-      return (Dataset dh)
-
-safeCloseDataset :: DatasetH -> IO ()
-safeCloseDataset = {#call GDALClose as ^#}
 
 createMem
   :: Size -> Int -> DataType -> OptionList -> GDAL s (Dataset s ReadWrite)

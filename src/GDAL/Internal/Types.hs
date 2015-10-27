@@ -30,18 +30,22 @@ module GDAL.Internal.Types (
   , isNoData
   , fromValue
   , runGDAL
-  , registerFinalizer
+  , allocate
+  , unprotect
+  , release
 ) where
 
 import Control.Applicative (Applicative(..), liftA2)
 import Control.DeepSeq (NFData(rnf))
-import Control.Monad (liftM, void)
+import Control.Monad (liftM)
 import Control.Monad.Base (MonadBase)
 import Control.Monad.Trans.Resource (
     ResourceT
   , MonadResource
   , runResourceT
-  , register
+  , allocate
+  , release
+  , unprotect
   )
 import Control.Monad.Catch (
     MonadThrow(..)
@@ -51,7 +55,6 @@ import Control.Monad.Catch (
   )
 import Control.Monad.IO.Class (MonadIO(..))
 
-import Data.Text (Text)
 import Data.Typeable (Typeable)
 import Data.Coerce (coerce)
 import Data.Conduit (Conduit, Sink, Source)
@@ -296,7 +299,3 @@ deriving instance MonadResource (GDAL s)
 runGDAL :: (forall s. GDAL s a) -> IO (Either GDALException a)
 runGDAL (GDAL a) = withErrorHandler $ runResourceT $
     (liftM Right a) `catch` (return . Left)
-
-
-registerFinalizer :: IO () -> GDAL s ()
-registerFinalizer = GDAL . void . register

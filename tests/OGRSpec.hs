@@ -156,7 +156,7 @@ spec = setupAndTeardown $ do
             l <- createLayer ds StrictOK []
             fid <- createFeature l feat
             getFeature l fid >>= (`shouldBe` Just feat)
-            setFeature l fid feat2
+            updateFeature l fid feat2
             getFeature l fid >>= (`shouldBe` Just feat2)
 
       withDir "can retrieve features with less fields than present in layer" $

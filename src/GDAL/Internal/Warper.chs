@@ -220,7 +220,7 @@ createWarpedVRT
   -> GDAL s (RODataset s)
 createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
   options'' <- setOptionDefaults srcDs Nothing options'
-  newDsPtr <- liftIO $
+  oDs <- newDatasetHandle $
     withWarpOptionsH srcDs options'' $ \opts ->
     with geotransform $ \gt -> do
       pArg <- {#get GDALWarpOptions->pTransformerArg #} opts
@@ -228,7 +228,6 @@ createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
         {#call GDALSetGenImgProjTransformerDstGeoTransform as ^#} pArg
           (castPtr gt)
       {#call GDALCreateWarpedVRT as ^#} dsPtr nPixels' nLines' (castPtr gt) opts
-  oDs <- newDerivedDatasetHandle srcDs newDsPtr
   setDstNodata oDs options''
   unsafeToReadOnly oDs
   where
