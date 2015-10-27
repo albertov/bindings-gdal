@@ -1,4 +1,4 @@
-module GDAL.OSR (
+module OSR (
     SpatialReference
   , CoordinateTransformation
 

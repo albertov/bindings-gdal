@@ -21,7 +21,7 @@ import System.FilePath (joinPath)
 import System.Mem (performMajorGC)
 
 import GDAL
-import GDAL.OSR
+import OSR
 
 import TestUtils
 

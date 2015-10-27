@@ -8,7 +8,7 @@
 
 #include "bindings.h"
 
-module GDAL.OGRSpec (main, spec, setupAndTeardown) where
+module OGRSpec (main, spec, setupAndTeardown) where
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (void, when, forM_)
@@ -16,6 +16,8 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Control.Monad.Catch (try, throwM)
 
 import Data.ByteString (ByteString)
+import Data.Conduit (($$))
+import qualified Data.Conduit.List as CL
 import Data.Either (isRight)
 import Data.Int
 import Data.Word
@@ -35,8 +37,8 @@ import GDAL (
   , ErrorNum(..)
   , GDALException(..)
   )
-import GDAL.OGR as OGR
-import GDAL.OSR
+import OGR
+import OSR
 
 import Paths_bindings_gdal
 
@@ -126,33 +128,36 @@ spec = setupAndTeardown $ do
                             , fdGeom   = pointDef
                             , fdGeoms  = [( "another_geom"
                                           , pointDef {gfdSrs = Just srs23030})]})
+
     describe "layer CRUD" $ do
+      forM_ (["Memory", "ESRI Shapefile"] :: [String]) $ \driverName -> do
+        describe ("with " ++ driverName ++ " driver") $ do
 
-      it "can create and retrieve a feature" $ do
-        let feat = TestFeature aPoint ("some data" :: String)
-        ds <- createMem []
-        l <- createLayer ds StrictOK []
-        fid <- createFeature l feat
-        getFeature l fid >>= (`shouldBe` Just feat)
+          withDir "can create and retrieve a feature" $ \tmpDir -> do
+            let feat = TestFeature aPoint ("some data" :: String)
+            ds <- create driverName (joinPath [tmpDir, "test"]) []
+            l <- createLayer ds StrictOK []
+            fid <- createFeature l feat
+            getFeature l fid >>= (`shouldBe` Just feat)
 
-      it "can create and delete a feature" $ do
-        let feat = TestFeature aPoint ("some data" :: String)
-        ds <- createMem []
-        l <- createLayer ds StrictOK []
-        fid <- createFeature l feat
-        getFeature l fid >>= (`shouldSatisfy` isJust)
-        deleteFeature l fid
-        getFeature l fid >>= (`shouldSatisfy` isNothing)
+          withDir "can create and delete a feature" $ \tmpDir -> do
+            let feat = TestFeature aPoint ("some data" :: String)
+            ds <- create driverName (joinPath [tmpDir, "test"]) []
+            l <- createLayer ds StrictOK []
+            fid <- createFeature l feat
+            getFeature l fid >>= (`shouldSatisfy` isJust)
+            deleteFeature l fid
+            getFeature l fid >>= (`shouldSatisfy` isNothing)
 
-      it "can create and update a feature" $ do
-        let feat  = TestFeature aPoint ("some data" :: String)
-            feat2 = feat {tfData="other data"}
-        ds <- createMem []
-        l <- createLayer ds StrictOK []
-        fid <- createFeature l feat
-        getFeature l fid >>= (`shouldBe` Just feat)
-        setFeature l fid feat2
-        getFeature l fid >>= (`shouldBe` Just feat2)
+          withDir "can create and update a feature" $ \tmpDir -> do
+            let feat  = TestFeature aPoint ("some data" :: String)
+                feat2 = feat {tfData="other data"}
+            ds <- create driverName (joinPath [tmpDir, "test"]) []
+            l <- createLayer ds StrictOK []
+            fid <- createFeature l feat
+            getFeature l fid >>= (`shouldBe` Just feat)
+            setFeature l fid feat2
+            getFeature l fid >>= (`shouldBe` Just feat2)
 
       withDir "can retrieve features with less fields than present in layer" $
         \tmpDir -> do
@@ -197,14 +202,20 @@ spec = setupAndTeardown $ do
 
   describe "executeSQL" $ do
 
-    it "can execute a valid query with DefaultDialect" $ do
+    it "can execute a valid query with DefaultDialect" $ ((do
       ds <- getShapePath >>= openReadOnly
-      void $ executeSQL DefaultDialect "SELECT * FROM fondo" Nothing ds
+      let src = executeSQL DefaultDialect "SELECT * FROM fondo" Nothing ds
+          src :: FeatureSource s Feature
+      fs <- src $$ CL.consume
+      length fs `shouldBe` 2) :: forall s. GDAL s ())
 
-    it "throws error on invalid query" $ do
+    it "throws error on invalid query" $ ((do
       ds <- getShapePath >>= openReadOnly
-      (executeSQL DefaultDialect "dis is NoSQL!" Nothing ds)
+      let src = executeSQL DefaultDialect "dis is NoSQL!" Nothing ds
+          src :: FeatureSource s Feature
+      (src $$ CL.consume)
         `shouldThrow` (\e -> case e of {SQLQueryError _ -> True; _ -> False})
+      ) :: forall s. GDAL s ())
 
 
   describe "Geometry" $ do
@@ -326,12 +337,10 @@ spec = setupAndTeardown $ do
         ogrFieldSpec driverName (3.4 :: Double)
         ogrFieldSpec driverName (3.4 :: Float)
 
-        if driverName == "ESRI Shapefile"
-           then it "" $
-                  warn "Need to fix empty non-nullable strings on shapefile"
-           else do
-             ogrFieldSpec driverName (mempty :: Text)
-             ogrFieldSpec driverName (mempty :: String)
+#if SUPPORTS_NULLABLE_FIELD_DEFS
+        ogrFieldSpec driverName (mempty :: Text)
+        ogrFieldSpec driverName (mempty :: String)
+#endif
         ogrFieldSpec driverName ("foo" :: Text)
         ogrFieldSpec driverName ("foo" :: String)
 

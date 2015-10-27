@@ -22,7 +22,13 @@ source-repository head
 library
   build-tools:       c2hs >= 0.25
   hs-source-dirs:    src
-  exposed-modules:   GDAL.Internal.Types
+  exposed-modules:   OGR
+                   , OSR
+                   , GDAL
+                   , GDAL.Algorithms
+                   , GDAL.Warper
+
+                   , GDAL.Internal.Types
                    , GDAL.Internal.Util
                    , GDAL.Internal.CPLString
                    , GDAL.Internal.CPLError
@@ -37,11 +43,6 @@ library
                    , GDAL.Internal.GDAL
                    , GDAL.Internal.Algorithms
                    , GDAL.Internal.Warper
-                   , GDAL.OGR
-                   , GDAL.OSR
-                   , GDAL.Algorithms
-                   , GDAL.Warper
-                   , GDAL
   build-depends:     base >=4.5 && < 5
                    , vector
                    , conduit
@@ -88,13 +89,13 @@ test-suite spec
                   , conduit
   hs-source-dirs:   tests
   main-is:          Main.hs
-  other-modules:    GDALSpec
-                  , Spec
-                  , TestUtils
-                  , GDAL.OSRSpec
-                  , GDAL.OGRSpec
+  other-modules:    Spec
+                  , GDALSpec
+                  , OSRSpec
+                  , OGRSpec
                   , GDAL.WarperSpec
                   , Paths_bindings_gdal
+                  , TestUtils
   default-language: Haskell2010
   ghc-options:     -Wall -rtsopts -threaded -with-rtsopts=-N
   default-extensions: CPP

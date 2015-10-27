@@ -13,6 +13,9 @@
 module GDAL.Internal.Types (
     Value(..)
   , GDAL
+  , GDALConduit
+  , GDALSource
+  , GDALSink
   , Window (..)
   , XY (..)
   , Size
@@ -51,6 +54,7 @@ import Control.Monad.IO.Class (MonadIO(..))
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import Data.Coerce (coerce)
+import Data.Conduit (Conduit, Sink, Source)
 import Data.Word (Word8)
 
 import qualified Data.Vector.Storable as St
@@ -62,6 +66,11 @@ import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (Storable(..))
 
 import GDAL.Internal.CPLError
+
+
+type GDALConduit s i o = Conduit i (GDAL s) o
+type GDALSource s o = Source (GDAL s) o
+type GDALSink s i = Sink i (GDAL s)
 
 data AccessMode = ReadOnly | ReadWrite
 

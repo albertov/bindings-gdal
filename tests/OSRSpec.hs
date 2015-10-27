@@ -1,10 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
-module GDAL.OSRSpec (main, spec) where
+module OSRSpec (main, spec) where
 
 import Data.Either (isRight, isLeft)
 import TestUtils
 
-import GDAL.OSR
+import OSR
 
 main :: IO ()
 main = hspec spec

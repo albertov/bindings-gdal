@@ -1,6 +1,9 @@
 module GDAL (
     GDAL
   , GDALType (..)
+  , GDALConduit
+  , GDALSource
+  , GDALSink
   , DataType (..)
   , XY (..)
   , Window (..)
@@ -67,7 +70,7 @@ module GDAL (
   , setBandNodataValue
   , getBand
   , readBand
-  , readBandPure
+  , unsafeReadBand
   , readBandBlock
   , writeBand
   , writeBandBlock

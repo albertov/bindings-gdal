@@ -10,7 +10,7 @@ import qualified Data.Vector.Unboxed as U
 import System.FilePath (joinPath)
 
 import GDAL
-import GDAL.OSR
+import OSR
 import GDAL.Warper
 import GDAL.Algorithms
 

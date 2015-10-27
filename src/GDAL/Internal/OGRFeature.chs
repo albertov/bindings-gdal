@@ -18,14 +18,16 @@ module GDAL.Internal.OGRFeature (
   , FieldType (..)
   , Field (..)
   , Feature (..)
-  , FeatureH (..)
-  , FieldDefnH (..)
-  , FeatureDefnH (..)
   , Justification (..)
 
   , FeatureDef (..)
   , GeomFieldDef (..)
   , FieldDef (..)
+
+  , FeatureH (..)
+  , FieldDefnH (..)
+  , FeatureDefnH (..)
+
   , fieldTypedAs
   , (.:)
   , (.=)

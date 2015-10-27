@@ -8,3 +8,5 @@ dist
 cabal-dev
 .stack-work
 *.bak
+codex.tags
+hscope.out
