@@ -36,8 +36,13 @@ module OGR (
 
   , createFromWkt
   , createFromWkb
+
   , exportToWkt
   , exportToWkb
+  , exportToGml
+  , exportToKml
+  , exportToJson
+
   , geometrySpatialReference
   , geometryType
   , geometryEnvelope

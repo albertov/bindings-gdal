@@ -41,7 +41,7 @@ module GDAL.Internal.OSR (
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (catch, onException)
+import Control.Exception (catch)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
@@ -85,11 +85,8 @@ exportWith
   :: (Ptr SpatialReference -> Ptr CString -> IO CInt)
   -> SpatialReference
   -> ByteString
-exportWith fun s = unsafePerformIO $ with nullPtr $ \ptr ->
-  (do checkReturns_ ((==None).toEnumC)
-        (withSpatialReference s (\s' -> fun s' ptr))
-      peekCPLString ptr
-  ) `onException` (peek ptr >>= (\p -> when (p/=nullPtr) (cplFree p)))
+exportWith fun s = unsafePerformIO $ peekCPLString $ \ptr ->
+  checkReturns_ ((==None).toEnumC) (withSpatialReference s (\s' -> fun s' ptr))
 
 
 foreign import ccall "ogr_srs_api.h &OSRRelease"

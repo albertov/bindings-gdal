@@ -12,7 +12,7 @@ module GDAL.Internal.CPLConv (
   ) where
 
 import Control.DeepSeq (NFData(rnf))
-import Control.Exception (Exception(..))
+import Control.Exception (Exception(..), bracketOnError)
 import Control.Monad (liftM, when)
 
 import Data.Typeable (Typeable)
@@ -48,11 +48,13 @@ cplMallocArray nElems = do
 {-# INLINE cplMallocArray #-}
 
 cplNew :: forall a. Storable a => a -> IO (Ptr a)
-cplNew v = cplMalloc >>= (\p -> poke p v >> return p)
+cplNew v = bracketOnError cplMalloc cplFree (\p -> poke p v >> return p)
 {-# INLINE cplNew #-}
 
 cplFree :: Ptr a -> IO ()
-cplFree = {#call unsafe VSIFree as ^#} . castPtr
+cplFree p
+  | p /= nullPtr = {#call unsafe VSIFree as ^#} (castPtr p)
+  | otherwise    = return ()
 {-# INLINE cplFree #-}
 
 foreign import ccall unsafe "cpl_vsi.h &VSIFree"
@@ -61,7 +63,7 @@ foreign import ccall unsafe "cpl_vsi.h &VSIFree"
 listToArray :: Storable a => [a] -> IO (Ptr a)
 listToArray [] = return nullPtr
 listToArray l = do
-  ptr <- cplMallocArray (length l)
-  mapM_ (\(i,v) -> pokeElemOff ptr i v) (zip [0..] l)
-  return ptr
+  bracketOnError (cplMallocArray (length l)) cplFree $ \ptr -> do
+    mapM_ (\(i,v) -> pokeElemOff ptr i v) (zip [0..] l)
+    return ptr
 {-# INLINE listToArray #-}

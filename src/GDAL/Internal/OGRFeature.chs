@@ -425,10 +425,8 @@ featureFromHandle FeatureDef{..} act =
                   maybe (throwBindingException (FieldParseError fldName))
                         (\f -> return (fldName, f))
             else return (fldName, OGRNullField)
-        geomRef <- {#call unsafe OGR_F_StealGeometry as ^#} pF
-        geom <- if geomRef /= nullPtr
-                  then liftM Just (newGeometryHandle geomRef)
-                  else return Nothing
+        geom <- maybeNewGeometryHandle
+                  ({#call unsafe OGR_F_StealGeometry as ^#} pF)
 #if SUPPORTS_MULTI_GEOM_FIELDS
         geoms <- flip imapM fdGeoms $ \ix (gfdName, _) -> do
           pG <- {#call unsafe OGR_F_GetGeomFieldRef as ^#} pF (ix + 1)
