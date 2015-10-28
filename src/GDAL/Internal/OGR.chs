@@ -488,7 +488,7 @@ layerName =
 
 layerExtent :: Layer s t a -> GDAL s Envelope
 layerExtent l = liftIO $ alloca $ \pE -> do
-  {#call OGR_L_GetExtent as ^#} (unLayer l) pE 1
+  checkOGRErr ({#call OGR_L_GetExtent as ^#} (unLayer l) pE 1)
   peek pE
 
 layerFeatureDef :: Layer s t a -> GDAL s FeatureDef

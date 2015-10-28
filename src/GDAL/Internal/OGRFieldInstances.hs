@@ -26,18 +26,24 @@ import GDAL.Internal.OGRFeature
 
 #define ogrField(ty,oft,tyCon,to,from)                                         \
 instance OGRField (ty) where {                                                 \
-  fieldDef _          = FieldDef oft Nothing Nothing Nothing False             \
+  {-# INLINE fieldDef #-}                                                      \
+; {-# INLINE toField #-}                                                       \
+; {-# INLINE fromField #-}                                                     \
+; fieldDef _          = FieldDef oft Nothing Nothing Nothing False             \
 ; toField             = tyCon . from                                           \
 ; fromField (tyCon v) = Right (to v)                                           \
 ; fromField f         = defaultFromField f};
 
 #define ogrMonoidField(ty,oft,tyCon,to,from)                                   \
 instance OGRField (ty) where {                                                 \
-  fieldDef _          = FieldDef oft Nothing Nothing Nothing False             \
-; toField             = tyCon . from                                           \
+  {-# INLINE fieldDef #-}                                                      \
+; {-# INLINE toField #-}                                                       \
+; {-# INLINE fromField #-}                                                     \
+; fieldDef _             = FieldDef oft Nothing Nothing Nothing False          \
+; toField                = tyCon . from                                        \
 ; fromField (tyCon v)    = Right (to v)                                        \
 ; fromField OGRNullField = Right mempty                                        \
-; fromField f         = defaultFromField f};
+; fromField f            = defaultFromField f};
 
 #define integralElem(A,B,C) ogrField (A,B,C,fromIntegral,fromIntegral)
 #define integralList(A,B,C,to,from) \
@@ -83,6 +89,9 @@ tShow :: Show b => b -> Text
 tShow = pack . show
 
 instance OGRField a => OGRField (Maybe a) where
+  {-# INLINE fieldDef #-}
+  {-# INLINE toField #-}
+  {-# INLINE fromField #-}
   fieldDef _             = (fieldDef (Proxy :: Proxy a)) {fldNullable = True}
   toField Nothing        = OGRNullField
   toField (Just a)       = toField a
@@ -120,6 +129,9 @@ ogrMonoidField(V.Vector String,OFTStringList,OGRStringList,(V.convert . V.map un
 ogrMonoidField(ByteString,OFTBinary,OGRBinary,id,id)
 
 instance OGRField UTCTime where
+  {-# INLINE fieldDef #-}
+  {-# INLINE toField #-}
+  {-# INLINE fromField #-}
   fieldDef _ =
     FieldDef OFTDateTime Nothing Nothing Nothing False
   toField u  =
@@ -131,6 +143,9 @@ instance OGRField UTCTime where
   fromField f = defaultFromField f
 
 instance OGRField LocalTime where
+  {-# INLINE fieldDef #-}
+  {-# INLINE toField #-}
+  {-# INLINE fromField #-}
   fieldDef _ =
     FieldDef OFTDateTime Nothing Nothing Nothing False
   toField u  =
@@ -142,6 +157,9 @@ instance OGRField LocalTime where
   fromField f = defaultFromField f
 
 instance OGRField ZonedTime where
+  {-# INLINE fieldDef #-}
+  {-# INLINE toField #-}
+  {-# INLINE fromField #-}
   fieldDef _ =
     FieldDef OFTDateTime Nothing Nothing Nothing False
   toField (ZonedTime lt tz)  =

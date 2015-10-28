@@ -103,7 +103,7 @@ test-suite spec
   if impl(ghc >= 7.10.0)
     cpp-options: -DSTORABLE_COMPLEX
 
-executable ogrdump-hs
+executable ogrinfo-hs
   build-depends:       base
                      , bindings-gdal
                      , text
@@ -113,5 +113,5 @@ executable ogrdump-hs
                      , conduit
   ghc-options:         -Wall -rtsopts -O2
   hs-source-dirs:      exe
-  main-is:             OGRDump.hs
+  main-is:             OGRInfo.hs
   default-language:    Haskell2010

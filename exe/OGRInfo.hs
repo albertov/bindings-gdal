@@ -38,8 +38,8 @@ main = withGDAL $ liftM (either throw id) $ runGDAL $ do
       T.putStrLn ""
       putStrLn ("FID: " <> maybe ("<unknown>") show mFid)
       T.putStrLn "Fields:"
-      forM_ (HM.toList fFields) $ \(name, value) -> do
-        T.putStrLn ("  " <> name <> ":")
-        putStrLn ("    " <> show value)
+      forM_ (HM.toList fFields) $ \(fieldName, fieldValue) -> do
+        T.putStrLn ("  " <> fieldName <> ":")
+        putStrLn ("    " <> show fieldValue)
       T.putStrLn ("Geometry:")
       BS.putStrLn (maybe "" (("  "<>) . exportToWkt) fGeom)

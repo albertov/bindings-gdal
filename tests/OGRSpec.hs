@@ -16,7 +16,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Control.Monad.Catch (try, throwM)
 
 import Data.ByteString (ByteString)
-import Data.Conduit (($$), (=$=))
+import Data.Conduit (($$))
 import qualified Data.Conduit.List as CL
 import Data.Either (isRight)
 import Data.Int
