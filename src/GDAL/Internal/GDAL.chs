@@ -184,7 +184,7 @@ instance NFData DataType where
     { fromEnumC `DataType', fromEnumC `DataType' } -> `DataType' toEnumC #}
 
 
-{#enum Access {} deriving (Eq, Show) #}
+{#enum GDALAccess {} deriving (Eq, Show) #}
 
 {#enum RWFlag {} deriving (Eq, Show) #}
 
@@ -255,7 +255,7 @@ openReadOnly p = openWithMode GA_ReadOnly p
 openReadWrite :: String -> GDAL s (RWDataset s)
 openReadWrite p = openWithMode GA_Update p
 
-openWithMode :: Access -> String -> GDAL s (Dataset s t)
+openWithMode :: GDALAccess -> String -> GDAL s (Dataset s t)
 openWithMode m path =
   newDatasetHandle $
   throwIfError "open" $

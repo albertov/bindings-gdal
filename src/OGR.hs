@@ -3,9 +3,6 @@ module OGR (
   , SQLDialect (..)
   , ApproxOK (..)
   , Layer
-  , FeatureSource
-  , FeatureConduit
-  , FeatureSink
   , RODataSource
   , RWDataSource
   , ROLayer
@@ -64,6 +61,7 @@ module OGR (
 
   , datasourceName
   , executeSQL
+  , executeSQL_
 
   , createLayer
   , createLayerWithDef
@@ -71,14 +69,13 @@ module OGR (
   , getLayer
   , getLayerByName
 
-  , sourceFeatures
-  , sourceFeaturesByName
-
-  , conduitCreateFeatures
-  , conduitCreateFeaturesByName
-
-  , sinkUpdateFeatures
-  , sinkUpdateFeaturesByName
+  , sourceLayer
+  , sourceLayer_
+  , conduitInsertLayer
+  , conduitInsertLayer_
+  , sinkInsertLayer
+  , sinkInsertLayer_
+  , sinkUpdateLayer
 
   , syncToDisk
 

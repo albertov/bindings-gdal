@@ -33,6 +33,7 @@ module GDAL.Internal.Types (
   , allocate
   , unprotect
   , release
+  , unsafeGDALToIO
 ) where
 
 import Control.Applicative (Applicative(..), liftA2)
@@ -46,6 +47,8 @@ import Control.Monad.Trans.Resource (
   , allocate
   , release
   , unprotect
+  , runInternalState
+  , getInternalState
   )
 import Control.Monad.Catch (
     MonadThrow(..)
@@ -299,3 +302,8 @@ deriving instance MonadResource (GDAL s)
 runGDAL :: (forall s. GDAL s a) -> IO (Either GDALException a)
 runGDAL (GDAL a) = withErrorHandler $ runResourceT $
     (liftM Right a) `catch` (return . Left)
+
+unsafeGDALToIO :: GDAL s a -> GDAL s (IO a)
+unsafeGDALToIO (GDAL act) = do
+  state <- GDAL getInternalState
+  return (runInternalState act state)

@@ -16,7 +16,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Control.Monad.Catch (try, throwM)
 
 import Data.ByteString (ByteString)
-import Data.Conduit (($$))
+import Data.Conduit (($$), (=$=))
 import qualified Data.Conduit.List as CL
 import Data.Either (isRight)
 import Data.Int
@@ -159,6 +159,14 @@ spec = setupAndTeardown $ do
             updateFeature l fid feat2
             getFeature l fid >>= (`shouldBe` Just feat2)
 
+          withDir "can sink and then source features" $ \tmpDir -> do
+            let fs = map (TestFeature aPoint) [1..1000 :: Int32]
+            ds <- create driverName (joinPath [tmpDir, "test"]) []
+            CL.sourceList fs $$ sinkInsertLayer_ (createLayer ds StrictOK [])
+            fs' <- sourceLayer_ (getLayer 0 ds) $$ CL.consume
+            fs `shouldBe` fs'
+
+
       withDir "can retrieve features with less fields than present in layer" $
         \tmpDir -> do
           let path = joinPath [tmpDir, "test.shp"]
@@ -202,20 +210,18 @@ spec = setupAndTeardown $ do
 
   describe "executeSQL" $ do
 
-    it "can execute a valid query with DefaultDialect" $ ((do
+    it "can execute a valid query with DefaultDialect" $ do
       ds <- getShapePath >>= openReadOnly
-      let src = executeSQL DefaultDialect "SELECT * FROM fondo" Nothing ds
-          src :: FeatureSource s Feature
-      fs <- src $$ CL.consume
-      length fs `shouldBe` 2) :: forall s. GDAL s ())
+      let src = executeSQL_ DefaultDialect "SELECT * FROM fondo" Nothing ds
+      (fs :: [Feature]) <- src $$ CL.consume
+      length fs `shouldBe` 2
 
-    it "throws error on invalid query" $ ((do
+    it "throws error on invalid query" $ do
       ds <- getShapePath >>= openReadOnly
-      let src = executeSQL DefaultDialect "dis is NoSQL!" Nothing ds
-          src :: FeatureSource s Feature
-      (src $$ CL.consume)
-        `shouldThrow` (\e -> case e of {SQLQueryError _ -> True; _ -> False})
-      ) :: forall s. GDAL s ())
+      let src = executeSQL_ DefaultDialect "dis is NoSQL!" Nothing ds
+          isSqlError e = case e of {SQLQueryError _ -> True; _ -> False}
+      (src $$ CL.consume >>= \(_::[Feature])->undefined)
+        `shouldThrow` isSqlError
 
 
   describe "Geometry" $ do
@@ -337,10 +343,10 @@ spec = setupAndTeardown $ do
         ogrFieldSpec driverName (3.4 :: Double)
         ogrFieldSpec driverName (3.4 :: Float)
 
-#if SUPPORTS_NULLABLE_FIELD_DEFS
-        ogrFieldSpec driverName (mempty :: Text)
-        ogrFieldSpec driverName (mempty :: String)
-#endif
+        -- FIXME
+        -- ogrFieldSpec driverName (mempty :: Text)
+        -- ogrFieldSpec driverName (mempty :: String)
+
         ogrFieldSpec driverName ("foo" :: Text)
         ogrFieldSpec driverName ("foo" :: String)
 
