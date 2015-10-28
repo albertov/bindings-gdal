@@ -11,8 +11,7 @@ module GDAL.Internal.CPLString (
 import Control.Exception (bracket)
 import Control.Monad (forM, foldM, liftM)
 
-import Data.ByteString (ByteString)
-import Data.ByteString.Unsafe (unsafePackCStringFinalizer)
+import Data.ByteString.Internal (ByteString(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Word (Word8)
@@ -21,9 +20,10 @@ import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
 import Foreign.Storable (peek)
+import Foreign.ForeignPtr (newForeignPtr)
 
 import GDAL.Internal.Util (useAsEncodedCString, peekEncodedCString)
-import GDAL.Internal.CPLConv (cplFree)
+import GDAL.Internal.CPLConv (c_cplFree)
 
 #include "cpl_string.h"
 
@@ -55,4 +55,5 @@ peekCPLString pptr = do
         v <- peek (p `plusPtr` n) :: IO Word8
         if v==0 then return n else findLen (n+1)
   len <- findLen 0
-  unsafePackCStringFinalizer p len (cplFree p)
+  fp <- newForeignPtr c_cplFree p
+  return $! PS fp 0 len

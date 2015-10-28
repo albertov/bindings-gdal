@@ -7,6 +7,7 @@ module GDAL.Internal.CPLConv (
   , cplMallocArray
   , cplNew
   , cplFree
+  , c_cplFree
   , listToArray
   ) where
 
@@ -17,7 +18,7 @@ import Control.Monad (liftM, when)
 import Data.Typeable (Typeable)
 
 import Foreign.Storable (Storable(..))
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
+import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.C.Types (CULong(..))
 
 import GDAL.Internal.CPLError
@@ -54,6 +55,8 @@ cplFree :: Ptr a -> IO ()
 cplFree = {#call unsafe VSIFree as ^#} . castPtr
 {-# INLINE cplFree #-}
 
+foreign import ccall unsafe "cpl_vsi.h &VSIFree"
+  c_cplFree :: FunPtr (Ptr a -> IO ())
 
 listToArray :: Storable a => [a] -> IO (Ptr a)
 listToArray [] = return nullPtr
