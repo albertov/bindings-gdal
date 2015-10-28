@@ -32,12 +32,15 @@ module OGR (
   , GeometryType (..)
   , Geometry (..)
   , WkbByteOrder (..)
+  , Envelope (..)
 
   , createFromWkt
   , createFromWkb
   , exportToWkt
   , exportToWkb
   , geometrySpatialReference
+  , geometryType
+  , geometryEnvelope
 
   , transformWith
   , transformTo
@@ -83,6 +86,7 @@ module OGR (
   , setSpatialFilter
 
   , layerCount
+  , layerExtent
   , layerName
   , layerFeatureDef
 

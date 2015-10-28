@@ -11,12 +11,16 @@ module GDAL.Internal.OGRGeometry (
     GeometryType (..)
   , Geometry (..)
   , WkbByteOrder (..)
+  , Envelope (..)
+  , OGREnvelope
 
   , createFromWkt
   , createFromWkb
   , exportToWkt
   , exportToWkb
   , geometrySpatialReference
+  , geometryType
+  , geometryEnvelope
 
   , transformWith
   , transformTo
@@ -35,7 +39,7 @@ module GDAL.Internal.OGRGeometry (
 
 {#context lib = "gdal" prefix = "OGR_G_"#}
 
-import Control.Applicative ((<$>))
+import Control.Applicative ((<$>), (<*>))
 import Control.Monad (liftM, void, (>=>))
 
 import Data.ByteString (ByteString)
@@ -46,7 +50,7 @@ import Data.ByteString.Unsafe (
   , unsafePackMallocCStringLen
   )
 
-import Foreign.C.Types (CInt(..), CChar(..), CUChar(..))
+import Foreign.C.Types (CInt(..), CDouble(..), CChar(..), CUChar(..))
 import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr)
 import Foreign.ForeignPtr (
     ForeignPtr
@@ -55,7 +59,7 @@ import Foreign.ForeignPtr (
   )
 import Foreign.Marshal.Alloc (alloca, mallocBytes)
 import Foreign.Marshal.Utils (toBool)
-import Foreign.Storable (peek, poke)
+import Foreign.Storable (Storable(..))
 
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -64,6 +68,32 @@ import System.IO.Unsafe (unsafePerformIO)
 import GDAL.Internal.CPLString (peekCPLString)
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.Util
+
+
+data Envelope =
+  Envelope {
+    eMinX :: Double
+  , eMinY :: Double
+  , eMaxX :: Double
+  , eMaxY :: Double
+  } deriving (Eq, Show)
+
+{#pointer *OGREnvelope->Envelope #}
+
+instance Storable Envelope where
+  sizeOf _    = {#sizeof OGREnvelope#}
+  alignment _ = {#alignof OGREnvelope#}
+  peek p =
+    Envelope <$> liftM realToFrac ({#get OGREnvelope->MinX#} p)
+             <*> liftM realToFrac ({#get OGREnvelope->MinY#} p)
+             <*> liftM realToFrac ({#get OGREnvelope->MaxX#} p)
+             <*> liftM realToFrac ({#get OGREnvelope->MaxY#} p)
+  poke p Envelope{..} = do
+    {#set OGREnvelope->MinX#} p (realToFrac eMinX)
+    {#set OGREnvelope->MinY#} p (realToFrac eMinY)
+    {#set OGREnvelope->MaxX#} p (realToFrac eMaxX)
+    {#set OGREnvelope->MaxY#} p (realToFrac eMaxY)
+
 
 {#enum OGRwkbGeometryType as GeometryType {upcaseFirstLetter}
   deriving (Eq,Show)#}
@@ -156,6 +186,19 @@ geometrySpatialReference g = unsafePerformIO $
   withGeometry g $
     {#call unsafe OGR_G_GetSpatialReference as ^#} >=>
       maybeNewSpatialRefBorrowedHandle
+
+geometryType
+  :: Geometry -> GeometryType
+geometryType g =
+  unsafePerformIO $
+  liftM toEnumC $
+  withGeometry g $
+    {#call unsafe OGR_G_GetGeometryType as ^#}
+
+{#fun pure unsafe OGR_G_GetEnvelope as geometryEnvelope
+  { `Geometry'
+  , alloca- `Envelope' peek*
+  } -> `()'#}
 
 instance Show Geometry where
   show = unpack . exportToWkt

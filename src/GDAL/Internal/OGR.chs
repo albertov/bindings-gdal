@@ -22,6 +22,7 @@ module GDAL.Internal.OGR (
   , ApproxOK (..)
   , Layer
   , LayerH (..)
+  , Envelope (..)
   , RODataSource
   , RWDataSource
   , ROLayer
@@ -60,6 +61,7 @@ module GDAL.Internal.OGR (
 
   , layerCount
   , layerName
+  , layerExtent
   , layerFeatureDef
 
   , createFeature
@@ -102,9 +104,10 @@ import Foreign.C.Types (CInt(..), CChar(..), CLong(..))
 import Foreign.C.Types (CLLong(..))
 #endif
 import Foreign.Ptr (Ptr, nullPtr)
+import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (toBool)
 
-import Foreign.Storable (Storable)
+import Foreign.Storable (Storable, peek)
 
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -482,6 +485,11 @@ executeSQL_ dialect query mSpatialFilter =
 layerName :: Layer s t a -> GDAL s Text
 layerName =
   liftIO . (peekEncodedCString <=< {#call unsafe OGR_L_GetName as ^#} . unLayer)
+
+layerExtent :: Layer s t a -> GDAL s Envelope
+layerExtent l = liftIO $ alloca $ \pE -> do
+  {#call OGR_L_GetExtent as ^#} (unLayer l) pE 1
+  peek pE
 
 layerFeatureDef :: Layer s t a -> GDAL s FeatureDef
 layerFeatureDef = liftIO . layerFeatureDefIO . unLayer

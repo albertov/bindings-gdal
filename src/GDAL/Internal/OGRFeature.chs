@@ -115,7 +115,10 @@ import GDAL.Internal.Util (
 #include "cpl_string.h"
 
 newtype Fid = Fid { unFid :: Int64 }
-  deriving (Eq, Show, Num)
+  deriving (Eq, Num)
+
+instance Show Fid where
+  show = show . unFid
 
 class OGRField a where
   fieldDef  :: Proxy a -> FieldDef
