@@ -101,7 +101,7 @@ import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
 import qualified Data.Vector as V
 
-import Control.Applicative ((<$>), (<*>), pure)
+import Control.Applicative (Applicative, (<$>), (<*>), pure)
 import Control.Monad (liftM, when, void, (>=>), (<=<))
 import Control.Monad.Base (MonadBase)
 import Control.Monad.Catch (
