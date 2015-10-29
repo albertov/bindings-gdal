@@ -64,7 +64,6 @@ module GDAL.Internal.GDAL (
   , setBandNodataValue
   , getBand
   , readBand
-  , unsafeReadBand
   , readBandBlock
   , writeBand
   , writeBandBlock
@@ -475,16 +474,6 @@ readBand :: forall s t a. GDALType a
   -> GDAL s (Vector (Value a))
 readBand band win size = liftIO $ readBandIO band win size
 {-# INLINE readBand #-}
-
--- Must make sure the return Vector is evaluated inside the GDAL monad or
--- a segfault will likely occur
-unsafeReadBand :: forall s a. GDALType a
-  => (ROBand s)
-  -> Window Int
-  -> Size
-  -> Vector (Value a)
-unsafeReadBand band win size = unsafePerformIO $ readBandIO band win size
-{-# INLINE unsafeReadBand #-}
 
 readBandIO :: forall s t a. GDALType a
   => (Band s t)

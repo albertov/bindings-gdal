@@ -68,7 +68,6 @@ module GDAL (
   , setBandNodataValue
   , getBand
   , readBand
-  , unsafeReadBand
   , readBandBlock
   , writeBand
   , writeBandBlock
