@@ -122,7 +122,9 @@ cloneGeometry :: Ptr Geometry -> IO Geometry
 cloneGeometry = maybeCloneGeometry >=> maybe (throw NullGeometry) return
 
 maybeCloneGeometry :: Ptr Geometry -> IO (Maybe Geometry)
-maybeCloneGeometry = maybeNewGeometryHandle . {#call unsafe Clone as ^#}
+maybeCloneGeometry p
+  | p==nullPtr = return Nothing
+  | otherwise  = maybeNewGeometryHandle ({#call unsafe Clone as ^#} p)
 
 withMaybeGeometry :: Maybe Geometry -> (Ptr Geometry -> IO a) -> IO a
 withMaybeGeometry (Just g) = withGeometry g

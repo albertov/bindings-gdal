@@ -453,20 +453,22 @@ executeSQL
   :: OGRFeature a
   => SQLDialect -> Text -> Maybe Geometry -> RODataSource s
   -> GDALSource s (Maybe Fid, a)
-executeSQL dialect query mSpatialFilter ds = sourceFromLayer alloc free
+executeSQL dialect query mSpatialFilter ds = sourceFromLayer alloc freeIfNotNull
   where
     alloc =
       liftIO $
       liftM Layer $
       checkGDALCall checkit $
-      withMaybeGeometry mSpatialFilter $ \sFilter ->
-      useAsEncodedCString query $ \sQuery ->
-      withSQLDialect dialect $
-        {#call OGR_DS_ExecuteSQL as ^#} (unDataSource ds) sQuery sFilter
+      withMaybeGeometry mSpatialFilter $ \pF ->
+      useAsEncodedCString query $ \pQ ->
+      withSQLDialect dialect $ {#call OGR_DS_ExecuteSQL as ^#} pDs pQ pF
 
-    free =
-      ({#call unsafe OGR_DS_ReleaseResultSet as ^#} (unDataSource ds) . unLayer)
+    freeIfNotNull l
+      | pL /= nullLayerH = {#call unsafe OGR_DS_ReleaseResultSet as ^#} pDs pL
+      | otherwise        = return ()
+      where pL = unLayer l
 
+    pDs = unDataSource ds
     checkit (Just (GDALException{gdalErrNum=AppDefined, gdalErrMsg=msg})) _ =
       Just (GDALBindingException (SQLQueryError msg))
     checkit Nothing p | p==nullLayerH =
