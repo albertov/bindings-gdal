@@ -134,7 +134,7 @@ checkGDALCall isOk act = mask $ \restore -> do
 {-# INLINE checkGDALCall #-}
 
 checkGDALCall_
-  :: (MonadMask m, MonadIO m, Exception e)
+  :: (MonadMask m, MonadIO m, Functor m, Exception e)
   => (Maybe GDALException -> a -> Maybe e) -> m a -> m ()
 {-# INLINE checkGDALCall_ #-}
 checkGDALCall_ isOk = void . checkGDALCall isOk
