@@ -94,8 +94,8 @@ import qualified Data.Vector as V
 
 import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (liftM, when, void, (>=>), (<=<))
-import Control.Monad.Catch(catchJust, throwM, bracketOnError, bracket, finally)
-import Control.Monad.Trans(lift)
+import Control.Monad.Catch (bracketOnError, bracket, finally)
+import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Foreign.C.String (CString, peekCString, withCString)
@@ -173,17 +173,20 @@ openReadWrite p = openWithMode OGR_Update p
 
 openWithMode :: OGRAccess -> String -> GDAL s (DataSource s t)
 openWithMode m p =
-  catchJust
-    (\case {GDALException{gdalErrNum=AssertionFailed}->Just ();_->Nothing})
-    (newDataSourceHandle $ withCString p $ \p' ->
-      {#call OGROpen as ^#} p' (fromEnumC m) nullPtr)
-    (const (throwM (GDALException CE_Failure OpenFailed "open: failed")))
+  newDataSourceHandle $ withCString p $ \p' ->
+    checkGDALCall checkIt ({#call OGROpen as ^#} p' (fromEnumC m) nullPtr)
+  where
+    checkIt Nothing p' | p'==nullDataSourceH =
+      Just (GDALException CE_Failure OpenFailed "open: failed")
+    checkIt Nothing _ = Nothing
+    checkIt e       _ = e
+
 
 newDataSourceHandle
   :: IO DataSourceH -> GDAL s (DataSource s t)
 newDataSourceHandle act = liftM snd $ allocate alloc free
   where
-    alloc = liftM DataSource (checkReturns (/=nullDataSourceH) act)
+    alloc = liftM DataSource act
     free  = {#call OGR_DS_Destroy as ^#} . unDataSource
 
 type Driver = String
@@ -220,7 +223,6 @@ createLayerWithDef
   :: RWDataSource s -> FeatureDef -> ApproxOK -> OptionList
   -> GDAL s (RWLayer s a)
 createLayerWithDef ds FeatureDef{..} approxOk options =
-  --throwIfError "createLayerWithDef" $
   liftIO $
   useAsEncodedCString fdName $ \pName ->
   withMaybeSpatialReference (gfdSrs fdGeom) $ \pSrs ->
@@ -451,21 +453,26 @@ executeSQL
   :: OGRFeature a
   => SQLDialect -> Text -> Maybe Geometry -> RODataSource s
   -> GDALSource s (Maybe Fid, a)
-executeSQL dialect query mSpatialFilter ds =
-  sourceFromLayer
-    (catchJust selectExc execute (throwBindingException . SQLQueryError))
-    ({#call unsafe OGR_DS_ReleaseResultSet as ^#} (unDataSource ds) . unLayer)
+executeSQL dialect query mSpatialFilter ds = sourceFromLayer alloc free
   where
-    execute =
+    alloc =
       liftIO $
       liftM Layer $
-      checkReturns (/=nullLayerH) $
+      checkGDALCall checkit $
       withMaybeGeometry mSpatialFilter $ \sFilter ->
       useAsEncodedCString query $ \sQuery ->
       withSQLDialect dialect $
         {#call OGR_DS_ExecuteSQL as ^#} (unDataSource ds) sQuery sFilter
-    selectExc GDALException{gdalErrNum=AppDefined,..} = Just gdalErrMsg
-    selectExc _                                       = Nothing
+
+    free =
+      ({#call unsafe OGR_DS_ReleaseResultSet as ^#} (unDataSource ds) . unLayer)
+
+    checkit (Just (GDALException{gdalErrNum=AppDefined, gdalErrMsg=msg})) _ =
+      Just (GDALBindingException (SQLQueryError msg))
+    checkit Nothing p | p==nullLayerH =
+      Just (GDALBindingException NullLayer)
+    checkit e p | p==nullLayerH = e
+    checkit _ _                 = Nothing
 
 executeSQL_
   :: OGRFeature a

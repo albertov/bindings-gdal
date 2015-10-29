@@ -93,6 +93,7 @@ import Data.Bits ((.&.))
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Complex (Complex(..), realPart)
 import Data.Coerce (coerce)
+import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
@@ -138,10 +139,11 @@ data GDALRasterException
   | InvalidDataType   !DataType
   | InvalidProjection !OGRException
   | InvalidDriverOptions
-  | NullDataset
   | CopyStopped
   | UnknownRasterDataType
   | UnsupportedRasterDataType !DataType
+  | NullDataset
+  | NullBand
   deriving (Typeable, Show, Eq)
 
 instance NFData GDALRasterException where
@@ -262,7 +264,6 @@ openReadWrite p = openWithMode GA_Update p
 openWithMode :: GDALAccess -> String -> GDAL s (Dataset s t)
 openWithMode m path =
   newDatasetHandle $
-  checkReturns (/=nullDatasetH) $
   withCString path $
   flip {#call GDALOpen as ^#} (fromEnumC m)
 
@@ -286,8 +287,12 @@ createCopy driver path ds strict options progressFun =
 newDatasetHandle :: IO DatasetH -> GDAL s (Dataset s t)
 newDatasetHandle act = liftM snd $ allocate alloc free
   where
-    alloc = liftM Dataset (checkReturns (/=nullDatasetH) act)
+    alloc = liftM Dataset (checkGDALCall checkit act)
     free  = {#call GDALClose as ^#} . unDataset
+    checkit exc p
+      | p==nullDatasetH = Just (fromMaybe
+                                (GDALBindingException NullDataset) exc)
+      | otherwise       = Nothing
 
 
 createMem
@@ -373,8 +378,12 @@ getBand :: Int -> Dataset s t -> GDAL s (Band s t)
 getBand b ds =
   liftIO $
   liftM Band $
-  checkReturns (/=nullBandH) $
+  checkGDALCall checkit $
   {#call GetRasterBand as ^#} (unDataset ds) (fromIntegral b)
+  where
+    checkit exc p
+      | p == nullBandH = Just (fromMaybe (GDALBindingException NullBand) exc)
+      | otherwise      = Nothing
 
 
 reifyDataType :: DataType -> (forall a. GDALType a => Proxy a -> b) -> b

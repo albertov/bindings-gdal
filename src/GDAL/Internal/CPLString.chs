@@ -8,7 +8,7 @@ module GDAL.Internal.CPLString (
   , peekCPLString
 ) where
 
-import Control.Exception (bracket, onException)
+import Control.Exception (bracket, bracketOnError)
 import Control.Monad (forM, foldM, liftM, when, void)
 
 import Data.ByteString.Internal (ByteString(..))
@@ -51,7 +51,7 @@ fromOptionListPtr ptr = do
 
 peekCPLString :: (Ptr CString -> IO a) -> IO ByteString
 peekCPLString act = with nullPtr $ \pptr ->
-  go pptr `onException` freeIfNotNull pptr
+  bracketOnError (go pptr) (const (freeIfNotNull pptr)) return
   where
     go pptr = do
       void (act pptr)

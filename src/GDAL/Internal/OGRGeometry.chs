@@ -5,6 +5,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 
 module GDAL.Internal.OGRGeometry (
@@ -50,7 +51,7 @@ module GDAL.Internal.OGRGeometry (
 {#context lib = "gdal" prefix = "OGR_G_"#}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (onException, throw, bracketOnError)
+import Control.Exception (throw, bracketOnError)
 import Control.Monad (liftM, when, (>=>))
 
 import Data.ByteString.Internal (ByteString(..))
@@ -133,7 +134,7 @@ foreign import ccall "ogr_api.h &OGR_G_DestroyGeometry"
 newGeometryHandle
   :: (Ptr (Ptr Geometry) -> IO OGRError) -> IO (Either OGRError Geometry)
 newGeometryHandle alloc = with nullPtr $ \pptr ->
-  go pptr `onException` freeIfNotNull pptr
+  bracketOnError (go pptr) (const (freeIfNotNull pptr)) return
   where
     go pptr = do
       err <- alloc pptr
@@ -215,7 +216,12 @@ exportWith :: (Ptr Geometry -> IO CString) -> Geometry -> IO ByteString
 exportWith f g =
   withGeometry g $ \gPtr ->
   peekCPLString $ \ptr ->
-    checkReturns (/=nullPtr) (f gPtr) >>= poke ptr
+    checkGDALCall checkit (f gPtr) >>= poke ptr
+  where
+    checkit Nothing p | p/=nullPtr = Nothing
+    checkit Nothing p | p==nullPtr =
+      Just (GDALException CE_Failure AssertionFailed "exportWith: null ptr")
+    checkit e _ = e
 
 exportToKmlIO :: Geometry -> IO ByteString
 exportToKmlIO =

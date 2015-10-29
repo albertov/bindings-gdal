@@ -122,11 +122,18 @@ instance Default (GenImgProjTransformer s) where
         , giptOrder    = 0
         }
 
+checkCreateTransformer :: Text -> IO (Ptr ()) -> IO (Ptr ())
+checkCreateTransformer msg = checkGDALCall checkit
+  where
+    checkit e p
+      | p==nullPtr = Just (NullTransformer (maybe msg gdalErrMsg e))
+      | otherwise  = Nothing
+
 instance Transformer GenImgProjTransformer where
   createTransformerFun _ = return c_GDALGenImgProjTransform
   createTransformerArg GenImgProjTransformer{..} =
     liftM castPtr $
-    checkReturns (/=nullPtr) $
+    checkCreateTransformer "GenImgProjTransformer" $
     withMaybeSRAsCString giptSrcSrs $ \sSr ->
     withMaybeSRAsCString giptDstSrs $ \dSr ->
       {#call CreateGenImgProjTransformer as ^#}
@@ -164,7 +171,7 @@ instance Transformer GenImgProjTransformer2 where
   createTransformerFun _ = return c_GDALGenImgProjTransform2
   createTransformerArg GenImgProjTransformer2{..} =
     liftM castPtr $
-    checkReturns (/=nullPtr) $
+    checkCreateTransformer "GenImgProjTransformer2" $
     withOptionList gipt2Options $ \opts ->
       {#call CreateGenImgProjTransformer2 as ^#}
         (maybe nullDatasetH unDataset gipt2SrcDs)
@@ -198,7 +205,7 @@ instance Transformer GenImgProjTransformer3 where
   createTransformerFun _ = return c_GDALGenImgProjTransform3
   createTransformerArg GenImgProjTransformer3{..} =
     liftM castPtr $
-    checkReturns (/=nullPtr) $
+    checkCreateTransformer "GenImgProjTransformer3" $
     withMaybeSRAsCString gipt3SrcSrs $ \sSr ->
     withMaybeSRAsCString gipt3DstSrs $ \dSr ->
     withMaybeGeotransformPtr gipt3SrcGt $ \sGt ->

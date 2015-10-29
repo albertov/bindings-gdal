@@ -15,8 +15,6 @@ module GDAL.Internal.CPLError (
   , bindingExceptionToException
   , bindingExceptionFromException
   , withErrorHandler
-  , checkReturns
-  , checkReturns_
   , popLastError
   , checkCPLError
   , checkGDALCall
@@ -122,23 +120,6 @@ instance NFData ErrorType where
 instance NFData ErrorNum where
   rnf a = a `seq` ()
 
-
-checkReturns
-  :: (Eq a, Functor m, MonadIO m, MonadMask m)
-  => (a -> Bool) -> m a -> m a
-checkReturns isOk = checkGDALCall isOk'
-  where
-    isOk' Nothing r | isOk r = Nothing
-    isOk' Nothing _          = Just defaultExc
-    isOk' e       _          = e
-    defaultExc = GDALException CE_Failure AssertionFailed "checkReturns"
-{-# INLINE checkReturns #-}
-
-checkReturns_
-  :: (Eq a, Functor m, MonadIO m, MonadMask m)
-  => (a -> Bool) -> m a -> m ()
-checkReturns_ isOk = void . checkReturns isOk
-{-# INLINE checkReturns_ #-}
 
 checkGDALCall
   :: (MonadMask m, MonadIO m, Exception e)
