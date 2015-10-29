@@ -335,8 +335,8 @@ geomFieldDefsFromFeatureDefnH p = do
       name <- {#call unsafe OGR_GFld_GetNameRef as ^#} g >>= peekEncodedCString
       gDef <- GeomFieldDef
               <$> liftM toEnumC ({#call unsafe OGR_GFld_GetType as ^#} g)
-              <*> ({#call unsafe OGR_GFld_GetSpatialRef as ^#} g >>=
-                    maybeNewSpatialRefBorrowedHandle)
+              <*> maybeNewSpatialRefBorrowedHandle
+                   ({#call unsafe OGR_GFld_GetSpatialRef as ^#} g)
 #if SUPPORTS_NULLABLE_FIELD_DEFS
               <*> liftM toBool ({#call unsafe OGR_GFld_IsNullable as ^#} g)
 #else
@@ -429,10 +429,8 @@ featureFromHandle FeatureDef{..} act =
                   ({#call unsafe OGR_F_StealGeometry as ^#} pF)
 #if SUPPORTS_MULTI_GEOM_FIELDS
         geoms <- flip imapM fdGeoms $ \ix (gfdName, _) -> do
-          pG <- {#call unsafe OGR_F_GetGeomFieldRef as ^#} pF (ix + 1)
-          g <- if pG /= nullPtr
-                then liftM Just (cloneGeometry pG)
-                else return Nothing
+          g <- {#call unsafe OGR_F_GetGeomFieldRef as ^#} pF (ix + 1)
+                 >>= maybeCloneGeometry
           return (gfdName, g)
 #else
         let geoms = mempty

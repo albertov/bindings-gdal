@@ -41,7 +41,7 @@ module GDAL.Internal.OSR (
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (catch)
+import Control.Exception (catch, bracketOnError)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
@@ -93,31 +93,37 @@ foreign import ccall "ogr_srs_api.h &OSRRelease"
   c_release :: FunPtr (Ptr SpatialReference -> IO ())
 
 newSpatialRefHandle
-  :: Ptr SpatialReference -> IO SpatialReference
+  :: IO (Ptr SpatialReference) -> IO SpatialReference
 newSpatialRefHandle = maybeNewSpatialRefHandle >=> maybe exc return
   where exc = throwBindingException NullSpatialReference
 
 maybeNewSpatialRefHandle
-  :: Ptr SpatialReference -> IO (Maybe SpatialReference)
-maybeNewSpatialRefHandle p
-  | p==nullPtr = return Nothing
-  | otherwise  = liftM (Just . SpatialReference) (newForeignPtr c_release p)
+  :: IO (Ptr SpatialReference) -> IO (Maybe SpatialReference)
+maybeNewSpatialRefHandle alloc = bracketOnError alloc freeIfNotNull go
+  where
+    go p
+      | p==nullPtr = return Nothing
+      | otherwise  = liftM (Just . SpatialReference) (newForeignPtr c_release p)
+    freeIfNotNull p
+      | p/=nullPtr = {#call unsafe OSRRelease as ^#} p
+      | otherwise  = return ()
 
 newSpatialRefBorrowedHandle
-  :: Ptr SpatialReference -> IO SpatialReference
+  :: IO (Ptr SpatialReference) -> IO SpatialReference
 newSpatialRefBorrowedHandle =
   maybeNewSpatialRefBorrowedHandle >=> maybe exc return
   where exc = throwBindingException NullSpatialReference
 
 maybeNewSpatialRefBorrowedHandle
-  :: Ptr SpatialReference -> IO (Maybe SpatialReference)
-maybeNewSpatialRefBorrowedHandle p = do
+  :: IO (Ptr SpatialReference) -> IO (Maybe SpatialReference)
+maybeNewSpatialRefBorrowedHandle alloc = maybeNewSpatialRefHandle $ do
+  p <- alloc
   when (p /= nullPtr) (void ({#call unsafe OSRReference as ^#} p))
-  maybeNewSpatialRefHandle p
+  return p
 
 emptySpatialRef :: IO SpatialReference
 emptySpatialRef =
-  {#call unsafe NewSpatialReference as ^#} nullPtr >>= newSpatialRefHandle
+  newSpatialRefHandle ({#call unsafe NewSpatialReference as ^#} nullPtr)
 
 fromWkt, fromProj4, fromXML
   :: ByteString -> Either OGRException SpatialReference
@@ -127,7 +133,7 @@ fromWkt = unsafePerformIO . (flip unsafeUseAsCString fromWktIO)
 fromWktIO :: CString -> IO (Either OGRException SpatialReference)
 fromWktIO a =
   (liftM Right
-    ({#call unsafe NewSpatialReference as ^#} a >>= newSpatialRefHandle))
+    (newSpatialRefHandle ({#call unsafe NewSpatialReference as ^#} a)))
   `catch` (return . Left)
 
 fromProj4 = fromImporter importFromProj4

@@ -430,8 +430,8 @@ layerGeomFieldDef :: LayerH -> IO GeomFieldDef
 layerGeomFieldDef p =
   GeomFieldDef
     <$> liftM toEnumC ({#call unsafe OGR_L_GetGeomType	as ^#} p)
-    <*> ({#call unsafe OGR_L_GetSpatialRef as ^#} p >>=
-          maybeNewSpatialRefBorrowedHandle)
+    <*> maybeNewSpatialRefBorrowedHandle
+          ({#call unsafe OGR_L_GetSpatialRef as ^#} p)
     <*> pure True
 
 layerCount :: DataSource s t -> GDAL s Int
@@ -501,11 +501,8 @@ layerFeatureDefIO pL = do
 
 
 getSpatialFilter :: Layer s t a -> GDAL s (Maybe Geometry)
-getSpatialFilter l = liftIO $ do
-  p <- {#call unsafe OGR_L_GetSpatialFilter as ^#} (unLayer l)
-  if p == nullPtr
-    then return Nothing
-    else liftM Just (cloneGeometry p)
+getSpatialFilter l = liftIO $
+  {#call unsafe OGR_L_GetSpatialFilter as ^#} (unLayer l) >>= maybeCloneGeometry
 
 setSpatialFilter :: Layer s t a -> Geometry -> GDAL s ()
 setSpatialFilter l g = liftIO $

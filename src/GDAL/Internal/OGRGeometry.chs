@@ -33,6 +33,7 @@ module GDAL.Internal.OGRGeometry (
   , withGeometry
   , withMaybeGeometry
   , cloneGeometry
+  , maybeCloneGeometry
   , newGeometryHandle
   , maybeNewGeometryHandle
   , createFromWktIO
@@ -117,10 +118,10 @@ instance Storable Envelope where
 {#pointer OGRGeometryH as Geometry foreign newtype#}
 
 cloneGeometry :: Ptr Geometry -> IO Geometry
-cloneGeometry gPtr =
-  (maybeNewGeometryHandle
-    ({#call unsafe Clone as ^#} gPtr)) >>= maybe (throw NullGeometry) return
+cloneGeometry = maybeCloneGeometry >=> maybe (throw NullGeometry) return
 
+maybeCloneGeometry :: Ptr Geometry -> IO (Maybe Geometry)
+maybeCloneGeometry = maybeNewGeometryHandle . {#call unsafe Clone as ^#}
 
 withMaybeGeometry :: Maybe Geometry -> (Ptr Geometry -> IO a) -> IO a
 withMaybeGeometry (Just g) = withGeometry g
@@ -244,9 +245,8 @@ geomEqIO a b = withGeometry a $ \aPtr -> withGeometry b $ \bPtr ->
 geometrySpatialReference
   :: Geometry -> Maybe SpatialReference
 geometrySpatialReference g = unsafePerformIO $
-  withGeometry g $
-    {#call unsafe OGR_G_GetSpatialReference as ^#} >=>
-      maybeNewSpatialRefBorrowedHandle
+  maybeNewSpatialRefBorrowedHandle $
+    withGeometry g {#call unsafe OGR_G_GetSpatialReference as ^#}
 
 geometryType
   :: Geometry -> GeometryType
