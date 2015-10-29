@@ -94,7 +94,7 @@ import qualified Data.Vector as V
 
 import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (liftM, when, void, (>=>), (<=<))
-import Control.Monad.Catch(catchJust, throwM)
+import Control.Monad.Catch(catchJust, throwM, bracketOnError, bracket, finally)
 import Control.Monad.Trans(lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -117,7 +117,7 @@ import System.IO.Unsafe (unsafePerformIO)
 {#import GDAL.Internal.OGRFeature#}
 {#import GDAL.Internal.OGRError#}
 {#import GDAL.Internal.CPLString#}
-import GDAL.Internal.CPLError hiding (None)
+import GDAL.Internal.CPLError
 import GDAL.Internal.Util
 import GDAL.Internal.Types
 
@@ -184,7 +184,7 @@ newDataSourceHandle
 newDataSourceHandle act = liftM snd $ allocate alloc free
   where
     alloc = liftM DataSource (checkReturns (/=nullDataSourceH) act)
-    free  = void . {#call OGR_DS_Destroy as ^#} . unDataSource
+    free  = {#call OGR_DS_Destroy as ^#} . unDataSource
 
 type Driver = String
 
@@ -220,7 +220,7 @@ createLayerWithDef
   :: RWDataSource s -> FeatureDef -> ApproxOK -> OptionList
   -> GDAL s (RWLayer s a)
 createLayerWithDef ds FeatureDef{..} approxOk options =
-  throwIfError "createLayerWithDef" $
+  --throwIfError "createLayerWithDef" $
   liftIO $
   useAsEncodedCString fdName $ \pName ->
   withMaybeSpatialReference (gfdSrs fdGeom) $ \pSrs ->
@@ -228,7 +228,7 @@ createLayerWithDef ds FeatureDef{..} approxOk options =
     pL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts
     when (pL == nullLayerH) (throwBindingException NullLayer)
     V.forM_ fdFields $ \(n,f) -> withFieldDefnH n f $ \pFld ->
-      {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
+      checkOGRError $ {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
     when (not (V.null fdGeoms)) $
       if supportsMultiGeomFields pL
         then
@@ -256,7 +256,7 @@ createFeatureWithFidIO
 createFeatureWithFidIO pL fid feat = do
   pFd <- getLayerSchema pL
   featureToHandle pFd fid feat $ \pF -> do
-    checkOGRErr ({#call OGR_L_CreateFeature as ^#} pL pF)
+    checkOGRError ({#call OGR_L_CreateFeature as ^#} pL pF)
     getFid pF
 
 createFeatureWithFid
@@ -272,14 +272,11 @@ createFeature layer =
 createFeature_ :: OGRFeature a => RWLayer s a -> a -> GDAL s ()
 createFeature_ layer = void . createFeatureWithFid layer Nothing
 
-checkOGRErr :: IO CInt -> IO ()
-checkOGRErr = checkReturns_ (==fromEnumC None)
-
 updateFeature :: OGRFeature a => RWLayer s a -> Fid -> a -> GDAL s ()
 updateFeature layer fid feat = liftIO $ do
   pFd <- getLayerSchema pL
   featureToHandle pFd (Just fid) feat $
-    checkOGRErr . {#call OGR_L_SetFeature as ^#} pL
+    checkOGRError . {#call OGR_L_SetFeature as ^#} pL
   where pL = unLayer layer
 
 getFeature :: OGRFeature a => Layer s t a -> Fid -> GDAL s (Maybe a)
@@ -293,7 +290,7 @@ getFeature layer (Fid fid) = liftIO $ do
 
 deleteFeature :: Layer s t a -> Fid -> GDAL s ()
 deleteFeature layer (Fid fid) = liftIO $
-  checkOGRErr $
+  checkOGRError $
     {#call OGR_L_DeleteFeature as ^#} (unLayer layer) (fromIntegral fid)
 
 canCreateMultipleGeometryFields :: Bool
@@ -305,7 +302,7 @@ canCreateMultipleGeometryFields =
 #endif
 
 syncToDiskIO :: RWLayer s a -> IO ()
-syncToDiskIO = checkOGRErr . {#call OGR_L_SyncToDisk as ^#} . unLayer
+syncToDiskIO = checkOGRError . {#call OGR_L_SyncToDisk as ^#} . unLayer
 
 syncToDisk :: RWLayer s a -> GDAL s ()
 syncToDisk = liftIO . syncToDiskIO
@@ -341,7 +338,7 @@ conduitInsertLayer = flip conduitFromLayer createIt
   where
     createIt (l, pFd) = awaitForever $ \(fid, feat) -> do
       fid' <- liftIO $ featureToHandle pFd fid feat $ \pF -> do
-                checkOGRErr ({#call OGR_L_CreateFeature as ^#} (unLayer l) pF)
+                checkOGRError ({#call OGR_L_CreateFeature as ^#} (unLayer l) pF)
                 getFid pF
       yield fid'
 
@@ -365,7 +362,7 @@ sinkUpdateLayer = flip conduitFromLayer updateIt
   where
     updateIt (l, pFd) = awaitForever $ \(fid, feat) ->
       liftIO $ featureToHandle pFd (Just fid) feat $
-        checkOGRErr . {#call OGR_L_SetFeature as ^#} (unLayer l)
+        checkOGRError . {#call OGR_L_SetFeature as ^#} (unLayer l)
 
 
 layerTransaction
@@ -376,21 +373,18 @@ layerTransaction
 layerTransaction alloc free inside = do
   alloc' <- lift (unsafeGDALToIO alloc)
   (rbKey, seed) <- allocate alloc' rollback
-  liftIO $ void $ {#call OGR_L_StartTransaction as ^#} (unLayer (fst seed))
+  liftIO $ checkOGRError $
+    {#call OGR_L_StartTransaction as ^#} (unLayer (fst seed))
   addCleanup (const (release rbKey))
              (inside seed >> liftIO (commit rbKey seed))
   where
-    commit rbKey seed = do
-      m <- unprotect rbKey
+    commit rbKey seed = bracket (unprotect rbKey) (const (free seed)) $ \m -> do
       when (isNothing m) (error "layerTransaction: this should not happen")
-      ret <- {#call OGR_L_CommitTransaction as ^#} (unLayer (fst seed))
-      free seed
-      checkOGRErr (return ret)
+      checkOGRError ({#call OGR_L_CommitTransaction as ^#} (unLayer (fst seed)))
 
-    rollback seed = do
-      ret <- {#call OGR_L_RollbackTransaction as ^#} (unLayer (fst seed))
-      free seed
-      checkOGRErr (return ret)
+    rollback seed =
+      checkOGRError ({#call OGR_L_RollbackTransaction as ^#} (unLayer (fst seed)))
+        `finally` free seed
 
 sourceFromLayer
   :: forall s t a. OGRFeature a
@@ -399,9 +393,8 @@ sourceFromLayer
   -> GDALSource s (Maybe Fid, a)
 sourceFromLayer alloc free = layerTransaction alloc' (free . fst) loop
   where
-    alloc' = do
-      l <- alloc
-      liftIO $ void $ {#call OGR_L_ResetReading as ^#} (unLayer l)
+    alloc' = bracketOnError alloc (liftIO . free) $ \l -> do
+      liftIO $ {#call OGR_L_ResetReading as ^#} (unLayer l)
       fDef <- layerFeatureDef l
       return (l, fDef)
 
@@ -467,7 +460,6 @@ executeSQL dialect query mSpatialFilter ds =
       liftIO $
       liftM Layer $
       checkReturns (/=nullLayerH) $
-      throwIfError "executeSQL" $
       withMaybeGeometry mSpatialFilter $ \sFilter ->
       useAsEncodedCString query $ \sQuery ->
       withSQLDialect dialect $
@@ -488,7 +480,7 @@ layerName =
 
 layerExtent :: Layer s t a -> GDAL s Envelope
 layerExtent l = liftIO $ alloca $ \pE -> do
-  checkOGRErr ({#call OGR_L_GetExtent as ^#} (unLayer l) pE 1)
+  checkOGRError ({#call OGR_L_GetExtent as ^#} (unLayer l) pE 1)
   peek pE
 
 layerFeatureDef :: Layer s t a -> GDAL s FeatureDef

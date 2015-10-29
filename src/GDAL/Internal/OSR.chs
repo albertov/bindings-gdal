@@ -41,7 +41,7 @@ module GDAL.Internal.OSR (
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (catch, bracketOnError)
+import Control.Exception (catch, bracketOnError, try)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
@@ -53,15 +53,13 @@ import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Utils (toBool, with)
+import Foreign.Marshal.Utils (toBool)
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import GDAL.Internal.Util
 import GDAL.Internal.OGRError
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLString (peekCPLString)
-import GDAL.Internal.CPLConv (cplFree)
 
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
 
@@ -86,7 +84,7 @@ exportWith
   -> SpatialReference
   -> ByteString
 exportWith fun s = unsafePerformIO $ peekCPLString $ \ptr ->
-  checkReturns_ ((==None).toEnumC) (withSpatialReference s (\s' -> fun s' ptr))
+  checkOGRError (withSpatialReference s (\s' -> fun s' ptr))
 
 
 foreign import ccall "ogr_srs_api.h &OSRRelease"
@@ -152,10 +150,7 @@ fromImporter
   -> Either OGRException SpatialReference
 fromImporter f s = unsafePerformIO $ do
   r <- emptySpatialRef
-  (do err <- liftM toEnumC $ f r s
-      case err of
-        None -> return $ Right r
-        e    -> return $ Left (OGRException e "")) `catch` (return . Left)
+  try (checkOGRError (f r s) >> return r)
 
 
 {#fun ImportFromProj4 as ^

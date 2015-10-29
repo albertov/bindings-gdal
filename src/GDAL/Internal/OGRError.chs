@@ -1,5 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module GDAL.Internal.OGRError (
     OGRError (..)
@@ -14,7 +15,7 @@ module GDAL.Internal.OGRError (
 
 import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), SomeException, fromException)
-import Control.Monad (liftM)
+import Control.Monad (liftM, when)
 
 import Data.Text (Text)
 import Data.Typeable (Typeable)
@@ -28,7 +29,9 @@ import GDAL.Internal.Util
 #include "ogr_api.h"
 
 data OGRException
-  = OGRException !OGRError !String
+  = OGRException { ogrErrType :: !OGRError
+                 , ogrErrNum  :: !ErrorNum
+                 , ogrErrMsg  :: !Text}
   | NullGeometry
   | NullSpatialReference
   | NullLayer
@@ -47,8 +50,8 @@ data OGRException
   deriving (Show, Eq, Typeable)
 
 instance NFData OGRException where
-  rnf (OGRException e m) = rnf e `seq` rnf m `seq` ()
-  rnf e                  = e `seq` ()
+  rnf (OGRException e n m) = rnf e `seq` rnf n `seq` rnf m `seq` ()
+  rnf e                    = e `seq` ()
 
 instance Exception OGRException where
   toException   = bindingExceptionToException
@@ -69,17 +72,17 @@ isOGRException e = isJust (fromException e :: Maybe OGRException)
   , OGRERR_INVALID_HANDLE            as InvalidHandle
   } deriving (Eq, Show) #}
 
+checkOGRError :: IO CInt -> IO ()
+checkOGRError = checkGDALCall_ $ \mExc r ->
+  case (mExc, toEnumC r) of
+    (Nothing, None) -> Nothing
+    (Nothing, e)    -> Just (OGRException e AssertionFailed "checkOGRError")
+    (Just exc, e)   -> Just (OGRException e (gdalErrNum exc) (gdalErrMsg exc))
+{-# INLINE checkOGRError #-}
+
+
 instance NFData OGRError where
   rnf e = e `seq`()
-
-
-checkOGRError :: IO CInt -> IO a -> IO (Either OGRError a)
-checkOGRError act ret = do
-  err <- liftM toEnumC act
-  case err of
-    None -> liftM Right ret
-    e    -> return (Left e)
-
 
 data LayerCapability
   = RandomRead

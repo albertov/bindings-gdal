@@ -35,7 +35,6 @@ import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
-import Foreign.C.String (CString)
 import Foreign.Marshal.Utils (fromBool)
 import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr, nullFunPtr)
 import Foreign.Marshal.Alloc (alloca)
@@ -258,7 +257,7 @@ rasterizeLayersBufIO size layers srs geotransform mTransformer nodataValue
   withTransformerAndArg mTransformer $ \trans tArg -> do
     vec <- Stm.replicate (sizeLen size) nodataValue
     Stm.unsafeWith vec $ \vecPtr ->
-      checkReturns_ (==(fromEnumC CE_None)) $
+      checkCPLError $
       {#call GDALRasterizeLayersBuf as ^#}
         (castPtr vecPtr) nx ny dt 0 0 (fromIntegral len)
         lPtrPtr srsPtr (castPtr gt) (getTransformerFunPtr trans)

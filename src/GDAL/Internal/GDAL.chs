@@ -77,7 +77,6 @@ module GDAL.Internal.GDAL (
   , unDataset
   , unBand
   , version
-  , checkCPLErr
   , newDatasetHandle
 ) where
 
@@ -118,7 +117,7 @@ import GDAL.Internal.Util
 {#import GDAL.Internal.CPLError#}
 {#import GDAL.Internal.CPLString#}
 {#import GDAL.Internal.CPLProgress#}
-import GDAL.Internal.OGRError hiding (None)
+import GDAL.Internal.OGRError
 import GDAL.Internal.OSR
 
 
@@ -203,6 +202,11 @@ type RWDataset s = Dataset s ReadWrite
 
 {#pointer RasterBandH newtype #}
 
+nullBandH :: RasterBandH
+nullBandH = RasterBandH nullPtr
+
+deriving instance Eq RasterBandH
+
 newtype Band s (t::AccessMode) =
   Band { unBand :: RasterBandH }
 
@@ -258,7 +262,7 @@ openReadWrite p = openWithMode GA_Update p
 openWithMode :: GDALAccess -> String -> GDAL s (Dataset s t)
 openWithMode m path =
   newDatasetHandle $
-  throwIfError "open" $
+  checkReturns (/=nullDatasetH) $
   withCString path $
   flip {#call GDALOpen as ^#} (fromEnumC m)
 
@@ -312,12 +316,9 @@ datasetProjection ds = liftIO $ do
 
 setDatasetProjection :: RWDataset s -> SpatialReference -> GDAL s ()
 setDatasetProjection ds srs =
-  liftIO $ checkCPLErr $
+  liftIO $ checkCPLError $
     unsafeUseAsCString (toWkt srs)
       ({#call unsafe SetProjection as ^#} (unDataset ds))
-
-checkCPLErr :: IO CInt -> IO ()
-checkCPLErr = checkReturns_ (==fromEnumC CE_None)
 
 data Geotransform
   = Geotransform {
@@ -353,14 +354,14 @@ instance Storable Geotransform where
 datasetGeotransform :: Dataset s t -> GDAL s (Maybe Geotransform)
 datasetGeotransform ds = liftIO $ alloca $ \p -> do
   ret <- {#call unsafe GetGeoTransform as ^#} (unDataset ds) (castPtr p)
-  if toEnumC ret == GDAL.Internal.CPLError.None
+  if toEnumC ret == CE_None
     then liftM Just (peek p)
     else return Nothing
 
 
 setDatasetGeotransform :: RWDataset s -> Geotransform -> GDAL s ()
 setDatasetGeotransform ds gt = liftIO $
-  checkCPLErr $
+  checkCPLError $
     with gt ({#call unsafe SetGeoTransform as ^#} (unDataset ds) . castPtr)
 
 
@@ -369,8 +370,11 @@ datasetBandCount =
   liftM fromIntegral . liftIO . {#call unsafe GetRasterCount as ^#} . unDataset
 
 getBand :: Int -> Dataset s t -> GDAL s (Band s t)
-getBand b ds = throwIfError "getBand" $ liftIO $
-  liftM Band ({#call GetRasterBand as ^#} (unDataset ds) (fromIntegral b))
+getBand b ds =
+  liftIO $
+  liftM Band $
+  checkReturns (/=nullBandH) $
+  {#call GetRasterBand as ^#} (unDataset ds) (fromIntegral b)
 
 
 reifyDataType :: DataType -> (forall a. GDALType a => Proxy a -> b) -> b
@@ -445,13 +449,13 @@ bandNodataValueIO b = alloca $ \p -> do
 setBandNodataValue :: GDALType a => RWBand s -> a -> GDAL s ()
 setBandNodataValue b v =
   liftIO $
-    checkCPLErr $
+    checkCPLError $
       {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
 
 fillRaster :: CDouble -> CDouble  -> RWBand s -> GDAL s ()
 fillRaster r i b =
   liftIO $
-    checkCPLErr $
+    checkCPLError $
       {#call GDALFillRaster as ^#} (unBand b) r i
 
 
@@ -487,7 +491,7 @@ readBandIO band win (XY bx by) = readMasked band read_
       vec <- Stm.new (bx*by)
       let dtype = fromEnumC (dataType (Proxy :: Proxy a'))
       Stm.unsafeWith vec $ \ptr -> do
-        checkCPLErr $
+        checkCPLError $
           {#call unsafe RasterAdviseRead as ^#}
             b
             (fromIntegral xoff)
@@ -498,7 +502,7 @@ readBandIO band win (XY bx by) = readMasked band read_
             (fromIntegral by)
             dtype
             (castPtr nullPtr)
-        checkCPLErr $
+        checkCPLError $
           {#call RasterIO as ^#}
             b
             (fromEnumC GF_Read)
@@ -566,7 +570,7 @@ writeBand band win sz@(XY bx by) uvec = liftIO $ do
   if nElems /= len
     then throwBindingException (InvalidRasterSize sz)
     else withForeignPtr fp $ \ptr ->
-      checkCPLErr $
+      checkCPLError $
         {#call RasterIO as ^#}
           (unBand band)
           (fromEnumC GF_Write)
@@ -590,7 +594,7 @@ readBandBlock band blockIx = do
   liftIO $ readMasked band $ \b -> do
     vec <- Stm.new (bandBlockLen band)
     Stm.unsafeWith vec $
-      checkCPLErr . {#call ReadBlock as ^#} b x y . castPtr
+      checkCPLError . {#call ReadBlock as ^#} b x y . castPtr
     St.unsafeFreeze vec
   where XY x y = fmap fromIntegral blockIx
 {-# INLINE readBandBlock #-}
@@ -627,7 +631,7 @@ ifoldlM' f initialAcc band = do
                         \v -> if toCDouble v == nd then NoData else Value v
           goB !iB !jB !acc
             | iB < nx   = do
-                checkCPLErr $
+                checkCPLError $
                   {#call ReadBlock as ^#}
                     pBand (fromIntegral iB) (fromIntegral jB) (castPtr ptr)
                 go 0 0 acc >>= goB (iB+1) jB
@@ -667,7 +671,7 @@ writeBandBlock band blockIx uvec = do
     if nElems /= len
       then throwBindingException (InvalidBlockSize len)
       else withForeignPtr fp $
-             checkCPLErr . {#call WriteBlock as ^#} pBand x y . castPtr
+             checkCPLError . {#call WriteBlock as ^#} pBand x y . castPtr
   where XY x y = fmap fromIntegral blockIx
         pBand  = unBand band
 {-# INLINE writeBandBlock #-}

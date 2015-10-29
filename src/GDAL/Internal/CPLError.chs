@@ -15,22 +15,33 @@ module GDAL.Internal.CPLError (
   , bindingExceptionToException
   , bindingExceptionFromException
   , withErrorHandler
-  , throwIfError
-  , throwIfError_
   , checkReturns
   , checkReturns_
+  , popLastError
+  , checkCPLError
+  , checkGDALCall
+  , checkGDALCall_
 ) where
 
 {# context lib = "gdal" prefix = "CPL" #}
 
-import Control.Exception (Exception(..), SomeException, bracket, finally)
 import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (void, liftM)
-import Control.Monad.Catch (MonadCatch, MonadThrow(throwM))
+import Control.Monad.Catch (
+    Exception (..)
+  , SomeException
+  , MonadCatch
+  , MonadMask
+  , MonadThrow (throwM)
+  , mask
+  , onException
+  , bracket
+  , finally
+  )
 import Control.Monad.IO.Class (MonadIO(..))
 
-import Data.Maybe (isJust, fromMaybe)
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Typeable (Typeable, cast)
 import Data.Monoid (mconcat)
@@ -53,7 +64,7 @@ import GDAL.Internal.Util (toEnumC, peekEncodedCString)
 
 
 data GDALException
-  = forall e. Exception e =>
+  = forall e. (Exception e, NFData e) =>
     GDALBindingException !e
   | GDALException        { gdalErrType :: !ErrorType
                          , gdalErrNum  :: !ErrorNum
@@ -64,19 +75,22 @@ deriving instance Show GDALException
 
 instance Exception GDALException
 
-bindingExceptionToException :: Exception e => e -> SomeException
+bindingExceptionToException
+  :: (Exception e, NFData e) => e -> SomeException
 bindingExceptionToException = toException . GDALBindingException
 
-bindingExceptionFromException :: Exception e => SomeException -> Maybe e
+bindingExceptionFromException
+  :: (Exception e, NFData e) => SomeException -> Maybe e
 bindingExceptionFromException x = do
   GDALBindingException a <- fromException x
   cast a
 
 
 instance NFData GDALException where
-  rnf a = a `seq` () -- All fields are already strict so no need to rnf them
+  rnf (GDALBindingException e) = rnf e
+  rnf (GDALException e n m) = rnf e `seq` rnf n `seq` rnf m `seq` ()
 
-throwBindingException :: (MonadThrow m, Exception e) => e -> m a
+throwBindingException :: (MonadThrow m, Exception e, NFData e) => e -> m a
 throwBindingException = throwM . bindingExceptionToException
 
 isGDALException :: SomeException -> Bool
@@ -105,22 +119,52 @@ isBindingException e
 instance NFData ErrorType where
   rnf a = a `seq` ()
 
+instance NFData ErrorNum where
+  rnf a = a `seq` ()
+
+
 checkReturns
-  :: (Eq a, Functor m, MonadIO m, MonadThrow m)
+  :: (Eq a, Functor m, MonadIO m, MonadMask m)
   => (a -> Bool) -> m a -> m a
-checkReturns isOk act = do
-  a <- act
-  if isOk a
-    then return a
-    else liftIO popLastError >>= throwM . fromMaybe defaultExc
-  where defaultExc = GDALException CE_Failure AssertionFailed "checkReturns"
+checkReturns isOk = checkGDALCall isOk'
+  where
+    isOk' Nothing r | isOk r = Nothing
+    isOk' Nothing _          = Just defaultExc
+    isOk' e       _          = e
+    defaultExc = GDALException CE_Failure AssertionFailed "checkReturns"
 {-# INLINE checkReturns #-}
 
 checkReturns_
-  :: (Eq a, Functor m, MonadIO m, MonadThrow m)
+  :: (Eq a, Functor m, MonadIO m, MonadMask m)
   => (a -> Bool) -> m a -> m ()
 checkReturns_ isOk = void . checkReturns isOk
 {-# INLINE checkReturns_ #-}
+
+checkGDALCall
+  :: (MonadMask m, MonadIO m, Exception e)
+  => (Maybe GDALException -> a -> Maybe e) -> m a -> m a
+checkGDALCall isOk act = mask $ \restore -> do
+  liftIO $ clearErrors
+  a <- restore act `onException` (liftIO popLastError)
+  err <- liftIO popLastError
+  case isOk err a of
+    Nothing -> return a
+    Just e  -> throwM e
+{-# INLINE checkGDALCall #-}
+
+checkGDALCall_
+  :: (MonadMask m, MonadIO m, Exception e)
+  => (Maybe GDALException -> a -> Maybe e) -> m a -> m ()
+{-# INLINE checkGDALCall_ #-}
+checkGDALCall_ isOk = void . checkGDALCall isOk
+
+checkCPLError :: IO CInt -> IO ()
+checkCPLError = checkGDALCall_ $ \mExc r ->
+  case (mExc, toEnumC r) of
+    (Nothing, CE_None) -> Nothing
+    (Nothing, e)       -> Just (GDALException e AssertionFailed "checkCPLError")
+    (e, _)             -> e
+{-# INLINE checkCPLError #-}
 
 {#pointer ErrorCell #}
 
@@ -147,18 +191,3 @@ withErrorHandler act = runBounded $
     runBounded
       | rtsSupportsBoundThreads = runInBoundThread
       | otherwise               = id
-
-
-throwIfError_ :: (MonadCatch m, MonadIO m, Functor m) => Text -> m a -> m ()
-throwIfError_ prefix = void . throwIfError prefix
-{-# INLINE throwIfError_ #-}
-
-throwIfError :: (MonadCatch m, MonadIO m) => Text -> m a -> m a
-throwIfError prefix act = do
-  ret <- act
-  mErr <- liftIO popLastError
-  case mErr of
-    Nothing -> return ret
-    Just e  ->
-      throwM (e {gdalErrMsg = mconcat [prefix,": ", gdalErrMsg e]})
-{-# INLINE throwIfError #-}

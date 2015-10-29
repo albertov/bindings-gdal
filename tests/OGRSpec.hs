@@ -471,7 +471,8 @@ ogrFieldSpec driverName v = do
           createFeature l feat >>= getFeature l >>= (`shouldBe` Just feat)
         case r of
           Right () -> return ()
-          Left GDALException{gdalErrNum=NotSupported} ->
+          Left OGRException{ogrErrNum=NotSupported,ogrErrMsg=m} ->
             -- driver does not support it, oh well...
-            warn ("Not supported by '"++driverName++"' driver: " ++ tyName)
+            warn ("Type '"++ tyName++"' not supported by '"++driverName++
+                  "' driver: " ++ show m)
           Left e  -> throwM e

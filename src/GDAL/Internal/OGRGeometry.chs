@@ -192,8 +192,7 @@ exportToWktIO :: Geometry -> IO ByteString
 exportToWktIO g =
   withGeometry g $ \gPtr ->
   peekCPLString $
-    checkReturns_ ((==None) . toEnumC)
-      . {#call unsafe OGR_G_ExportToWkt as ^ #} gPtr
+    checkOGRError . {#call unsafe OGR_G_ExportToWkt as ^ #} gPtr
 
 exportToWkt :: Geometry -> ByteString
 exportToWkt = unsafePerformIO . exportToWktIO
@@ -203,7 +202,7 @@ exportToWkbIO bo g = withGeometry g $ \gPtr -> do
   len <- liftM fromIntegral ({#call unsafe OGR_G_WkbSize as ^ #} gPtr)
   fp <- mallocForeignPtrBytes len
   withForeignPtr fp $
-    checkReturns_ ((==None) . toEnumC)
+    checkOGRError
       . {#call unsafe OGR_G_ExportToWkb as ^ #} gPtr (fromEnumC bo)
       . castPtr
   return $! PS fp 0 len
