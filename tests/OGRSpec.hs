@@ -30,6 +30,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 
 import System.Mem (performMajorGC)
+import System.Posix.Files (setFileMode, nullFileMode)
 import System.FilePath (joinPath)
 
 import GDAL (
@@ -88,6 +89,7 @@ spec = setupAndTeardown $ do
       let p = joinPath [d, "test.shp"]
       void $ create "ESRI Shapefile" p []
 
+
     it "create throws on invalid driver name" $
       create "foo" "" [] `shouldThrow` (==(UnknownDriver "foo"))
 
@@ -114,6 +116,16 @@ spec = setupAndTeardown $ do
                           , fdFields = mempty
                           , fdGeom   = pointDef {gfdSrs = Just srs23030}
                           , fdGeoms  = mempty})
+
+      withDir "throws if destination not writable" $ \tmpDir -> do
+        let fd = FeatureDef { fdName   = "Barça Players"
+                            , fdFields = [strField "contraseña"]
+                            , fdGeom   = pointDef
+                            , fdGeoms  = mempty}
+        liftIO $ setFileMode tmpDir nullFileMode
+        ds <- create "ESRI Shapefile" (joinPath [tmpDir, "foo.shp"]) []
+        createLayerWithDef ds fd StrictOK []
+          `shouldThrow` ((==OpenFailed) . gdalErrNum)
 
       when canCreateMultipleGeometryFields $ do
         it "works with several geometry field with no srs" $ do
@@ -189,7 +201,7 @@ spec = setupAndTeardown $ do
           ds <- create "ESRI Shapefile" path []
           l <- createLayerWithDef ds fDef StrictOK []
           fid <- createFeature l feat
-          syncToDisk l
+          syncLayerToDisk l
           l2 <- openReadOnly path >>= getLayerByName name
           getFeature l2 fid >>= (`shouldBe` expected)
 

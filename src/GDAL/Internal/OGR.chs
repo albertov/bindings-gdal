@@ -54,6 +54,7 @@ module GDAL.Internal.OGR (
   , executeSQL
   , executeSQL_
 
+  , syncLayerToDisk
   , syncToDisk
 
   , getSpatialFilter
@@ -87,7 +88,7 @@ module GDAL.Internal.OGR (
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Conduit
 import qualified Data.Conduit.List as CL
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, fromMaybe)
 import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
 import qualified Data.Vector as V
@@ -176,10 +177,9 @@ openWithMode m p =
   newDataSourceHandle $ withCString p $ \p' ->
     checkGDALCall checkIt ({#call OGROpen as ^#} p' (fromEnumC m) nullPtr)
   where
-    checkIt Nothing p' | p'==nullDataSourceH =
-      Just (GDALException CE_Failure OpenFailed "open: failed")
-    checkIt Nothing _ = Nothing
-    checkIt e       _ = e
+    checkIt e p' | p'==nullDataSourceH = Just (fromMaybe dflt e)
+    checkIt e _                        = e
+    dflt = GDALException CE_Failure OpenFailed "OGROpen"
 
 
 newDataSourceHandle
@@ -187,7 +187,10 @@ newDataSourceHandle
 newDataSourceHandle act = liftM snd $ allocate alloc free
   where
     alloc = liftM DataSource act
-    free  = {#call OGR_DS_Destroy as ^#} . unDataSource
+    free ds
+      | dsPtr /= nullDataSourceH = {#call OGR_DS_Destroy as ^#} dsPtr
+      | otherwise                = return ()
+      where dsPtr = unDataSource ds
 
 type Driver = String
 
@@ -195,7 +198,12 @@ create :: Driver -> String -> OptionList -> GDAL s (RWDataSource s)
 create driverName name options = newDataSourceHandle $ do
   pDr <- driverByName driverName
   withCString name $ \pName ->
-    withOptionList options $ {#call OGR_Dr_CreateDataSource as ^#} pDr pName
+    checkGDALCall checkIt
+      (withOptionList options $ {#call OGR_Dr_CreateDataSource as ^#} pDr pName)
+  where
+    checkIt e p' | p'==nullDataSourceH = Just (fromMaybe dflt e)
+    checkIt e _                        = e
+    dflt = GDALException CE_Failure OpenFailed "OGR_Dr_CreateDataSource"
 
 createMem :: OptionList -> GDAL s (RWDataSource s)
 createMem = create "Memory" ""
@@ -227,8 +235,8 @@ createLayerWithDef ds FeatureDef{..} approxOk options =
   useAsEncodedCString fdName $ \pName ->
   withMaybeSpatialReference (gfdSrs fdGeom) $ \pSrs ->
   withOptionList options $ \pOpts -> do
-    pL <- {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts
-    when (pL == nullLayerH) (throwBindingException NullLayer)
+    pL <- checkGDALCall checkIt $
+            {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts
     V.forM_ fdFields $ \(n,f) -> withFieldDefnH n f $ \pFld ->
       checkOGRError $ {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
     when (not (V.null fdGeoms)) $
@@ -249,6 +257,9 @@ createLayerWithDef ds FeatureDef{..} approxOk options =
     iApproxOk = fromEnumC approxOk
     pDs   = unDataSource ds
     gType = fromEnumC (gfdType fdGeom)
+    checkIt e p' | p'==nullLayerH = Just (fromMaybe dflt e)
+    checkIt e _                   = e
+    dflt = GDALBindingException NullLayer
 
 getLayerSchema :: LayerH -> IO FeatureDefnH
 getLayerSchema = {#call OGR_L_GetLayerDefn as ^#}
@@ -303,11 +314,15 @@ canCreateMultipleGeometryFields =
   False
 #endif
 
-syncToDiskIO :: RWLayer s a -> IO ()
-syncToDiskIO = checkOGRError . {#call OGR_L_SyncToDisk as ^#} . unLayer
+syncToDisk :: RWDataSource s -> GDAL s ()
+syncToDisk =
+  liftIO . checkOGRError . {#call OGR_DS_SyncToDisk as ^#} . unDataSource
 
-syncToDisk :: RWLayer s a -> GDAL s ()
-syncToDisk = liftIO . syncToDiskIO
+syncLayerToDiskIO :: RWLayer s a -> IO ()
+syncLayerToDiskIO = checkOGRError . {#call OGR_L_SyncToDisk as ^#} . unLayer
+
+syncLayerToDisk :: RWLayer s a -> GDAL s ()
+syncLayerToDisk = liftIO . syncLayerToDiskIO
 
 
 getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
@@ -412,7 +427,7 @@ sourceFromLayer alloc free = layerTransaction alloc' (free . fst) loop
 conduitFromLayer
   :: GDAL s (RWLayer s a) -> ((RWLayer s a, FeatureDefnH) -> GDALConduit s i o)
   -> GDALConduit s i o
-conduitFromLayer alloc = layerTransaction alloc' (syncToDiskIO . fst)
+conduitFromLayer alloc = layerTransaction alloc' (syncLayerToDiskIO . fst)
   where
     alloc' = do
       l <- alloc

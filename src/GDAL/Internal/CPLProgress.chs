@@ -24,7 +24,6 @@ import Foreign.C.String (CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..))
 import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr, nullPtr)
 
-import GDAL.Internal.Types
 import GDAL.Internal.Util (fromEnumC)
 
 #include "cpl_progress.h"

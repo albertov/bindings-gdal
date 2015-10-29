@@ -87,6 +87,7 @@ test-suite spec
                   , time
                   , data-default
                   , conduit
+                  , unix
   hs-source-dirs:   tests
   main-is:          Main.hs
   other-modules:    Spec

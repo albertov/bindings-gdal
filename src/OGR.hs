@@ -86,6 +86,7 @@ module OGR (
   , sinkUpdateLayer
 
   , syncToDisk
+  , syncLayerToDisk
 
   , getSpatialFilter
   , setSpatialFilter

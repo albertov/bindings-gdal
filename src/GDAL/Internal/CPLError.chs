@@ -29,7 +29,6 @@ import Control.Monad (void, liftM)
 import Control.Monad.Catch (
     Exception (..)
   , SomeException
-  , MonadCatch
   , MonadMask
   , MonadThrow (throwM)
   , mask
