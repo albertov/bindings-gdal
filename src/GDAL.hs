@@ -1,9 +1,6 @@
 module GDAL (
     GDAL
   , GDALType (..)
-  , GDALConduit
-  , GDALSource
-  , GDALSink
   , DataType (..)
   , XY (..)
   , Window (..)

@@ -32,14 +32,15 @@ main = withGDAL $ liftM (either throw id) $ runGDAL $ do
     T.putStrLn "Schema:"
     print schema
 
-  sourceLayer (getLayerByName name ds) $$ awaitForever $ \(mFid, Feature{..}) ->
-    liftIO $ do
-      T.putStrLn ""
-      T.putStrLn ""
-      putStrLn ("FID: " <> maybe ("<unknown>") show mFid)
-      T.putStrLn "Fields:"
-      forM_ (HM.toList fFields) $ \(fieldName, fieldValue) -> do
-        T.putStrLn ("  " <> fieldName <> ":")
-        putStrLn ("    " <> show fieldValue)
-      T.putStrLn ("Geometry:")
-      BS.putStrLn (maybe "" (("  "<>) . exportToWkt) fGeom)
+  runOGR $ sourceLayer (getLayerByName name ds) $$ awaitForever $
+    \(mFid, Feature{..}) ->
+      liftIO $ do
+        T.putStrLn ""
+        T.putStrLn ""
+        putStrLn ("FID: " <> maybe ("<unknown>") show mFid)
+        T.putStrLn "Fields:"
+        forM_ (HM.toList fFields) $ \(fieldName, fieldValue) -> do
+          T.putStrLn ("  " <> fieldName <> ":")
+          putStrLn ("    " <> show fieldValue)
+        T.putStrLn ("Geometry:")
+        BS.putStrLn (maybe "" (("  "<>) . exportToWkt) fGeom)

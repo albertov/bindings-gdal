@@ -9,6 +9,11 @@ module OGR (
   , RWLayer
   , Driver
 
+  , OGR
+  , OGRConduit
+  , OGRSource
+  , OGRSink
+
   , OGRError (..)
   , OGRException (..)
   , DriverCapability(..)
@@ -33,6 +38,8 @@ module OGR (
   , Geometry (..)
   , WkbByteOrder (..)
   , Envelope (..)
+
+  , runOGR
 
   , createFromWkt
   , createFromWkb

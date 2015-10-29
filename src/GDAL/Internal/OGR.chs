@@ -11,6 +11,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE LambdaCase #-}
 
 #include "bindings.h"
@@ -28,6 +30,11 @@ module GDAL.Internal.OGR (
   , ROLayer
   , RWLayer
   , Driver
+  , OGR
+  , OGRConduit
+  , OGRSource
+  , OGRSink
+  , runOGR
 
   , openReadOnly
   , openReadWrite
@@ -95,8 +102,17 @@ import qualified Data.Vector as V
 
 import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (liftM, when, void, (>=>), (<=<))
-import Control.Monad.Catch (bracketOnError, bracket, finally)
+import Control.Monad.Base (MonadBase)
+import Control.Monad.Catch (
+    MonadThrow(..)
+  , MonadCatch
+  , MonadMask
+  , bracket
+  , bracketOnError
+  , finally
+  )
 import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Resource (MonadResource)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Foreign.C.String (CString, peekCString, withCString)
@@ -146,6 +162,25 @@ nullDataSourceH = DataSourceH nullPtr
 type RODataSource s = DataSource s ReadOnly
 type RWDataSource s = DataSource s ReadWrite
 
+newtype OGR s l a = OGR (GDAL s a)
+
+deriving instance Functor (OGR s l)
+deriving instance Applicative (OGR s l)
+deriving instance Monad (OGR s l)
+deriving instance MonadIO (OGR s l)
+deriving instance MonadThrow (OGR s l)
+deriving instance MonadCatch (OGR s l)
+deriving instance MonadMask (OGR s l)
+deriving instance MonadBase IO (OGR s l)
+deriving instance MonadResource (OGR s l)
+
+runOGR :: (forall l. OGR s l a )-> GDAL s a
+runOGR (OGR a) = a
+
+type OGRConduit s l i o = Conduit i (OGR s l) o
+type OGRSource s l o = Source (OGR s l) o
+type OGRSink s l i = Sink i (OGR s l)
+
 {#pointer LayerH newtype#}
 
 deriving instance Storable LayerH
@@ -154,11 +189,11 @@ deriving instance Eq LayerH
 nullLayerH :: LayerH
 nullLayerH = LayerH nullPtr
 
-newtype (Layer s (t::AccessMode) a) =
+newtype (Layer s l (t::AccessMode) a) =
   Layer { unLayer :: LayerH }
 
-type ROLayer s = Layer s ReadOnly
-type RWLayer s = Layer s ReadWrite
+type ROLayer s l = Layer s l ReadOnly
+type RWLayer s l = Layer s l ReadWrite
 
 {#enum define OGRAccess
   { FALSE  as OGR_ReadOnly
@@ -221,15 +256,15 @@ driverByName name = withCString name $ \pName -> do
   } deriving (Eq, Show) #}
 
 createLayer
-  :: forall s a. OGRFeatureDef a
-  => RWDataSource s -> ApproxOK -> OptionList -> GDAL s (RWLayer s a)
+  :: forall s l a. OGRFeatureDef a
+  => RWDataSource s -> ApproxOK -> OptionList -> GDAL s (RWLayer s l a)
 createLayer ds = createLayerWithDef ds (featureDef (Proxy :: Proxy a))
 
 
 
 createLayerWithDef
   :: RWDataSource s -> FeatureDef -> ApproxOK -> OptionList
-  -> GDAL s (RWLayer s a)
+  -> GDAL s (RWLayer s l a)
 createLayerWithDef ds FeatureDef{..} approxOk options =
   liftIO $
   useAsEncodedCString fdName $ \pName ->
@@ -273,26 +308,26 @@ createFeatureWithFidIO pL fid feat = do
     getFid pF
 
 createFeatureWithFid
-  :: OGRFeature a => RWLayer s a -> Maybe Fid -> a -> GDAL s (Maybe Fid)
+  :: OGRFeature a => RWLayer s l a -> Maybe Fid -> a -> GDAL s (Maybe Fid)
 createFeatureWithFid layer fid =
   liftIO . createFeatureWithFidIO (unLayer layer) fid
 
-createFeature :: OGRFeature a => RWLayer s a -> a -> GDAL s Fid
+createFeature :: OGRFeature a => RWLayer s l a -> a -> GDAL s Fid
 createFeature layer =
   createFeatureWithFid layer Nothing >=>
     maybe (throwBindingException UnexpectedNullFid) return
 
-createFeature_ :: OGRFeature a => RWLayer s a -> a -> GDAL s ()
+createFeature_ :: OGRFeature a => RWLayer s l a -> a -> GDAL s ()
 createFeature_ layer = void . createFeatureWithFid layer Nothing
 
-updateFeature :: OGRFeature a => RWLayer s a -> Fid -> a -> GDAL s ()
+updateFeature :: OGRFeature a => RWLayer s l a -> Fid -> a -> GDAL s ()
 updateFeature layer fid feat = liftIO $ do
   pFd <- getLayerSchema pL
   featureToHandle pFd (Just fid) feat $
     checkOGRError . {#call OGR_L_SetFeature as ^#} pL
   where pL = unLayer layer
 
-getFeature :: OGRFeature a => Layer s t a -> Fid -> GDAL s (Maybe a)
+getFeature :: OGRFeature a => Layer s l t a -> Fid -> GDAL s (Maybe a)
 getFeature layer (Fid fid) = liftIO $ do
   when (not (pL `layerHasCapability` RandomRead)) $
     throwBindingException (UnsupportedLayerCapability RandomRead)
@@ -301,7 +336,7 @@ getFeature layer (Fid fid) = liftIO $ do
     {#call OGR_L_GetFeature as ^#} pL (fromIntegral fid)
   where pL = unLayer layer
 
-deleteFeature :: Layer s t a -> Fid -> GDAL s ()
+deleteFeature :: Layer s l t a -> Fid -> GDAL s ()
 deleteFeature layer (Fid fid) = liftIO $
   checkOGRError $
     {#call OGR_L_DeleteFeature as ^#} (unLayer layer) (fromIntegral fid)
@@ -318,21 +353,21 @@ syncToDisk :: RWDataSource s -> GDAL s ()
 syncToDisk =
   liftIO . checkOGRError . {#call OGR_DS_SyncToDisk as ^#} . unDataSource
 
-syncLayerToDiskIO :: RWLayer s a -> IO ()
+syncLayerToDiskIO :: RWLayer s l a -> IO ()
 syncLayerToDiskIO = checkOGRError . {#call OGR_L_SyncToDisk as ^#} . unLayer
 
-syncLayerToDisk :: RWLayer s a -> GDAL s ()
+syncLayerToDisk :: RWLayer s l a -> GDAL s ()
 syncLayerToDisk = liftIO . syncLayerToDiskIO
 
 
-getLayer :: Int -> DataSource s t -> GDAL s (Layer s t a)
+getLayer :: Int -> DataSource s t -> GDAL s (Layer s l t a)
 getLayer ix ds = liftIO $ do
   pL <- {#call OGR_DS_GetLayer as ^#} (unDataSource ds) (fromIntegral ix)
   when (pL == nullLayerH) (throwBindingException (InvalidLayerIndex ix))
   return (Layer pL)
 
 
-getLayerByName :: Text -> DataSource s t -> GDAL s (Layer s t a)
+getLayerByName :: Text -> DataSource s t -> GDAL s (Layer s l t a)
 getLayerByName name ds = liftIO $ useAsEncodedCString name $ \lName -> do
   pL <- {#call OGR_DS_GetLayerByName as ^#} (unDataSource ds) lName
   when (pL==nullLayerH) (throwBindingException (InvalidLayerName name))
@@ -340,17 +375,17 @@ getLayerByName name ds = liftIO $ useAsEncodedCString name $ \lName -> do
 
 
 sourceLayer
-  :: OGRFeature a => GDAL s (Layer s t a) -> GDALSource s (Maybe Fid, a)
+  :: OGRFeature a => GDAL s (Layer s l t a) -> OGRSource s l (Maybe Fid, a)
 sourceLayer = flip sourceFromLayer (const (return ()))
 
 sourceLayer_
-  :: OGRFeature a => GDAL s (Layer s t a) -> GDALSource s a
+  :: OGRFeature a => GDAL s (Layer s l t a) -> OGRSource s l a
 sourceLayer_ = (=$= (CL.map snd)) . sourceLayer
 
 
 conduitInsertLayer
   :: OGRFeature a
-  => GDAL s (RWLayer s a) -> GDALConduit s (Maybe Fid, a) (Maybe Fid)
+  => GDAL s (RWLayer s l a) -> OGRConduit s l (Maybe Fid, a) (Maybe Fid)
 conduitInsertLayer = flip conduitFromLayer createIt
   where
     createIt (l, pFd) = awaitForever $ \(fid, feat) -> do
@@ -361,20 +396,20 @@ conduitInsertLayer = flip conduitFromLayer createIt
 
 conduitInsertLayer_
   :: OGRFeature a
-  => GDAL s (RWLayer s a) -> GDALConduit s a (Maybe Fid)
+  => GDAL s (RWLayer s l a) -> OGRConduit s l a (Maybe Fid)
 conduitInsertLayer_ = (CL.map (\i->(Nothing,i)) =$=) . conduitInsertLayer
 
 sinkInsertLayer
-  :: OGRFeature a => GDAL s (RWLayer s a) -> GDALSink s (Maybe Fid, a) ()
+  :: OGRFeature a => GDAL s (RWLayer s l a) -> OGRSink s l (Maybe Fid, a) ()
 sinkInsertLayer = (=$= CL.sinkNull) . conduitInsertLayer
 
 sinkInsertLayer_
-  :: OGRFeature a => GDAL s (RWLayer s a) -> GDALSink s a ()
+  :: OGRFeature a => GDAL s (RWLayer s l a) -> OGRSink s l a ()
 sinkInsertLayer_ =
   ((=$= CL.sinkNull) . ((CL.map (\i->(Nothing,i))) =$=)) . conduitInsertLayer
 
 sinkUpdateLayer
-  :: OGRFeature a => GDAL s (RWLayer s a) -> GDALSink s (Fid, a) ()
+  :: OGRFeature a => GDAL s (RWLayer s l a) -> OGRSink s l (Fid, a) ()
 sinkUpdateLayer = flip conduitFromLayer updateIt
   where
     updateIt (l, pFd) = awaitForever $ \(fid, feat) ->
@@ -383,12 +418,12 @@ sinkUpdateLayer = flip conduitFromLayer updateIt
 
 
 layerTransaction
-  :: GDAL s (Layer s t a, e)
-  -> ((Layer s t a, e) -> IO ())
-  -> ((Layer s t a, e) -> GDALConduit s i o)
-  -> GDALConduit s i o
+  :: GDAL s (Layer s l t a, e)
+  -> ((Layer s l t a, e) -> IO ())
+  -> ((Layer s l t a, e) -> OGRConduit s l i o)
+  -> OGRConduit s l i o
 layerTransaction alloc free inside = do
-  alloc' <- lift (unsafeGDALToIO alloc)
+  alloc' <- lift (OGR (unsafeGDALToIO alloc))
   (rbKey, seed) <- allocate alloc' rollback
   liftIO $ checkOGRError $
     {#call OGR_L_StartTransaction as ^#} (unLayer (fst seed))
@@ -404,10 +439,10 @@ layerTransaction alloc free inside = do
         `finally` free seed
 
 sourceFromLayer
-  :: forall s t a. OGRFeature a
-  => GDAL s (Layer s t a)
-  -> (Layer s t a -> IO ())
-  -> GDALSource s (Maybe Fid, a)
+  :: forall s l t a. OGRFeature a
+  => GDAL s (Layer s l t a)
+  -> (Layer s l t a -> IO ())
+  -> OGRSource s l (Maybe Fid, a)
 sourceFromLayer alloc free = layerTransaction alloc' (free . fst) loop
   where
     alloc' = bracketOnError alloc (liftIO . free) $ \l -> do
@@ -425,8 +460,9 @@ sourceFromLayer alloc free = layerTransaction alloc' (free . fst) loop
 
 
 conduitFromLayer
-  :: GDAL s (RWLayer s a) -> ((RWLayer s a, FeatureDefnH) -> GDALConduit s i o)
-  -> GDALConduit s i o
+  :: GDAL s (RWLayer s l a)
+  -> ((RWLayer s l a, FeatureDefnH) -> OGRConduit s l i o)
+  -> OGRConduit s l i o
 conduitFromLayer alloc = layerTransaction alloc' (syncLayerToDiskIO . fst)
   where
     alloc' = do
@@ -467,7 +503,7 @@ withSQLDialect OGRDialect     = unsafeUseAsCString "OGRSQL"
 executeSQL
   :: OGRFeature a
   => SQLDialect -> Text -> Maybe Geometry -> RODataSource s
-  -> GDALSource s (Maybe Fid, a)
+  -> OGRSource s l (Maybe Fid, a)
 executeSQL dialect query mSpatialFilter ds = sourceFromLayer alloc freeIfNotNull
   where
     alloc =
@@ -494,20 +530,20 @@ executeSQL dialect query mSpatialFilter ds = sourceFromLayer alloc freeIfNotNull
 executeSQL_
   :: OGRFeature a
   => SQLDialect -> Text -> Maybe Geometry -> RODataSource s
-  -> GDALSource s a
+  -> OGRSource s l a
 executeSQL_ dialect query mSpatialFilter =
   (=$= (CL.map snd)) . executeSQL dialect query mSpatialFilter
 
-layerName :: Layer s t a -> GDAL s Text
+layerName :: Layer s l t a -> GDAL s Text
 layerName =
   liftIO . (peekEncodedCString <=< {#call unsafe OGR_L_GetName as ^#} . unLayer)
 
-layerExtent :: Layer s t a -> GDAL s Envelope
+layerExtent :: Layer s l t a -> GDAL s Envelope
 layerExtent l = liftIO $ alloca $ \pE -> do
   checkOGRError ({#call OGR_L_GetExtent as ^#} (unLayer l) pE 1)
   peek pE
 
-layerFeatureDef :: Layer s t a -> GDAL s FeatureDef
+layerFeatureDef :: Layer s l t a -> GDAL s FeatureDef
 layerFeatureDef = liftIO . layerFeatureDefIO . unLayer
 
 layerFeatureDefIO :: LayerH -> IO FeatureDef
@@ -516,11 +552,11 @@ layerFeatureDefIO pL = do
   getLayerSchema pL >>= featureDefFromHandle gfd
 
 
-getSpatialFilter :: Layer s t a -> GDAL s (Maybe Geometry)
+getSpatialFilter :: Layer s l t a -> GDAL s (Maybe Geometry)
 getSpatialFilter l = liftIO $
   {#call unsafe OGR_L_GetSpatialFilter as ^#} (unLayer l) >>= maybeCloneGeometry
 
-setSpatialFilter :: Layer s t a -> Geometry -> GDAL s ()
+setSpatialFilter :: Layer s l t a -> Geometry -> GDAL s ()
 setSpatialFilter l g = liftIO $
   withGeometry g $ {#call unsafe OGR_L_SetSpatialFilter as ^#} (unLayer l)
 

@@ -174,10 +174,10 @@ spec = setupAndTeardown $ do
           withDir "can sink and then source features" $ \tmpDir -> do
             let fs = map (TestFeature aPoint) [1..1000 :: Int32]
             ds <- create driverName (joinPath [tmpDir, "test"]) []
-            CL.sourceList fs $$ sinkInsertLayer_ (createLayer ds StrictOK [])
-            fs' <- sourceLayer_ (getLayer 0 ds) $$ CL.consume
+            fs' <- runOGR $ do
+              CL.sourceList fs $$ sinkInsertLayer_ (createLayer ds StrictOK [])
+              sourceLayer_ (getLayer 0 ds) $$ CL.consume
             fs `shouldBe` fs'
-
 
       withDir "can retrieve features with less fields than present in layer" $
         \tmpDir -> do
@@ -225,14 +225,14 @@ spec = setupAndTeardown $ do
     it "can execute a valid query with DefaultDialect" $ do
       ds <- getShapePath >>= openReadOnly
       let src = executeSQL_ DefaultDialect "SELECT * FROM fondo" Nothing ds
-      (fs :: [Feature]) <- src $$ CL.consume
+      (fs :: [Feature]) <- runOGR (src $$ CL.consume)
       length fs `shouldBe` 2
 
     it "throws error on invalid query" $ do
       ds <- getShapePath >>= openReadOnly
       let src = executeSQL_ DefaultDialect "dis is NoSQL!" Nothing ds
           isSqlError e = case e of {SQLQueryError _ -> True; _ -> False}
-      (src $$ CL.consume >>= \(_::[Feature])->undefined)
+      (runOGR (src $$ CL.consume >>= \(_::[Feature])->undefined))
         `shouldThrow` isSqlError
 
 

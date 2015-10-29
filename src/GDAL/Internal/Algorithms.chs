@@ -226,9 +226,9 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
 -- ############################################################################
 
 rasterizeLayersBuf
-  :: forall t s a l. (GDALType a, Transformer t)
+  :: forall t s l a b. (GDALType a, Transformer t)
   => Size
-  -> [ROLayer s l]
+  -> [ROLayer s l b]
   -> SpatialReference
   -> Geotransform
   -> Maybe (t s)
@@ -243,9 +243,9 @@ rasterizeLayersBuf size layers srs geotransform mTransformer nodataValue
                mTransformer nodataValue burnValue options progressFun
 
 rasterizeLayersBufIO
-  :: forall t s a l. (GDALType a, Transformer t)
+  :: forall t s l a b. (GDALType a, Transformer t)
   => Size
-  -> [ROLayer s l]
+  -> [ROLayer s l b]
   -> SpatialReference
   -> Geotransform
   -> Maybe (t s)
