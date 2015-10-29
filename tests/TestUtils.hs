@@ -1,4 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module TestUtils (
     Spec
   , SpecWith
@@ -40,7 +41,7 @@ import Test.Hspec (
   )
 import qualified Test.Hspec as Hspec
 
-import GDAL (GDAL, runGDAL)
+import GDAL (GDAL, GDALException, execGDAL)
 
 hspec :: Spec -> IO ()
 hspec = Hspec.hspec . Hspec.parallel
@@ -56,10 +57,12 @@ withDir n a =
   Hspec.it n (withSystemTempDirectory "test." (\f -> runGDAL' (a f)))
 
 runGDAL' :: (forall s. GDAL s ()) -> IO ()
-runGDAL' a =
-  runGDAL a >>=
-    either (Hspec.expectationFailure . ("Unexpected GDALException: " ++) . show)
-    return
+runGDAL' a = do
+  r <- try (execGDAL a)
+  case r of
+    Left (e :: GDALException) ->
+      Hspec.expectationFailure ("Unexpected GDALException: " ++ show e)
+    _ -> return ()
 
 existsAndSizeIsGreaterThan :: FilePath -> Integer -> GDAL s ()
 existsAndSizeIsGreaterThan p s = do

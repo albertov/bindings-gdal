@@ -224,13 +224,15 @@ spec = setupAndTeardown $ do
 
     it "can execute a valid query with DefaultDialect" $ do
       ds <- getShapePath >>= openReadOnly
-      let src = executeSQL_ DefaultDialect "SELECT * FROM fondo" Nothing ds
+      let src = sourceLayer_ $
+                  executeSQL DefaultDialect "SELECT * FROM fondo" Nothing ds
       (fs :: [Feature]) <- runOGR (src $$ CL.consume)
       length fs `shouldBe` 2
 
     it "throws error on invalid query" $ do
       ds <- getShapePath >>= openReadOnly
-      let src = executeSQL_ DefaultDialect "dis is NoSQL!" Nothing ds
+      let src = sourceLayer_ $
+                executeSQL DefaultDialect "dis is NoSQL!" Nothing ds
           isSqlError e = case e of {SQLQueryError _ -> True; _ -> False}
       (runOGR (src $$ CL.consume >>= \(_::[Feature])->undefined))
         `shouldThrow` isSqlError

@@ -76,7 +76,6 @@ module OGR (
 
   , datasourceName
   , executeSQL
-  , executeSQL_
 
   , createLayer
   , createLayerWithDef

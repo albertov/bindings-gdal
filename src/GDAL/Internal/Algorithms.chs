@@ -17,14 +17,13 @@ module GDAL.Internal.Algorithms (
   , getTransformerFunPtr
 
   , rasterizeLayersBuf
-  , rasterizeLayersBufIO
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
 
 import Control.DeepSeq (NFData(rnf))
-import Control.Exception (Exception(..), bracket)
-import Control.Monad (liftM)
+import Control.Monad.Catch (Exception(..), bracket)
+import Control.Monad (liftM, mapM_)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
 import Data.Proxy (Proxy(Proxy))
@@ -227,37 +226,23 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
 
 rasterizeLayersBuf
   :: forall t s l a b. (GDALType a, Transformer t)
-  => Size
-  -> [ROLayer s l b]
-  -> SpatialReference
-  -> Geotransform
+  => GDAL s [ROLayer s l b]
   -> Maybe (t s)
   -> a
   -> a
   -> OptionList
   -> Maybe ProgressFun
-  -> GDAL s (U.Vector (Value a))
-rasterizeLayersBuf size layers srs geotransform mTransformer nodataValue
-                   burnValue options progressFun =
-  liftIO $ rasterizeLayersBufIO size layers srs geotransform
-               mTransformer nodataValue burnValue options progressFun
-
-rasterizeLayersBufIO
-  :: forall t s l a b. (GDALType a, Transformer t)
-  => Size
-  -> [ROLayer s l b]
   -> SpatialReference
+  -> Size
   -> Geotransform
-  -> Maybe (t s)
-  -> a
-  -> a
-  -> OptionList
-  -> Maybe ProgressFun
-  -> IO (U.Vector (Value a))
-rasterizeLayersBufIO size layers srs geotransform mTransformer nodataValue
-                     burnValue options progressFun =
+  -> OGR s l (U.Vector (Value a))
+rasterizeLayersBuf getLayers mTransformer nodataValue
+                   burnValue options progressFun
+                   srs size geotransform =
+  bracket (liftOGR getLayers) (mapM_ closeLayer) $ \layers ->
+  liftIO $
   withProgressFun RasterizeStopped progressFun $ \pFun ->
-  withArrayLen layerPtrs $ \len lPtrPtr ->
+  withArrayLen (map unLayer layers) $ \len lPtrPtr ->
   with geotransform $ \gt ->
   withMaybeSRAsCString (Just srs) $ \srsPtr ->
   withOptionList options $ \opts ->
@@ -271,7 +256,6 @@ rasterizeLayersBufIO size layers srs geotransform mTransformer nodataValue
         (castPtr tArg) bValue opts pFun nullPtr
     liftM (stToUValue . St.map toValue) (St.unsafeFreeze vec)
   where
-    layerPtrs = map unLayer layers
     toValue v = if toCDouble v == ndValue then NoData else Value v
     dt        = fromEnumC (dataType (Proxy :: Proxy a))
     bValue    = toCDouble burnValue

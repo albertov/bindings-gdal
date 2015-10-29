@@ -27,6 +27,7 @@ module GDAL.Internal.Types (
   , isNoData
   , fromValue
   , runGDAL
+  , execGDAL
   , allocate
   , unprotect
   , release
@@ -34,7 +35,8 @@ module GDAL.Internal.Types (
 ) where
 
 import Control.Applicative (Applicative(..), liftA2)
-import Control.DeepSeq (NFData(rnf))
+import Control.DeepSeq (NFData(rnf), force)
+import Control.Exception (evaluate)
 import Control.Monad (liftM)
 import Control.Monad.Base (MonadBase)
 import Control.Monad.Trans.Resource (
@@ -292,9 +294,14 @@ deriving instance MonadMask (GDAL s)
 deriving instance MonadBase IO (GDAL s)
 deriving instance MonadResource (GDAL s)
 
-runGDAL :: (forall s. GDAL s a) -> IO (Either GDALException a)
-runGDAL (GDAL a) = withErrorHandler $ runResourceT $
-    (liftM Right a) `catch` (return . Left)
+runGDAL :: NFData a => (forall s. GDAL s a) -> IO (a, [GDALException])
+runGDAL (GDAL a) = withErrorHandler $ do
+  ret <- runResourceT (a >>= liftIO . evaluate . force)
+  errs <- getErrors
+  return (ret, errs)
+
+execGDAL :: NFData a => (forall s. GDAL s a) -> IO a
+execGDAL a = liftM fst (runGDAL a)
 
 unsafeGDALToIO :: GDAL s a -> GDAL s (IO a)
 unsafeGDALToIO (GDAL act) = do

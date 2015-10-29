@@ -15,6 +15,7 @@ module GDAL.Internal.CPLError (
   , bindingExceptionToException
   , bindingExceptionFromException
   , withErrorHandler
+  , getErrors
   , popLastError
   , checkCPLError
   , checkGDALCall
@@ -162,6 +163,11 @@ popLastError =
 
 clearErrors :: IO ()
 clearErrors = {#call unsafe clear_stack as ^#}
+
+getErrors :: IO [GDALException]
+getErrors = go []
+  where
+    go acc = popLastError >>= maybe (return acc) (go . (:acc))
 
 withErrorHandler :: IO a -> IO a
 withErrorHandler act = runBounded $

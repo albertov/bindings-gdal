@@ -30,6 +30,7 @@ module GDAL (
   , ContinueOrStop (..)
 
   , runGDAL
+  , execGDAL
   , withGDAL
   , isNoData
   , fromValue
