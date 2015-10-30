@@ -12,7 +12,6 @@ module GDAL.Internal.Warper (
   , BandOptions (..)
   , GDALWarpException (..)
   , reprojectImage
-  , setTransformer
   , createWarpedVRT
   , def
 ) where
@@ -75,14 +74,14 @@ data BandOptions = forall a b. (GDALType a, GDALType b)
 deriving instance Show BandOptions
 
 
-data WarpOptions s = forall t. Transformer t
-  => WarpOptions {
+data WarpOptions s =
+  WarpOptions {
       woResampleAlg     :: ResampleAlg
     , woWarpOptions     :: OptionList
     , woMemoryLimit     :: Double
     , woWorkingDataType :: DataType
     , woBands           :: [BandOptions]
-    , woTransfomer      :: Maybe (t s)
+    , woTransfomer      :: SomeTransformer s
     }
 
 {#pointer *GDALWarpOptions as WarpOptionsH newtype #}
@@ -94,24 +93,8 @@ instance Default (WarpOptions s) where
         , woMemoryLimit     = 0
         , woWorkingDataType = GDT_Unknown
         , woBands           = []
-        , woTransfomer      = Nothing :: Maybe (GenImgProjTransformer s)
+        , woTransfomer      = DefaultTransformer
         }
-
--- Avoids "Record update for insufficiently polymorphic field" when doigs
--- opts { woTransfomer = Just ...}
-setTransformer
-  :: forall t s. Transformer t
-  => t s -> WarpOptions s -> WarpOptions s
-setTransformer t opts = WarpOptions {
-    woResampleAlg     = woResampleAlg opts
-  , woWarpOptions     = woWarpOptions opts
-  , woMemoryLimit     = woMemoryLimit opts
-  , woWorkingDataType = woWorkingDataType opts
-  , woBands           = woBands opts
-  , woTransfomer      = Just t
-  }
-
-
 
 setOptionDefaults
   :: forall s t. RODataset s -> Maybe (Dataset s t) -> WarpOptions s
@@ -166,8 +149,8 @@ withWarpOptionsH ds wo@WarpOptions{..}
         listToArray (map (fromIntegral . biDst) woBands)
       -- ignores finalizer since GDALClose from WarpedVRT takes care of it
       (t, tArg, _) <- createTransformerAndArg woTransfomer
-      {#set GDALWarpOptions->pfnTransformer #} p (getTransformerFunPtr t)
-      {#set GDALWarpOptions->pTransformerArg #} p (castPtr tArg)
+      {#set GDALWarpOptions->pfnTransformer #} p t
+      {#set GDALWarpOptions->pTransformerArg #} p tArg
       when (anyBandHasNoData wo) $ do
         vPtrSrcR <- listToArray
                       (map (\BandOptions{..} ->
@@ -235,8 +218,10 @@ createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
     nLines'  = fromIntegral nLines
     dsPtr    = unDataset srcDs
     options' = case woTransfomer of
-                 Nothing -> setTransformer (def :: GenImgProjTransformer s) wo
-                 Just _  -> wo
+                 DefaultTransformer ->
+                   wo { woTransfomer =
+                          SomeTransformer (def :: GenImgProjTransformer s)}
+                 _  -> wo
 
 setDstNodata :: RWDataset s -> WarpOptions s -> GDAL s ()
 setDstNodata oDs options

@@ -12,6 +12,7 @@ module GDAL.Internal.Algorithms (
   , GenImgProjTransformer (..)
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)
+  , SomeTransformer (..)
 
   , createTransformerAndArg
   , getTransformerFunPtr
@@ -73,14 +74,20 @@ class Transformer t where
   destroyTransformerArg  = {# call GDALDestroyTransformer as ^#} . castPtr
   destroyTransformerFun = const (return ())
 
+data SomeTransformer s
+  = forall t. Transformer t => SomeTransformer (t s)
+  | DefaultTransformer
+
 createTransformerAndArg
-  :: Transformer t
-  => Maybe (t s) -> IO (TransformerFun t s, Ptr (t s), IO ())
-createTransformerAndArg Nothing = return (TransformerFun nullFunPtr, nullPtr, return ())
-createTransformerAndArg (Just tr) = do
+  :: SomeTransformer s -> IO (TransformerFunPtr, Ptr (), IO ())
+createTransformerAndArg DefaultTransformer =
+  return (nullFunPtr, nullPtr, return ())
+createTransformerAndArg (SomeTransformer tr) = do
   arg <- createTransformerArg tr
   t <- createTransformerFun tr
-  return (t, arg, (destroyTransformerFun t >> destroyTransformerArg arg))
+  return ( getTransformerFunPtr t
+         , castPtr arg
+         , (destroyTransformerFun t >> destroyTransformerArg arg))
 
 newtype TransformerFun (t :: * -> *) s
   = TransformerFun {getTransformerFunPtr :: TransformerFunPtr}
@@ -88,9 +95,7 @@ newtype TransformerFun (t :: * -> *) s
 {#pointer GDALTransformerFunc as TransformerFunPtr #}
 
 withTransformerAndArg
-  :: Transformer t
-  => Maybe (t s) -> (TransformerFun t s -> Ptr (t s) -> IO c)
-  -> IO c
+  :: SomeTransformer s -> (TransformerFunPtr -> Ptr () -> IO c) -> IO c
 withTransformerAndArg t f = do
   bracket (createTransformerAndArg t) (\(_,_,d) -> d) (\(tr,arg,_) -> f tr arg)
 
@@ -225,9 +230,9 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
 -- ############################################################################
 
 rasterizeLayersBuf
-  :: forall t s l a b. (GDALType a, Transformer t)
+  :: forall s l a b. GDALType a
   => GDAL s [ROLayer s l b]
-  -> Maybe (t s)
+  -> SomeTransformer s
   -> a
   -> a
   -> OptionList
@@ -252,8 +257,8 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
       checkCPLError $
       {#call GDALRasterizeLayersBuf as ^#}
         (castPtr vecPtr) nx ny dt 0 0 (fromIntegral len)
-        lPtrPtr srsPtr (castPtr gt) (getTransformerFunPtr trans)
-        (castPtr tArg) bValue opts pFun nullPtr
+        lPtrPtr srsPtr (castPtr gt) trans
+        tArg bValue opts pFun nullPtr
     liftM (stToUValue . St.map toValue) (St.unsafeFreeze vec)
   where
     toValue v = if toCDouble v == ndValue then NoData else Value v

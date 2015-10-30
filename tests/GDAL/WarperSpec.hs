@@ -2,19 +2,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 module GDAL.WarperSpec (main, spec) where
 
-import Control.Monad (void, forM_)
+import Control.Monad (forM_)
 import Data.Default (def)
-import Data.Int (Int16, Int32)
+import Data.Int (Int32)
 import qualified Data.Vector.Unboxed as U
-
-import System.FilePath (joinPath)
 
 import GDAL
 import OSR
 import GDAL.Warper
 import GDAL.Algorithms
-
-import Paths_bindings_gdal
 
 import TestUtils
 
@@ -130,8 +126,10 @@ spec = setupAndTeardown $ do
         writeBand b (allBand b) sz v1
         ds <- unsafeToReadOnly ds'
 
-        let opts = setTransformer (def {giptSrcDs = Just ds})
-                                  (def {woResampleAlg = algo})
+        let opts = def { woResampleAlg = algo
+                       , woTransfomer  =
+                           SomeTransformer (def {giptSrcDs = Just ds})
+                       }
         ds2 <- createWarpedVRT ds sz2 gt opts
         b2 <- getBand 1 ds2
         v2 <- readBand b2 (allBand b2) sz2
@@ -153,9 +151,9 @@ spec = setupAndTeardown $ do
         writeBand b (allBand b) sz v1
         ds <- unsafeToReadOnly ds'
 
-        let opts = setTransformer (def {gipt2SrcDs = Just ds})
-                                  (def {woResampleAlg = algo})
-
+        let opts = def { woResampleAlg = algo
+                       , woTransfomer  =
+                           SomeTransformer (def {gipt2SrcDs = Just ds})}
         ds2 <- createWarpedVRT ds sz2 gt opts
         b2 <- getBand 1 ds2
         v2 <- readBand b2 (allBand b2) sz2
@@ -178,9 +176,9 @@ spec = setupAndTeardown $ do
         writeBand b (allBand b) sz v1
         ds <- unsafeToReadOnly ds'
 
-        let opts = setTransformer (def {gipt3SrcGt = Just gt})
-                                  (def {woResampleAlg = algo})
-
+        let opts = def { woResampleAlg = algo
+                       , woTransfomer  =
+                           SomeTransformer (def {gipt3SrcGt = Just gt})}
         ds2 <- createWarpedVRT ds sz2 gt opts
         b2 <- getBand 1 ds2
         v2 <- readBand b2 (allBand b2) sz2

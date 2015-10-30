@@ -7,13 +7,18 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 module GDAL.Internal.OGRGeometry (
     GeometryType (..)
   , Geometry (..)
   , WkbByteOrder (..)
+  , EnvelopeReal
   , Envelope (..)
   , OGREnvelope
+
+  , envelopeSize
 
   , geomFromWkt
   , geomFromWkb
@@ -80,7 +85,8 @@ module GDAL.Internal.OGRGeometry (
 
 {#context lib = "gdal" prefix = "OGR_G_"#}
 
-import Control.Applicative ((<$>), (<*>))
+import Control.Applicative ((<$>), (<*>), liftA2)
+import Control.DeepSeq (NFData(rnf))
 import Control.Exception (throw, bracketOnError, try)
 import Control.Monad (liftM, when, (>=>))
 
@@ -90,6 +96,7 @@ import Data.ByteString.Unsafe (
     unsafeUseAsCString
   , unsafeUseAsCStringLen
   )
+import Data.Typeable (Typeable)
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CDouble(..), CChar(..), CUChar(..))
 import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr)
@@ -107,30 +114,38 @@ import System.IO.Unsafe (unsafePerformIO)
 
 {#import GDAL.Internal.OGRError#}
 {#import GDAL.Internal.OSR#}
+import GDAL.Internal.Types
 import GDAL.Internal.CPLString (peekCPLString)
 import GDAL.Internal.CPLError (withErrorHandler, throwBindingException)
 import GDAL.Internal.Util
 
 
-data Envelope =
+type EnvelopeReal = Envelope Double
+
+{#pointer *OGREnvelope->EnvelopeReal #}
+
+data Envelope a =
   Envelope {
-    eMinX :: Double
-  , eMinY :: Double
-  , eMaxX :: Double
-  , eMaxY :: Double
-  } deriving (Eq, Show)
+    envelopeMin :: !(XY a)
+  , envelopeMax :: !(XY a)
+  } deriving (Eq, Show, Read, Functor, Typeable)
 
-{#pointer *OGREnvelope->Envelope #}
+instance NFData a => NFData (Envelope a) where
+  rnf (Envelope a b) = rnf a `seq` rnf b `seq` ()
 
-instance Storable Envelope where
+envelopeSize :: Num a => Envelope a -> XY a
+envelopeSize w = liftA2 (-) (envelopeMax w) (envelopeMin w)
+{-# INLINE envelopeSize #-}
+
+instance Storable EnvelopeReal where
   sizeOf _    = {#sizeof OGREnvelope#}
   alignment _ = {#alignof OGREnvelope#}
   peek p =
-    Envelope <$> liftM realToFrac ({#get OGREnvelope->MinX#} p)
-             <*> liftM realToFrac ({#get OGREnvelope->MinY#} p)
-             <*> liftM realToFrac ({#get OGREnvelope->MaxX#} p)
-             <*> liftM realToFrac ({#get OGREnvelope->MaxY#} p)
-  poke p Envelope{..} = do
+    Envelope <$> (XY <$> liftM realToFrac ({#get OGREnvelope->MinX#} p)
+                     <*> liftM realToFrac ({#get OGREnvelope->MinY#} p))
+             <*> (XY <$> liftM realToFrac ({#get OGREnvelope->MaxX#} p)
+                     <*> liftM realToFrac ({#get OGREnvelope->MaxY#} p))
+  poke p (Envelope (XY eMinX eMinY) (XY eMaxX eMaxY))= do
     {#set OGREnvelope->MinX#} p (realToFrac eMinX)
     {#set OGREnvelope->MinY#} p (realToFrac eMinY)
     {#set OGREnvelope->MaxX#} p (realToFrac eMaxX)
@@ -306,7 +321,7 @@ geomType g =
 
 {#fun pure unsafe OGR_G_GetEnvelope as geomEnvelope
   { `Geometry'
-  , alloca- `Envelope' peek*
+  , alloca- `EnvelopeReal' peek*
   } -> `()'
   #}
 

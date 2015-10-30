@@ -24,7 +24,6 @@ module GDAL.Internal.OGR (
   , ApproxOK (..)
   , Layer
   , LayerH (..)
-  , Envelope (..)
   , RODataSource
   , RWDataSource
   , ROLayer
@@ -79,6 +78,8 @@ module GDAL.Internal.OGR (
   , updateFeature
   , deleteFeature
 
+  , unsafeToReadOnlyLayer
+
   , registerAll
   , cleanupAll
 
@@ -95,6 +96,7 @@ module GDAL.Internal.OGR (
 {#context lib = "gdal" prefix = "OGR"#}
 
 import Data.ByteString.Unsafe (unsafeUseAsCString)
+import Data.Coerce (coerce)
 import Data.Conduit
 import qualified Data.Conduit.List as CL
 import Data.Maybe (isNothing, fromMaybe)
@@ -203,6 +205,9 @@ closeLayer (Layer (rk,_)) = release rk
 
 type ROLayer s l = Layer s l ReadOnly
 type RWLayer s l = Layer s l ReadWrite
+
+unsafeToReadOnlyLayer :: RWLayer s l a -> ROLayer s l a
+unsafeToReadOnlyLayer = coerce
 
 {#enum define OGRAccess
   { FALSE  as OGR_ReadOnly
@@ -551,7 +556,7 @@ layerName :: Layer s l t a -> GDAL s Text
 layerName =
   liftIO . (peekEncodedCString <=< {#call unsafe OGR_L_GetName as ^#} . unLayer)
 
-layerExtent :: Layer s l t a -> GDAL s Envelope
+layerExtent :: Layer s l t a -> GDAL s EnvelopeReal
 layerExtent l = liftIO $ alloca $ \pE -> do
   checkOGRError ({#call OGR_L_GetExtent as ^#} (unLayer l) pE 1)
   peek pE

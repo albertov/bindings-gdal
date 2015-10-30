@@ -13,13 +13,10 @@
 module GDAL.Internal.Types (
     Value(..)
   , GDAL
-  , Window (..)
   , XY (..)
   , Size
   , BlockIx
   , ReleaseKey
-  , winSize
-  , sizeLen
   , AccessMode
   , ReadWrite
   , ReadOnly
@@ -32,6 +29,7 @@ module GDAL.Internal.Types (
   , allocate
   , unprotect
   , release
+  , sizeLen
   , unsafeGDALToIO
 ) where
 
@@ -85,25 +83,12 @@ data XY a = XY {px :: !a, py :: !a} deriving (Eq, Ord, Show, Read, Typeable)
 instance NFData a => NFData (XY a) where
   rnf (XY a b) = rnf a `seq` rnf b `seq` ()
 
-data Window a
-  = Window {
-      winMin :: !(XY a)
-    , winMax :: !(XY a)
-    }
-  deriving (Eq, Show, Read, Functor, Typeable)
-
-instance NFData a => NFData (Window a) where
-  rnf (Window a b) = rnf a `seq` rnf b `seq` ()
-
-winSize :: Num a => Window a -> XY a
-winSize w = liftA2 (-) (winMax w) (winMin w)
-{-# INLINE winSize #-}
+type Size    = XY Int
 
 sizeLen :: Size -> Int
 sizeLen (XY x y) = x*y
 {-# INLINE sizeLen #-}
 
-type Size    = XY Int
 type BlockIx = XY Int
 
 
@@ -121,6 +106,67 @@ instance Applicative XY where
   XY a b <*> XY d e = XY (a d) (b e)
   {-# INLINE (<*>) #-}
 
+instance Num a => Num (XY a) where
+  (+) = liftA2 (+)
+  {-# INLINE (+) #-}
+  (-) = liftA2 (-)
+  {-# INLINE (-) #-}
+  (*) = liftA2 (*)
+  {-# INLINE (*) #-}
+  negate = fmap negate
+  {-# INLINE negate #-}
+  abs = fmap abs
+  {-# INLINE abs #-}
+  signum = fmap signum
+  {-# INLINE signum #-}
+  fromInteger = pure . fromInteger
+  {-# INLINE fromInteger #-}
+
+instance Fractional a => Fractional (XY a) where
+  recip = fmap recip
+  {-# INLINE recip #-}
+  (/) = liftA2 (/)
+  {-# INLINE (/) #-}
+  fromRational = pure . fromRational
+  {-# INLINE fromRational #-}
+
+instance Floating a => Floating (XY a) where
+    pi = pure pi
+    {-# INLINE pi #-}
+    exp = fmap exp
+    {-# INLINE exp #-}
+    sqrt = fmap sqrt
+    {-# INLINE sqrt #-}
+    log = fmap log
+    {-# INLINE log #-}
+    (**) = liftA2 (**)
+    {-# INLINE (**) #-}
+    logBase = liftA2 logBase
+    {-# INLINE logBase #-}
+    sin = fmap sin
+    {-# INLINE sin #-}
+    tan = fmap tan
+    {-# INLINE tan #-}
+    cos = fmap cos
+    {-# INLINE cos #-}
+    asin = fmap asin
+    {-# INLINE asin #-}
+    atan = fmap atan
+    {-# INLINE atan #-}
+    acos = fmap acos
+    {-# INLINE acos #-}
+    sinh = fmap sinh
+    {-# INLINE sinh #-}
+    tanh = fmap tanh
+    {-# INLINE tanh #-}
+    cosh = fmap cosh
+    {-# INLINE cosh #-}
+    asinh = fmap asinh
+    {-# INLINE asinh #-}
+    atanh = fmap atanh
+    {-# INLINE atanh #-}
+    acosh = fmap acosh
+    {-# INLINE acosh #-}
 
 
 data Value a

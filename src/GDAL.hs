@@ -3,7 +3,6 @@ module GDAL (
   , GDALType (..)
   , DataType (..)
   , XY (..)
-  , Window (..)
   , Size
   , BlockIx
 
@@ -63,7 +62,6 @@ module GDAL (
   , bandBlockLen
   , bandSize
   , allBand
-  , winSize
   , sizeLen
   , bandNodataValue
   , setBandNodataValue
@@ -78,6 +76,8 @@ module GDAL (
   , ifoldl'
   , ifoldlM'
   , version
+
+  , northUpGeotransform
 ) where
 
 import Control.Exception (finally)

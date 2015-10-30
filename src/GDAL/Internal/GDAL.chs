@@ -28,6 +28,8 @@ module GDAL.Internal.GDAL (
   , ROBand
   , Band
   , RasterBandH (..)
+
+  , northUpGeotransform
   , nullDatasetH
   , allRegister
   , destroyDriverManager
@@ -120,6 +122,7 @@ import GDAL.Internal.Util
 {#import GDAL.Internal.CPLProgress#}
 import GDAL.Internal.OGRError
 import GDAL.Internal.OSR
+import GDAL.Internal.OGRGeometry (Envelope(..), envelopeSize)
 
 
 #include "gdal.h"
@@ -340,6 +343,17 @@ data Geotransform
     , gtYDelta :: !Double
   } deriving (Eq, Show)
 
+northUpGeotransform :: Size -> Envelope Double -> Geotransform
+northUpGeotransform size envelope =
+  Geotransform {
+      gtXOff   = px (envelopeMin envelope)
+    , gtXDelta = px (envelopeSize envelope / fmap fromIntegral size)
+    , gtXRot   = 0
+    , gtYOff   = py (envelopeMax envelope)
+    , gtYRot   = 0
+    , gtYDelta = negate (py (envelopeSize envelope / fmap fromIntegral size))
+  }
+
 instance Storable Geotransform where
   sizeOf _     = sizeOf (undefined :: CDouble) * 6
   alignment _  = alignment (undefined :: CDouble)
@@ -432,8 +446,8 @@ bandSize band =
     XY ({#call pure unsafe GetRasterBandXSize as ^#} (unBand band))
        ({#call pure unsafe GetRasterBandYSize as ^#} (unBand band))
 
-allBand :: Band s a -> Window Int
-allBand = Window (pure 0) . bandSize
+allBand :: Band s a -> Envelope Int
+allBand = Envelope (pure 0) . bandSize
 
 bandBlockCount :: Band s t -> XY Int
 bandBlockCount b = fmap ceiling $ liftA2 ((/) :: Double -> Double -> Double)
@@ -475,7 +489,7 @@ fillRaster r i b =
 
 readBand :: forall s t a. GDALType a
   => (Band s t)
-  -> Window Int
+  -> Envelope Int
   -> Size
   -> GDAL s (Vector (Value a))
 readBand band win size = liftIO $ readBandIO band win size
@@ -483,13 +497,13 @@ readBand band win size = liftIO $ readBandIO band win size
 
 readBandIO :: forall s t a. GDALType a
   => (Band s t)
-  -> Window Int
+  -> Envelope Int
   -> Size
   -> IO (Vector (Value a))
 readBandIO band win (XY bx by) = readMasked band read_
   where
-    XY sx sy     = winSize win
-    XY xoff yoff = winMin win
+    XY sx sy     = envelopeSize win
+    XY xoff yoff = envelopeMin win
     read_ :: forall a'. GDALType a' => RasterBandH -> IO (St.Vector a')
     read_ b = do
       vec <- Stm.new (bx*by)
@@ -560,7 +574,7 @@ readMasked band reader = do
 
 writeBand :: forall s a. GDALType a
   => RWBand s
-  -> Window Int
+  -> Envelope Int
   -> Size
   -> Vector (Value a)
   -> GDAL s ()
@@ -569,8 +583,8 @@ writeBand band win sz@(XY bx by) uvec = liftIO $ do
   let nElems    = bx * by
       (fp, len) = St.unsafeToForeignPtr0 vec
       vec       = St.map (fromValue bNodata) (uToStValue uvec)
-      XY sx sy     = winSize win
-      XY xoff yoff = winMin win
+      XY sx sy     = envelopeSize win
+      XY xoff yoff = envelopeMin win
   if nElems /= len
     then throwBindingException (InvalidRasterSize sz)
     else withForeignPtr fp $ \ptr ->

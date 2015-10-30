@@ -38,8 +38,11 @@ module OGR (
   , Geometry (..)
   , WkbByteOrder (..)
   , Envelope (..)
+  , EnvelopeReal
 
   , runOGR
+
+  , envelopeSize
 
   , geomFromWkt
   , geomFromWkb
@@ -140,6 +143,8 @@ module OGR (
   , getFeature
   , updateFeature
   , deleteFeature
+
+  , unsafeToReadOnlyLayer
 ) where
 
 import GDAL.Internal.OGRError as X

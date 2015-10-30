@@ -4,7 +4,6 @@
 {-# LANGUAGE LambdaCase #-}
 module GDALSpec (main, spec, setupAndTeardown) where
 
-import Control.Applicative (liftA2, pure)
 import Control.Monad (void, forM_)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -22,6 +21,7 @@ import System.Mem (performMajorGC)
 
 import GDAL
 import OSR
+import OGR (Envelope(..))
 
 import TestUtils
 
@@ -41,19 +41,19 @@ spec = setupAndTeardown $ do
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("compress","deflate"), ("zlevel", "9"), ("predictor", "2")]
-    ds <- create GTIFF p (pure 3000) 1 GDT_Int16 o
+    ds <- create GTIFF p 3000 1 GDT_Int16 o
     flushCache ds
     p `existsAndSizeIsGreaterThan` 20000
 
   withDir "driver options are validated" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("zlevel", "bad level")]
-        action = create GTIFF p (pure 3000) 1 GDT_Int16 o
+        action = create GTIFF p 3000 1 GDT_Int16 o
     action `shouldThrow` (==InvalidDriverOptions)
 
   withDir "can create and open dataset" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
-    ds <- create GTIFF p (pure 100) 1 GDT_Int16 []
+    ds <- create GTIFF p 3000 1 GDT_Int16 []
     flushCache ds
     void $ (openReadOnly p)
 
@@ -162,8 +162,8 @@ spec = setupAndTeardown $ do
           vec :: (U.Vector (Value Int16))
           vec = U.generate len (Value . fromIntegral)
           bs  = bandBlockSize band
-      writeBandBlock band (pure 0) vec
-      vec2 <- readBand band (Window (pure 0) bs) bs
+      writeBandBlock band 0 vec
+      vec2 <- readBand band (Envelope 0 bs) bs
       vec `shouldBe` U.map (fmap round) (vec2 :: U.Vector (Value Double))
 
     it "can write band and read band with automatic conversion" $ do
@@ -188,27 +188,27 @@ spec = setupAndTeardown $ do
 
     withDir "throws GDALException when reading block with wrong type" $ \d -> do
       let p = joinPath [d, "test.tif"]
-      ds <- create GTIFF p (pure 100) 1 GDT_Int16 []
+      ds <- create GTIFF p 100 1 GDT_Int16 []
       flushCache ds
       ds2 <- openReadOnly p
       band <- getBand 1 ds2
       let badAction =  do
-            (_ :: U.Vector (Value Word8)) <- readBandBlock band (pure 0)
+            (_ :: U.Vector (Value Word8)) <- readBandBlock band 0
             return ()
       badAction `shouldThrow` isGDALException
       badAction `shouldThrow` (== (InvalidDataType GDT_Int16))
 
     withDir "throws GDALException when writing block with wrong type" $ \d -> do
       let p = joinPath [d, "test.tif"]
-      ds <- create GTIFF p (pure 100) 1 GDT_Int32 []
+      ds <- create GTIFF p 100 1 GDT_Int32 []
       flushCache ds
       ds2 <- openReadWrite p
       band <- getBand 1 ds2
       let v :: U.Vector (Value Word8)
           v = U.replicate (bandBlockLen band) (Value 0)
 
-      writeBandBlock band (pure 0) v `shouldThrow` isGDALException
-      writeBandBlock band (pure 0) v
+      writeBandBlock band 0 v `shouldThrow` isGDALException
+      writeBandBlock band 0 v
         `shouldThrow` (==(InvalidDataType GDT_Int32))
 
     let fWord8 = (Value . fromIntegral) :: Int -> Value Word8
@@ -315,8 +315,8 @@ it_can_write_and_read_block
 it_can_write_and_read_block f = it ("can write and read block "++typeName) $ do
   ds <- createMem (XY (U.length vec) 1) 1 (dataType (Proxy :: Proxy a)) []
   band <- getBand 1 ds
-  writeBandBlock band (pure 0) vec
-  vec2 <- readBandBlock band (pure 0)
+  writeBandBlock band 0 vec
+  vec2 <- readBandBlock band 0
   vec `shouldBe` vec2
   where
     vec      = U.generate 10000 f

@@ -1,5 +1,5 @@
 module GDAL.Algorithms (
-    Transformer
+    SomeTransformer (..)
   , GenImgProjTransformer (..)
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)

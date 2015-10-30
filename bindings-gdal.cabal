@@ -94,6 +94,7 @@ test-suite spec
                   , GDALSpec
                   , OSRSpec
                   , OGRSpec
+                  , GDAL.AlgorithmsSpec
                   , GDAL.WarperSpec
                   , Paths_bindings_gdal
                   , TestUtils

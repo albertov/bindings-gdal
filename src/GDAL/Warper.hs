@@ -3,7 +3,6 @@ module GDAL.Warper (
   , WarpOptions (..)
   , BandOptions (..)
   , GDALWarpException (..)
-  , setTransformer
   , reprojectImage
   , createWarpedVRT
 ) where
