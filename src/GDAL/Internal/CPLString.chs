@@ -12,6 +12,7 @@ import Control.Exception (bracket, bracketOnError)
 import Control.Monad (forM, foldM, liftM, when, void)
 
 import Data.ByteString.Internal (ByteString(..))
+import Data.Monoid (mempty)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Word (Word8)
