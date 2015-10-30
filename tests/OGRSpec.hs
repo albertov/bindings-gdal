@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase #-}
 
 #include "bindings.h"
 
@@ -249,7 +250,9 @@ spec = setupAndTeardown $ do
 
       it "fails if invalid" $ do
         let eGeom = geomFromWkt Nothing "im not wkt"
-        eGeom `shouldBe` Left UnsupportedGeometryType
+        eGeom `shouldSatisfy` \case
+          Left OGRException{ogrErrType=UnsupportedGeometryType} -> True
+          _                                                     -> False
 
       it "export is same as original" $ do
         let Right g = geomFromWkt Nothing wkt
@@ -265,7 +268,9 @@ spec = setupAndTeardown $ do
 
       it "fails if invalid" $ do
         let eGeom = geomFromWkb Nothing "im not wkb"
-        eGeom `shouldBe` Left CorruptData
+        eGeom `shouldSatisfy` \case
+          Left OGRException{ogrErrType=CorruptData} -> True
+          _                                         -> False
 
     describe "geomFromGml / geomToGml" $ do
 
@@ -276,7 +281,9 @@ spec = setupAndTeardown $ do
 
       it "fails if invalid" $ do
         let eGeom = geomFromGml "im not gml"
-        eGeom `shouldBe` Left CorruptData
+        eGeom `shouldSatisfy` \case
+          Left OGRException{ogrErrType=CorruptData} -> True
+          _                                         -> False
 
 
     it "compares equal when equal with no srs" $ do

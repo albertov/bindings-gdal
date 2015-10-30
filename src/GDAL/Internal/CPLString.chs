@@ -59,9 +59,11 @@ peekCPLString act = with nullPtr $ \pptr ->
       let findLen !n = do
             v <- p `peekElemOff` n :: IO Word8
             if v==0 then return n else findLen (n+1)
-      len <- findLen 0
-      fp <- newForeignPtr c_cplFree p
-      return $! PS fp 0 len
+      if p /= nullPtr
+        then do len <- findLen 0
+                fp <- newForeignPtr c_cplFree p
+                return $! PS fp 0 len
+        else return mempty
 
     freeIfNotNull pptr = do
       p <- peek pptr

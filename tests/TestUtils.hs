@@ -41,7 +41,7 @@ import Test.Hspec (
   )
 import qualified Test.Hspec as Hspec
 
-import GDAL (GDAL, GDALException, execGDAL)
+import GDAL (GDAL, GDALException, runGDAL)
 
 hspec :: Spec -> IO ()
 hspec = Hspec.hspec . Hspec.parallel
@@ -58,11 +58,13 @@ withDir n a =
 
 runGDAL' :: (forall s. GDAL s ()) -> IO ()
 runGDAL' a = do
-  r <- try (execGDAL a)
+  r <- try (runGDAL a)
   case r of
     Left (e :: GDALException) ->
       Hspec.expectationFailure ("Unexpected GDALException: " ++ show e)
-    _ -> return ()
+    Right ((),[]) -> return ()
+    Right ((),msgs) ->
+      Hspec.expectationFailure ("Uncollected GDALExceptions " ++ show msgs)
 
 existsAndSizeIsGreaterThan :: FilePath -> Integer -> GDAL s ()
 existsAndSizeIsGreaterThan p s = do

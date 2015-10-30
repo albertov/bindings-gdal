@@ -125,9 +125,10 @@ checkGDALCall
   :: (MonadMask m, MonadIO m, Exception e)
   => (Maybe GDALException -> a -> Maybe e) -> m a -> m a
 checkGDALCall isOk act = mask $ \restore -> do
-  liftIO $ clearErrors
-  a <- restore act `onException` (liftIO popLastError)
-  err <- liftIO popLastError
+  liftIO clearErrors
+  (a,err) <- restore (do r<-act; err<-liftIO popLastError; return (r,err))
+              `onException` (liftIO clearErrors)
+  liftIO clearErrors
   case isOk err a of
     Nothing -> return a
     Just e  -> throwM e

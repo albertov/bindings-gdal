@@ -343,8 +343,11 @@ getFeature layer (Fid fid) = liftIO $ do
     throwBindingException (UnsupportedLayerCapability RandomRead)
   fDef <- layerFeatureDefIO pL
   liftM (fmap snd) $ featureFromHandle fDef $
-    {#call OGR_L_GetFeature as ^#} pL (fromIntegral fid)
-  where pL = unLayer layer
+    checkGDALCall checkIt ({#call OGR_L_GetFeature as ^#} pL (fromIntegral fid))
+  where
+    checkIt (Just GDALException{gdalErrNum=AppDefined}) _ = Nothing
+    checkIt   e _                                         = e
+    pL = unLayer layer
 
 deleteFeature :: Layer s l t a -> Fid -> GDAL s ()
 deleteFeature layer (Fid fid) = liftIO $

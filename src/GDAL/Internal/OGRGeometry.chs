@@ -61,7 +61,7 @@ module GDAL.Internal.OGRGeometry (
 {#context lib = "gdal" prefix = "OGR_G_"#}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (throw, bracketOnError, catch)
+import Control.Exception (throw, bracketOnError, try)
 import Control.Monad (liftM, when, (>=>))
 
 import Data.ByteString.Internal (ByteString(..))
@@ -70,8 +70,6 @@ import Data.ByteString.Unsafe (
     unsafeUseAsCString
   , unsafeUseAsCStringLen
   )
-import Data.Maybe (fromJust, fromMaybe)
-
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CDouble(..), CChar(..), CUChar(..))
 import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr)
@@ -90,7 +88,7 @@ import System.IO.Unsafe (unsafePerformIO)
 {#import GDAL.Internal.OGRError#}
 {#import GDAL.Internal.OSR#}
 import GDAL.Internal.CPLString (peekCPLString)
-import GDAL.Internal.CPLError hiding (None)
+import GDAL.Internal.CPLError (withErrorHandler, throwBindingException)
 import GDAL.Internal.Util
 
 
@@ -151,18 +149,17 @@ foreign import ccall "ogr_api.h &OGR_G_DestroyGeometry"
   c_destroyGeometry :: FunPtr (Ptr Geometry -> IO ())
 
 newGeometryHandle
-  :: (Ptr (Ptr Geometry) -> IO OGRError) -> IO (Either OGRError Geometry)
+  :: (Ptr (Ptr Geometry) -> IO OGRError) -> IO (Either OGRException Geometry)
 newGeometryHandle alloc = with nullPtr $ \pptr ->
+  try $
+  withErrorHandler $
   bracketOnError (go pptr) (const (freeIfNotNull pptr)) return
   where
     go pptr = do
-      err <- alloc pptr
-      if err /= None
-        then freeIfNotNull pptr >> return (Left err)
-        else do
-          p <- peek pptr
-          when (p==nullPtr) (throwBindingException NullGeometry)
-          liftM (Right . Geometry) (newForeignPtr c_destroyGeometry p)
+      checkOGRError (liftM fromEnumC (alloc pptr))
+      p <- peek pptr
+      when (p==nullPtr) (throwBindingException NullGeometry)
+      liftM Geometry (newForeignPtr c_destroyGeometry p)
     freeIfNotNull pptr = do
       p <- peek pptr
       when (p /= nullPtr) ({#call unsafe OGR_G_DestroyGeometry as ^#} p)
@@ -179,12 +176,12 @@ maybeNewGeometryHandle alloc =
       when (p /= nullPtr) ({#call unsafe OGR_G_DestroyGeometry as ^#} p)
 
 geomFromWkb
-  :: Maybe SpatialReference -> ByteString -> Either OGRError Geometry
+  :: Maybe SpatialReference -> ByteString -> Either OGRException Geometry
 geomFromWkb mSr = unsafePerformIO . geomFromWkbIO mSr
 {-# NOINLINE geomFromWkb #-}
 
 geomFromWkbIO
-  :: Maybe SpatialReference -> ByteString -> IO (Either OGRError Geometry)
+  :: Maybe SpatialReference -> ByteString -> IO (Either OGRException Geometry)
 geomFromWkbIO mSrs bs =
   unsafeUseAsCStringLen bs $ \(sp, len) ->
   withMaybeSpatialReference mSrs $ \srs ->
@@ -193,12 +190,12 @@ geomFromWkbIO mSrs bs =
                       (castPtr sp) srs gPtr (fromIntegral len)
 
 geomFromWkt
-  :: Maybe SpatialReference -> ByteString -> Either OGRError Geometry
+  :: Maybe SpatialReference -> ByteString -> Either OGRException Geometry
 geomFromWkt mSrs = unsafePerformIO . geomFromWktIO mSrs
 {-# NOINLINE geomFromWkt #-}
 
 geomFromWktIO
-  :: Maybe SpatialReference -> ByteString -> IO (Either OGRError Geometry)
+  :: Maybe SpatialReference -> ByteString -> IO (Either OGRException Geometry)
 geomFromWktIO mSrs bs =
   unsafeUseAsCString bs $ \sp ->
   with sp $ \spp ->
@@ -207,16 +204,20 @@ geomFromWktIO mSrs bs =
     liftM toEnumC . {#call unsafe OGR_G_CreateFromWkt as ^#} spp srs
 
 geomFromGml
-  :: ByteString -> Either OGRError Geometry
+  :: ByteString -> Either OGRException Geometry
 geomFromGml = unsafePerformIO . geomFromGmlIO
 {-# NOINLINE geomFromGml #-}
 
 geomFromGmlIO
-  :: ByteString -> IO (Either OGRError Geometry)
+  :: ByteString -> IO (Either OGRException Geometry)
 geomFromGmlIO bs =
-  liftM (maybe (Left CorruptData) Right) $
-  maybeNewGeometryHandle $
-  unsafeUseAsCString bs $ {#call unsafe OGR_G_CreateFromGML as ^#}
+  unsafeUseAsCString bs $ \pS ->
+  newGeometryHandle $ \gPtr -> do
+    gP <- {#call unsafe OGR_G_CreateFromGML as ^#} pS
+    if gP == nullPtr
+      then return CorruptData
+      else poke gPtr gP >> return None
+
 
 
 geomToWktIO :: Geometry -> IO ByteString
@@ -247,12 +248,7 @@ exportWith :: (Ptr Geometry -> IO CString) -> Geometry -> IO ByteString
 exportWith f g =
   withGeometry g $ \gPtr ->
   peekCPLString $ \ptr ->
-    checkGDALCall checkit (f gPtr) >>= poke ptr
-  where
-    checkit Nothing p | p/=nullPtr = Nothing
-    checkit Nothing p | p==nullPtr =
-      Just (GDALException CE_Failure AssertionFailed "exportWith: null ptr")
-    checkit e _ = e
+  f gPtr >>= poke ptr
 
 geomToKmlIO :: Geometry -> IO ByteString
 geomToKmlIO =
