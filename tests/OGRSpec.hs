@@ -293,15 +293,15 @@ spec = setupAndTeardown $ do
       geomFromWkt Nothing "POINT (2 6)"
         `shouldNotBe` geomFromWkt Nothing "POINT (2 5)"
 
-    describe "geometrySpatialReference" $ do
+    describe "geomSpatialReference" $ do
 
       it "is Nothing when it has no srs" $ do
         let Right g = geomFromWkt Nothing "POINT (34 21)"
-        geometrySpatialReference g `shouldSatisfy` isNothing
+        geomSpatialReference g `shouldSatisfy` isNothing
 
       it "is is the same as the one that was set" $ do
         let Right g = geomFromWkt (Just srs23030) "POINT (34 21)"
-        geometrySpatialReference g `shouldBe` Just srs23030
+        geomSpatialReference g `shouldBe` Just srs23030
 
     describe "transformWith" $ do
 
@@ -313,7 +313,7 @@ spec = setupAndTeardown $ do
         case g `transformWith` coordTrans of
           Nothing -> expectationFailure "Should have transformed the geom"
           Just t  -> do
-            geometrySpatialReference t `shouldBe` Just srs4326
+            geomSpatialReference t `shouldBe` Just srs4326
             -- We compare WKT or else they won't match (TODO investigate why!)
             --t  `shouldBe` expected
             geomToWkt t  `shouldBe` geomToWkt expected
@@ -328,7 +328,7 @@ spec = setupAndTeardown $ do
         case g `transformTo` srs4326 of
           Nothing -> expectationFailure "Should have transformed the geom"
           Just t  -> do
-            geometrySpatialReference t `shouldBe` Just srs4326
+            geomSpatialReference t `shouldBe` Just srs4326
             -- We compare WKT or else they won't match (TODO investigate why!)
             --t  `shouldBe` expected
             geomToWkt t  `shouldBe` geomToWkt expected

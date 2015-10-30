@@ -25,9 +25,18 @@ module GDAL.Internal.OGRGeometry (
   , geomToKml
   , geomToJson
 
-  , geometrySpatialReference
-  , geometryType
-  , geometryEnvelope
+  , geomSpatialReference
+  , geomType
+  , geomEnvelope
+
+  , geomIntersects
+  , geomEquals
+  , geomDisjoint
+  , geomTouches
+  , geomCrosses
+  , geomWithin
+  , geomContains
+  , geomOverlaps
 
   , transformWith
   , transformTo
@@ -120,6 +129,12 @@ instance Storable Envelope where
 
 {#pointer OGRGeometryH as Geometry foreign newtype#}
 
+instance Show Geometry where
+  show = unpack . geomToWkt
+
+instance Eq Geometry where
+  a == b = a `geomEquals` b
+
 cloneGeometry :: Ptr Geometry -> IO Geometry
 cloneGeometry = maybeCloneGeometry >=> maybe (throw NullGeometry) return
 
@@ -210,6 +225,7 @@ geomToWktIO g =
   peekCPLString $
     checkOGRError . {#call unsafe OGR_G_ExportToWkt as ^ #} gPtr
 
+
 geomToWkt :: Geometry -> ByteString
 geomToWkt = unsafePerformIO . geomToWktIO
 
@@ -258,34 +274,60 @@ geomToGmlIO = exportWith {#call unsafe OGR_G_ExportToGML as ^ #}
 geomToGml :: Geometry -> ByteString
 geomToGml = unsafePerformIO . geomToGmlIO
 
-geomEqIO :: Geometry -> Geometry -> IO Bool
-geomEqIO a b = withGeometry a $ \aPtr -> withGeometry b $ \bPtr ->
-  liftM toBool ({#call unsafe OGR_G_Equals as ^#} aPtr bPtr)
-
-geometrySpatialReference
+geomSpatialReference
   :: Geometry -> Maybe SpatialReference
-geometrySpatialReference g = unsafePerformIO $
+geomSpatialReference g = unsafePerformIO $
   maybeNewSpatialRefBorrowedHandle $
     withGeometry g {#call unsafe OGR_G_GetSpatialReference as ^#}
 
-geometryType
+geomType
   :: Geometry -> GeometryType
-geometryType g =
+geomType g =
   unsafePerformIO $
   liftM toEnumC $
   withGeometry g $
     {#call unsafe OGR_G_GetGeometryType as ^#}
 
-{#fun pure unsafe OGR_G_GetEnvelope as geometryEnvelope
+{#fun pure unsafe OGR_G_GetEnvelope as geomEnvelope
   { `Geometry'
   , alloca- `Envelope' peek*
-  } -> `()'#}
+  } -> `()'
+  #}
 
-instance Show Geometry where
-  show = unpack . geomToWkt
 
-instance Eq Geometry where
-  a == b = unsafePerformIO (geomEqIO a b)
+{#fun pure unsafe OGR_G_Intersects as geomIntersects
+  {`Geometry', `Geometry'} -> `Bool'
+  #}
+
+{#fun pure unsafe OGR_G_Equals as geomEquals
+  {`Geometry', `Geometry'} -> `Bool'
+  #}
+
+{#fun pure unsafe OGR_G_Disjoint as geomDisjoint
+  {`Geometry', `Geometry'} -> `Bool'
+  #}
+
+{#fun pure unsafe OGR_G_Touches as geomTouches
+  {`Geometry', `Geometry'} -> `Bool'
+  #}
+
+{#fun pure unsafe OGR_G_Crosses as geomCrosses
+  {`Geometry', `Geometry'} -> `Bool'
+  #}
+
+{#fun pure unsafe OGR_G_Within as geomWithin
+  {`Geometry', `Geometry'} -> `Bool'
+  #}
+
+{#fun pure unsafe OGR_G_Contains as geomContains
+  {`Geometry', `Geometry'} -> `Bool'
+  #}
+
+{#fun pure unsafe OGR_G_Overlaps as geomOverlaps
+  {`Geometry', `Geometry'} -> `Bool'
+  #}
+
+
 
 transformWith :: Geometry -> CoordinateTransformation -> Maybe Geometry
 transformWith g ct = unsafePerformIO $ do

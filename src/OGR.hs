@@ -51,9 +51,18 @@ module OGR (
   , geomToKml
   , geomToJson
 
-  , geometrySpatialReference
-  , geometryType
-  , geometryEnvelope
+  , geomSpatialReference
+  , geomType
+  , geomEnvelope
+
+  , geomIntersects
+  , geomEquals
+  , geomDisjoint
+  , geomTouches
+  , geomCrosses
+  , geomWithin
+  , geomContains
+  , geomOverlaps
 
   , transformWith
   , transformTo
