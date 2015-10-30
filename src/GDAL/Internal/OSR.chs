@@ -1,6 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module GDAL.Internal.OSR (
     SpatialReference
@@ -15,8 +14,6 @@ module GDAL.Internal.OSR (
   , srsToProj4
   , srsToXML
 
-  , coordinateTransformation
-
   , isGeographic
   , isLocal
   , isProjected
@@ -25,6 +22,8 @@ module GDAL.Internal.OSR (
 
   , getAngularUnits
   , getLinearUnits
+
+  , coordinateTransformation
 
   , cleanup
   , initialize
@@ -63,7 +62,6 @@ import System.IO.Unsafe (unsafePerformIO)
 import GDAL.Internal.OGRError
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLString (peekCPLString)
-import GDAL.Internal.CPLConv (cplFree)
 
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
 
@@ -153,61 +151,62 @@ srsFromEPSG = fromImporter importFromEPSG
 {-# NOINLINE srsFromEPSG #-}
 
 fromImporter
-  :: (SpatialReference -> a -> IO CInt)
-  -> a
+  :: (SpatialReference -> a -> IO CInt) -> a
   -> Either OGRException SpatialReference
 fromImporter f s = unsafePerformIO $ do
   r <- emptySpatialRef
   try (checkOGRError (f r s) >> return r)
+{-# NOINLINE fromImporter #-}
 
 
 {#fun ImportFromProj4 as ^
    { withSpatialReference* `SpatialReference'
-   , unsafeUseAsCString* `ByteString'} -> `CInt' id  #}
+   , unsafeUseAsCString* `ByteString'} -> `CInt' #}
 
 {#fun ImportFromEPSG as ^
-   {withSpatialReference* `SpatialReference', `Int'} -> `CInt' id  #}
+   {withSpatialReference* `SpatialReference', `Int'} -> `CInt' #}
 
 {#fun ImportFromXML as ^
    { withSpatialReference* `SpatialReference'
-   , unsafeUseAsCString* `ByteString'} -> `CInt' id  #}
+   , unsafeUseAsCString* `ByteString'} -> `CInt' #}
 
 {#fun pure unsafe IsGeographic as ^
-   {withSpatialReference * `SpatialReference'} -> `Bool'#}
+   {withSpatialReference* `SpatialReference'} -> `Bool'#}
 
 {#fun pure unsafe IsLocal as ^
-   {withSpatialReference * `SpatialReference'} -> `Bool'#}
+   {withSpatialReference* `SpatialReference'} -> `Bool'#}
 
 {#fun pure unsafe IsProjected as ^
-   {withSpatialReference * `SpatialReference'} -> `Bool'#}
+   {withSpatialReference* `SpatialReference'} -> `Bool'#}
 
 {#fun pure unsafe IsSameGeogCS as ^
-   { withSpatialReference * `SpatialReference'
-   , withSpatialReference * `SpatialReference'} -> `Bool'#}
+   { withSpatialReference* `SpatialReference'
+   , withSpatialReference* `SpatialReference'} -> `Bool'#}
 
 {#fun pure unsafe IsSame as ^
-   { withSpatialReference * `SpatialReference'
-   , withSpatialReference * `SpatialReference'} -> `Bool'#}
+   { withSpatialReference* `SpatialReference'
+   , withSpatialReference* `SpatialReference'} -> `Bool'#}
 
 instance Eq SpatialReference where
   (==) = isSame
 
 getLinearUnits :: SpatialReference -> (Double, String)
-getLinearUnits = getUnitsWith {#call unsafe OSRGetLinearUnits as ^#}
+getLinearUnits =
+  unsafePerformIO . getUnitsWith {#call unsafe OSRGetLinearUnits as ^#}
 
 getAngularUnits :: SpatialReference -> (Double, String)
-getAngularUnits = getUnitsWith {#call unsafe OSRGetAngularUnits as ^#}
+getAngularUnits =
+  unsafePerformIO . getUnitsWith {#call unsafe OSRGetAngularUnits as ^#}
 
-getUnitsWith ::
-     (Ptr SpatialReference -> Ptr CString -> IO CDouble)
+getUnitsWith
+  :: (Ptr SpatialReference -> Ptr CString -> IO CDouble)
   -> SpatialReference
-  -> (Double, String)
-getUnitsWith fun s = unsafePerformIO $
-    alloca $ \p -> do
-      value <- withSpatialReference s (\s' -> fun s' p)
-      ptr <- peek p
-      units <- peekCString ptr
-      return (realToFrac value, units)
+  -> IO (Double, String)
+getUnitsWith fun s = alloca $ \p -> do
+  value <- withSpatialReference s (\s' -> fun s' p)
+  ptr <- peek p
+  units <- peekCString ptr
+  return (realToFrac value, units)
 
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
 withMaybeSRAsCString Nothing    = ($ nullPtr)
@@ -223,22 +222,22 @@ withMaybeSpatialReference (Just s) = withSpatialReference s
 
 coordinateTransformation
   :: SpatialReference -> SpatialReference -> Maybe CoordinateTransformation
-coordinateTransformation source target =
-  unsafePerformIO $
-  withSpatialReference source $ \pSource ->
-  withSpatialReference target $ \pTarget ->
-  maybeNewCoordinateTransformation pSource pTarget
+coordinateTransformation source =
+  unsafePerformIO . coordinateTransformationIO source
 {-# NOINLINE coordinateTransformation #-}
 
-maybeNewCoordinateTransformation
-  :: Ptr SpatialReference
-  -> Ptr SpatialReference
+coordinateTransformationIO
+  :: SpatialReference
+  -> SpatialReference
   -> IO (Maybe CoordinateTransformation)
-maybeNewCoordinateTransformation pSource pTarget =
+coordinateTransformationIO source target =
   bracketOnError alloc freeIfNotNull go
   where
     alloc =
+      withSpatialReference source $ \pSource ->
+      withSpatialReference target $ \pTarget ->
       {#call unsafe OCTNewCoordinateTransformation as ^#} pSource pTarget
+
     go p
       | p==nullPtr = return Nothing
       | otherwise  = liftM (Just . CoordinateTransformation)
@@ -252,6 +251,11 @@ foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
 
 {#fun OSRCleanup as cleanup {} -> `()'#}
 
+-- | GDAL doesn't call ogr/ogrct.cpp:LoadProj4Library in a thread-safe way
+--   (at least in 1.11.2). We indirectly make sure it is called at startup
+--   in the main thread (via 'withGDAL') with this function which creates
+--   a dummy 'CoordinateTransformation'
 initialize :: IO ()
-initialize =
-  void (maybeNewCoordinateTransformation nullPtr nullPtr)
+initialize = do
+  dummy <- emptySpatialRef
+  void (coordinateTransformationIO dummy dummy)
