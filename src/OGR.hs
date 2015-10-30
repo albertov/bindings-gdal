@@ -63,6 +63,27 @@ module OGR (
   , geomWithin
   , geomContains
   , geomOverlaps
+  , geomSimplify
+  , geomSimplifyPreserveTopology
+  , geomSegmentize
+  , geomBoundary
+  , geomConvexHull
+  , geomBuffer
+  , geomIntersection
+  , geomUnion
+  , geomUnionCascaded
+  , geomPointOnSurface
+  , geomDifference
+  , geomSymDifference
+  , geomDistance
+  , geomLength
+  , geomArea
+  , geomCentroid
+  , geomIsEmpty
+  , geomIsValid
+  , geomIsSimple
+  , geomIsRing
+  , geomPolygonize
 
   , transformWith
   , transformTo

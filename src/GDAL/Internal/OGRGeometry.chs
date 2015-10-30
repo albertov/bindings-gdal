@@ -37,6 +37,27 @@ module GDAL.Internal.OGRGeometry (
   , geomWithin
   , geomContains
   , geomOverlaps
+  , geomSimplify
+  , geomSimplifyPreserveTopology
+  , geomSegmentize
+  , geomBoundary
+  , geomConvexHull
+  , geomBuffer
+  , geomIntersection
+  , geomUnion
+  , geomUnionCascaded
+  , geomPointOnSurface
+  , geomDifference
+  , geomSymDifference
+  , geomDistance
+  , geomLength
+  , geomArea
+  , geomCentroid
+  , geomIsEmpty
+  , geomIsValid
+  , geomIsSimple
+  , geomIsRing
+  , geomPolygonize
 
   , transformWith
   , transformTo
@@ -45,7 +66,6 @@ module GDAL.Internal.OGRGeometry (
   , withMaybeGeometry
   , cloneGeometry
   , maybeCloneGeometry
-  , newGeometryHandle
   , maybeNewGeometryHandle
   , geomFromWktIO
   , geomFromWkbIO
@@ -291,6 +311,41 @@ geomType g =
   #}
 
 
+transformWith :: Geometry -> CoordinateTransformation -> Maybe Geometry
+transformWith g ct = unsafePerformIO $ do
+  transformed <- withGeometry g cloneGeometry
+  err <- liftM toEnumC $
+         withGeometry transformed $
+         withCoordinateTransformation ct .
+         {#call unsafe OGR_G_Transform as ^#}
+  return (if err==None then Just transformed else Nothing)
+
+transformTo :: Geometry -> SpatialReference -> Maybe Geometry
+transformTo g srs = unsafePerformIO $ do
+  transformed <- withGeometry g cloneGeometry
+  err <- liftM toEnumC $
+         withGeometry transformed $
+         withSpatialReference srs .
+         {#call unsafe OGR_G_TransformTo as ^#}
+  return (if err==None then Just transformed else Nothing)
+
+geomSimplify :: Double -> Geometry -> Maybe Geometry
+geomSimplify =
+  deriveGeomWith . flip {#call unsafe OGR_G_Simplify as ^#} . realToFrac
+
+geomSimplifyPreserveTopology :: Double -> Geometry -> Maybe Geometry
+geomSimplifyPreserveTopology =
+  deriveGeomWith .
+  flip {#call unsafe OGR_G_SimplifyPreserveTopology as ^#} .
+  realToFrac
+
+geomSegmentize :: Double -> Geometry -> Geometry
+geomSegmentize maxLength geom = unsafePerformIO $ do
+  segmentized <- withGeometry geom cloneGeometry
+  withGeometry segmentized
+    (flip {#call unsafe OGR_G_Segmentize as ^#} (realToFrac maxLength))
+  return segmentized
+
 {#fun pure unsafe OGR_G_Intersects as geomIntersects
   {`Geometry', `Geometry'} -> `Bool'
   #}
@@ -323,20 +378,76 @@ geomType g =
   {`Geometry', `Geometry'} -> `Bool'
   #}
 
+geomBoundary :: Geometry -> Maybe Geometry
+geomBoundary = deriveGeomWith {#call unsafe OGR_G_Boundary as ^#}
 
+geomConvexHull :: Geometry -> Maybe Geometry
+geomConvexHull = deriveGeomWith {#call unsafe OGR_G_ConvexHull as ^#}
 
-transformWith :: Geometry -> CoordinateTransformation -> Maybe Geometry
-transformWith g ct = unsafePerformIO $ do
-  transformed <- withGeometry g cloneGeometry
-  withCoordinateTransformation ct $ \pCt ->
-    withGeometry transformed $ \pG -> do
-      err <- liftM toEnumC ({#call unsafe OGR_G_Transform as ^#} pG pCt)
-      return (if err==None then Just transformed else Nothing)
+geomBuffer :: Double -> Int -> Geometry -> Maybe Geometry
+geomBuffer dist nQuads = deriveGeomWith $ \g ->
+  {#call unsafe OGR_G_Buffer as ^#} g (realToFrac dist) (fromIntegral nQuads)
 
-transformTo :: Geometry -> SpatialReference -> Maybe Geometry
-transformTo g srs = unsafePerformIO $ do
-  transformed <- withGeometry g cloneGeometry
-  withSpatialReference srs $ \pSrs ->
-    withGeometry transformed $ \pG -> do
-      err <- liftM toEnumC ({#call unsafe OGR_G_TransformTo as ^#} pG pSrs)
-      return (if err==None then Just transformed else Nothing)
+geomIntersection :: Geometry -> Geometry -> Maybe Geometry
+geomIntersection = deriveGeomWith2 {#call unsafe OGR_G_Intersection as ^#}
+
+geomUnion :: Geometry -> Geometry -> Maybe Geometry
+geomUnion = deriveGeomWith2 {#call unsafe OGR_G_Union as ^#}
+
+geomUnionCascaded :: Geometry -> Maybe Geometry
+geomUnionCascaded = deriveGeomWith {#call unsafe OGR_G_UnionCascaded as ^#}
+
+geomPointOnSurface :: Geometry -> Maybe Geometry
+geomPointOnSurface = deriveGeomWith {#call unsafe OGR_G_PointOnSurface as ^#}
+
+geomDifference :: Geometry -> Geometry -> Maybe Geometry
+geomDifference = deriveGeomWith2 {#call unsafe OGR_G_Difference as ^#}
+
+geomSymDifference :: Geometry -> Geometry -> Maybe Geometry
+geomSymDifference = deriveGeomWith2 {#call unsafe OGR_G_SymDifference as ^#}
+
+{#fun pure unsafe OGR_G_Distance as geomDistance
+  {`Geometry', `Geometry'} -> `Double'
+  #}
+
+{#fun pure unsafe OGR_G_Length as geomLength {`Geometry'} -> `Double' #}
+
+{#fun pure unsafe OGR_G_Area as geomArea {`Geometry'} -> `Double' #}
+
+geomCentroid :: Geometry -> Maybe Geometry
+geomCentroid geom = unsafePerformIO $ do
+  mCentroid <- maybeNewGeometryHandle $
+               {#call unsafe OGR_G_CreateGeometry as ^#} (fromEnumC WkbPoint)
+  case mCentroid of
+    Nothing       -> throwBindingException NullGeometry
+    Just centroid -> do
+      err <- liftM toEnumC $
+             withGeometry geom $ \pGeom ->
+             withGeometry centroid $
+             {#call unsafe OGR_G_Centroid as ^#} pGeom
+      case err of
+        None -> return (Just centroid)
+        _    -> return Nothing
+
+{#fun pure unsafe OGR_G_IsEmpty as geomIsEmpty {`Geometry'} -> `Bool' #}
+
+{#fun pure unsafe OGR_G_IsValid as geomIsValid {`Geometry'} -> `Bool' #}
+{#fun pure unsafe OGR_G_IsSimple as geomIsSimple {`Geometry'} -> `Bool' #}
+{#fun pure unsafe OGR_G_IsRing as geomIsRing {`Geometry'} -> `Bool' #}
+
+geomPolygonize :: Geometry -> Maybe Geometry
+geomPolygonize = deriveGeomWith {#call unsafe OGR_G_Polygonize as ^#}
+
+deriveGeomWith
+  :: (Ptr Geometry -> IO (Ptr Geometry)) -> Geometry -> Maybe Geometry
+deriveGeomWith f =
+  unsafePerformIO . maybeNewGeometryHandle . flip withGeometry f
+
+deriveGeomWith2
+  :: (Ptr Geometry -> Ptr Geometry -> IO (Ptr Geometry))
+  -> Geometry -> Geometry -> Maybe Geometry
+deriveGeomWith2 f g1 g2 =
+  unsafePerformIO $
+  maybeNewGeometryHandle $
+  withGeometry g1 $ withGeometry g2 . f
+
