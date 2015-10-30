@@ -4,14 +4,12 @@
 {-# LANGUAGE RecordWildCards #-}
 module GDAL.AlgorithmsSpec (main, spec) where
 
-import Data.Conduit (($$))
-import qualified Data.Conduit.List as CL
+import Data.Monoid (mempty)
 import Data.Proxy (Proxy(Proxy))
 import qualified Data.Vector.Unboxed as U
 
+import Control.Applicative ((<$>), (<*>))
 import Control.Monad (liftM, sequence)
-
-import System.FilePath (joinPath)
 
 import OGR
 import OSR
@@ -100,6 +98,7 @@ spec = setupAndTeardown $ do
             (northUpGeotransform size env)
      v `shouldSatisfy` U.any (==(Value (tfField1 feat)))
 
+liftMaybe :: Either b a -> Maybe a
 liftMaybe = either (const Nothing) Just
 
 srs23030 :: SpatialReference
