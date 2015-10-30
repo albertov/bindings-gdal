@@ -241,73 +241,73 @@ spec = setupAndTeardown $ do
 
   describe "Geometry" $ do
 
-    describe "createFromWkt / exportToWkt" $ do
+    describe "geomFromWkt / geomToWkt" $ do
 
       it "succeeds if valid" $ do
-        let eGeom = createFromWkt Nothing "POINT (34 21)"
+        let eGeom = geomFromWkt Nothing "POINT (34 21)"
         eGeom `shouldSatisfy` isRight
 
       it "fails if invalid" $ do
-        let eGeom = createFromWkt Nothing "im not wkt"
+        let eGeom = geomFromWkt Nothing "im not wkt"
         eGeom `shouldBe` Left UnsupportedGeometryType
 
       it "export is same as original" $ do
-        let Right g = createFromWkt Nothing wkt
+        let Right g = geomFromWkt Nothing wkt
             wkt     = "POINT (34 21)"
-        exportToWkt g `shouldBe` wkt
+        geomToWkt g `shouldBe` wkt
 
-    describe "createFromWkb / exportToWkb" $ do
+    describe "geomFromWkb / geomToWkb" $ do
 
       it "succeeds if valid" $ do
-        let Right g = createFromWkt Nothing "POINT (34 21)"
-            wkb     = exportToWkb WkbXDR g
-        createFromWkb Nothing wkb `shouldBe` Right g
+        let Right g = geomFromWkt Nothing "POINT (34 21)"
+            wkb     = geomToWkb WkbXDR g
+        geomFromWkb Nothing wkb `shouldBe` Right g
 
       it "fails if invalid" $ do
-        let eGeom = createFromWkb Nothing "im not wkb"
+        let eGeom = geomFromWkb Nothing "im not wkb"
         eGeom `shouldBe` Left CorruptData
 
-    describe "createFromGml / exportToGml" $ do
+    describe "geomFromGml / geomToGml" $ do
 
       it "succeeds if valid" $ do
-        let Right g = createFromWkt Nothing "POINT (34 21)"
-            gml     = exportToGml g
-        createFromGml gml `shouldBe` Right g
+        let Right g = geomFromWkt Nothing "POINT (34 21)"
+            gml     = geomToGml g
+        geomFromGml gml `shouldBe` Right g
 
       it "fails if invalid" $ do
-        let eGeom = createFromGml "im not gml"
+        let eGeom = geomFromGml "im not gml"
         eGeom `shouldBe` Left CorruptData
 
 
     it "compares equal when equal with no srs" $ do
-      createFromWkt Nothing "POINT (2 5)"
-        `shouldBe` createFromWkt Nothing "POINT (2 5)"
+      geomFromWkt Nothing "POINT (2 5)"
+        `shouldBe` geomFromWkt Nothing "POINT (2 5)"
 
     it "compares equal when equal with srs" $ do
-      let Right srs = fromWkt (toWkt srs23030)
+      let Right srs = srsFromWkt (srsToWkt srs23030)
       srs `shouldBe` srs23030
-      createFromWkt (Just srs) "POINT (2 5)"
-        `shouldBe` createFromWkt (Just srs23030) "POINT (2 5)"
+      geomFromWkt (Just srs) "POINT (2 5)"
+        `shouldBe` geomFromWkt (Just srs23030) "POINT (2 5)"
 
     it "compares not equal when not equal" $ do
-      createFromWkt Nothing "POINT (2 6)"
-        `shouldNotBe` createFromWkt Nothing "POINT (2 5)"
+      geomFromWkt Nothing "POINT (2 6)"
+        `shouldNotBe` geomFromWkt Nothing "POINT (2 5)"
 
     describe "geometrySpatialReference" $ do
 
       it "is Nothing when it has no srs" $ do
-        let Right g = createFromWkt Nothing "POINT (34 21)"
+        let Right g = geomFromWkt Nothing "POINT (34 21)"
         geometrySpatialReference g `shouldSatisfy` isNothing
 
       it "is is the same as the one that was set" $ do
-        let Right g = createFromWkt (Just srs23030) "POINT (34 21)"
+        let Right g = geomFromWkt (Just srs23030) "POINT (34 21)"
         geometrySpatialReference g `shouldBe` Just srs23030
 
     describe "transformWith" $ do
 
       it "transforms a geometry without srs" $ do
-        let Right g         = createFromWkt Nothing "POINT (439466 4482586)"
-            Right expected  = createFromWkt (Just srs4326)
+        let Right g         = geomFromWkt Nothing "POINT (439466 4482586)"
+            Right expected  = geomFromWkt (Just srs4326)
                                 "POINT (-3.715491503365956 40.489899869998304)"
             Just coordTrans = coordinateTransformation srs23030 srs4326
         case g `transformWith` coordTrans of
@@ -316,14 +316,14 @@ spec = setupAndTeardown $ do
             geometrySpatialReference t `shouldBe` Just srs4326
             -- We compare WKT or else they won't match (TODO investigate why!)
             --t  `shouldBe` expected
-            exportToWkt t  `shouldBe` exportToWkt expected
+            geomToWkt t  `shouldBe` geomToWkt expected
 
     describe "transformTo" $ do
 
       it "transforms a geometry" $ do
-        let Right g         = createFromWkt (Just srs23030)
+        let Right g         = geomFromWkt (Just srs23030)
                                 "POINT (439466 4482586)"
-            Right expected  = createFromWkt (Just srs4326)
+            Right expected  = geomFromWkt (Just srs4326)
                                 "POINT (-3.715491503365956 40.489899869998304)"
         case g `transformTo` srs4326 of
           Nothing -> expectationFailure "Should have transformed the geom"
@@ -331,7 +331,7 @@ spec = setupAndTeardown $ do
             geometrySpatialReference t `shouldBe` Just srs4326
             -- We compare WKT or else they won't match (TODO investigate why!)
             --t  `shouldBe` expected
-            exportToWkt t  `shouldBe` exportToWkt expected
+            geomToWkt t  `shouldBe` geomToWkt expected
 
 
   describe "OGRField instances" $
@@ -433,16 +433,16 @@ pointDef :: GeomFieldDef
 pointDef = GeomFieldDef WkbPoint Nothing True
 
 aPoint :: Geometry
-aPoint = either exc id (createFromWkt Nothing "POINT (45 87)")
-  where exc  = error . ("Unexpected createFromWkt error: " ++) . show
+aPoint = either exc id (geomFromWkt Nothing "POINT (45 87)")
+  where exc  = error . ("Unexpected geomFromWkt error: " ++) . show
 
 srs23030 :: SpatialReference
-srs23030 = either exc id (fromEPSG 23030)
-  where exc = error . ("Unexpected fromEPSG error: " ++) . show
+srs23030 = either exc id (srsFromEPSG 23030)
+  where exc = error . ("Unexpected srsFromEPSG error: " ++) . show
 
 srs4326 :: SpatialReference
-srs4326 = either exc id (fromEPSG 4326)
-  where exc = error . ("Unexpected fromEPSG error: " ++) . show
+srs4326 = either exc id (srsFromEPSG 4326)
+  where exc = error . ("Unexpected srsFromEPSG error: " ++) . show
 
 data TestFeature a
   = TestFeature  {

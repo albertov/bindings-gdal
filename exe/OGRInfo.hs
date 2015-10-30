@@ -42,4 +42,4 @@ main = withGDAL $ execGDAL $ do
           T.putStrLn ("  " <> fieldName <> ":")
           putStrLn ("    " <> show fieldValue)
         T.putStrLn ("Geometry:")
-        BS.putStrLn (maybe "" (("  "<>) . exportToWkt) fGeom)
+        BS.putStrLn (maybe "" (("  "<>) . geomToWkt) fGeom)

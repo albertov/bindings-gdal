@@ -12,12 +12,12 @@ main = hspec spec
 spec :: Spec
 spec = do
   it "can created from EPSG number" $
-    fromEPSG 23030 `shouldSatisfy` isRight
+    srsFromEPSG 23030 `shouldSatisfy` isRight
 
   it "can created from Proj4 string" $
-    fromProj4 "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+    srsFromProj4 "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
       `shouldSatisfy` isRight
 
-  it "fromProj4 returns Left if invalid" $
-    fromProj4 "foo" `shouldSatisfy` isLeft
+  it "srsFromProj4 returns Left if invalid" $
+    srsFromProj4 "foo" `shouldSatisfy` isLeft
 

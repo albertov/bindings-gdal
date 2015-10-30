@@ -122,7 +122,7 @@ spec = setupAndTeardown $ do
 
     it "can set and get" $ do
       ds <- createMem (XY 10 10) 1 GDT_Int16 []
-      let Right proj = fromProj4
+      let Right proj = srsFromProj4
                           "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
       setDatasetProjection ds proj
       proj2 <- datasetProjection ds

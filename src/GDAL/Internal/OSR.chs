@@ -4,14 +4,14 @@ module GDAL.Internal.OSR (
     SpatialReference
   , CoordinateTransformation
 
-  , fromWkt
-  , fromProj4
-  , fromEPSG
-  , fromXML
+  , srsFromWkt
+  , srsFromProj4
+  , srsFromEPSG
+  , srsFromXML
 
-  , toWkt
-  , toProj4
-  , toXML
+  , srsToWkt
+  , srsToProj4
+  , srsToXML
 
   , coordinateTransformation
 
@@ -25,7 +25,7 @@ module GDAL.Internal.OSR (
   , getLinearUnits
 
   , cleanup
-  , fromWktIO
+  , srsFromWktIO
   , withSpatialReference
   , withMaybeSRAsCString
   , withMaybeSpatialReference
@@ -64,18 +64,18 @@ import GDAL.Internal.CPLString (peekCPLString)
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
 
 instance Show SpatialReference where
-   show = show . toWkt
+   show = show . srsToWkt
 
-toWkt :: SpatialReference -> ByteString
-toWkt s = exportWith fun s
+srsToWkt :: SpatialReference -> ByteString
+srsToWkt s = exportWith fun s
   where
     fun s' p = {#call unsafe ExportToPrettyWkt as ^#} s' p 1
 
-toProj4 :: SpatialReference -> ByteString
-toProj4 = exportWith {#call unsafe ExportToProj4 as ^#}
+srsToProj4 :: SpatialReference -> ByteString
+srsToProj4 = exportWith {#call unsafe ExportToProj4 as ^#}
 
-toXML :: SpatialReference -> ByteString
-toXML = exportWith fun
+srsToXML :: SpatialReference -> ByteString
+srsToXML = exportWith fun
   where
     fun s' p = {#call unsafe ExportToXML as ^#} s' p (castPtr nullPtr)
 
@@ -123,26 +123,26 @@ emptySpatialRef :: IO SpatialReference
 emptySpatialRef =
   newSpatialRefHandle ({#call unsafe NewSpatialReference as ^#} nullPtr)
 
-fromWkt, fromProj4, fromXML
+srsFromWkt, srsFromProj4, srsFromXML
   :: ByteString -> Either OGRException SpatialReference
-fromWkt = unsafePerformIO . (flip unsafeUseAsCString fromWktIO)
-{-# NOINLINE fromWkt #-}
+srsFromWkt = unsafePerformIO . (flip unsafeUseAsCString srsFromWktIO)
+{-# NOINLINE srsFromWkt #-}
 
-fromWktIO :: CString -> IO (Either OGRException SpatialReference)
-fromWktIO a =
+srsFromWktIO :: CString -> IO (Either OGRException SpatialReference)
+srsFromWktIO a =
   (liftM Right
     (newSpatialRefHandle ({#call unsafe NewSpatialReference as ^#} a)))
   `catch` (return . Left)
 
-fromProj4 = fromImporter importFromProj4
-{-# NOINLINE fromProj4 #-}
+srsFromProj4 = fromImporter importFromProj4
+{-# NOINLINE srsFromProj4 #-}
 
-fromXML = fromImporter importFromXML
-{-# NOINLINE fromXML #-}
+srsFromXML = fromImporter importFromXML
+{-# NOINLINE srsFromXML #-}
 
-fromEPSG :: Int -> Either OGRException SpatialReference
-fromEPSG = fromImporter importFromEPSG
-{-# NOINLINE fromEPSG #-}
+srsFromEPSG :: Int -> Either OGRException SpatialReference
+srsFromEPSG = fromImporter importFromEPSG
+{-# NOINLINE srsFromEPSG #-}
 
 fromImporter
   :: (SpatialReference -> a -> IO CInt)
@@ -203,7 +203,7 @@ getUnitsWith fun s = unsafePerformIO $
 
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
 withMaybeSRAsCString Nothing    = ($ nullPtr)
-withMaybeSRAsCString (Just srs) = unsafeUseAsCString (toWkt srs)
+withMaybeSRAsCString (Just srs) = unsafeUseAsCString (srsToWkt srs)
 
 withMaybeSpatialReference
   :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a

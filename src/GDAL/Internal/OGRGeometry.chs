@@ -15,15 +15,15 @@ module GDAL.Internal.OGRGeometry (
   , Envelope (..)
   , OGREnvelope
 
-  , createFromWkt
-  , createFromWkb
-  , createFromGml
+  , geomFromWkt
+  , geomFromWkb
+  , geomFromGml
 
-  , exportToWkt
-  , exportToWkb
-  , exportToGml
-  , exportToKml
-  , exportToJson
+  , geomToWkt
+  , geomToWkb
+  , geomToGml
+  , geomToKml
+  , geomToJson
 
   , geometrySpatialReference
   , geometryType
@@ -38,13 +38,13 @@ module GDAL.Internal.OGRGeometry (
   , maybeCloneGeometry
   , newGeometryHandle
   , maybeNewGeometryHandle
-  , createFromWktIO
-  , createFromWkbIO
-  , exportToWktIO
-  , exportToWkbIO
-  , exportToGmlIO
-  , exportToKmlIO
-  , exportToJsonIO
+  , geomFromWktIO
+  , geomFromWkbIO
+  , geomToWktIO
+  , geomToWkbIO
+  , geomToGmlIO
+  , geomToKmlIO
+  , geomToJsonIO
 ) where
 
 #include "ogr_api.h"
@@ -163,58 +163,58 @@ maybeNewGeometryHandle alloc =
     freeIfNotNull p = do
       when (p /= nullPtr) ({#call unsafe OGR_G_DestroyGeometry as ^#} p)
 
-createFromWkb
+geomFromWkb
   :: Maybe SpatialReference -> ByteString -> Either OGRError Geometry
-createFromWkb mSr = unsafePerformIO . createFromWkbIO mSr
-{-# NOINLINE createFromWkb #-}
+geomFromWkb mSr = unsafePerformIO . geomFromWkbIO mSr
+{-# NOINLINE geomFromWkb #-}
 
-createFromWkbIO
+geomFromWkbIO
   :: Maybe SpatialReference -> ByteString -> IO (Either OGRError Geometry)
-createFromWkbIO mSrs bs =
+geomFromWkbIO mSrs bs =
   unsafeUseAsCStringLen bs $ \(sp, len) ->
   withMaybeSpatialReference mSrs $ \srs ->
   newGeometryHandle $ \gPtr ->
     liftM toEnumC $ {#call unsafe OGR_G_CreateFromWkb as ^#}
                       (castPtr sp) srs gPtr (fromIntegral len)
 
-createFromWkt
+geomFromWkt
   :: Maybe SpatialReference -> ByteString -> Either OGRError Geometry
-createFromWkt mSrs = unsafePerformIO . createFromWktIO mSrs
-{-# NOINLINE createFromWkt #-}
+geomFromWkt mSrs = unsafePerformIO . geomFromWktIO mSrs
+{-# NOINLINE geomFromWkt #-}
 
-createFromWktIO
+geomFromWktIO
   :: Maybe SpatialReference -> ByteString -> IO (Either OGRError Geometry)
-createFromWktIO mSrs bs =
+geomFromWktIO mSrs bs =
   unsafeUseAsCString bs $ \sp ->
   with sp $ \spp ->
   withMaybeSpatialReference mSrs $ \srs ->
   newGeometryHandle $
     liftM toEnumC . {#call unsafe OGR_G_CreateFromWkt as ^#} spp srs
 
-createFromGml
+geomFromGml
   :: ByteString -> Either OGRError Geometry
-createFromGml = unsafePerformIO . createFromGmlIO
-{-# NOINLINE createFromGml #-}
+geomFromGml = unsafePerformIO . geomFromGmlIO
+{-# NOINLINE geomFromGml #-}
 
-createFromGmlIO
+geomFromGmlIO
   :: ByteString -> IO (Either OGRError Geometry)
-createFromGmlIO bs =
+geomFromGmlIO bs =
   liftM (maybe (Left CorruptData) Right) $
   maybeNewGeometryHandle $
   unsafeUseAsCString bs $ {#call unsafe OGR_G_CreateFromGML as ^#}
 
 
-exportToWktIO :: Geometry -> IO ByteString
-exportToWktIO g =
+geomToWktIO :: Geometry -> IO ByteString
+geomToWktIO g =
   withGeometry g $ \gPtr ->
   peekCPLString $
     checkOGRError . {#call unsafe OGR_G_ExportToWkt as ^ #} gPtr
 
-exportToWkt :: Geometry -> ByteString
-exportToWkt = unsafePerformIO . exportToWktIO
+geomToWkt :: Geometry -> ByteString
+geomToWkt = unsafePerformIO . geomToWktIO
 
-exportToWkbIO :: WkbByteOrder -> Geometry -> IO ByteString
-exportToWkbIO bo g = withGeometry g $ \gPtr -> do
+geomToWkbIO :: WkbByteOrder -> Geometry -> IO ByteString
+geomToWkbIO bo g = withGeometry g $ \gPtr -> do
   len <- liftM fromIntegral ({#call unsafe OGR_G_WkbSize as ^ #} gPtr)
   fp <- mallocForeignPtrBytes len
   withForeignPtr fp $
@@ -223,8 +223,8 @@ exportToWkbIO bo g = withGeometry g $ \gPtr -> do
       . castPtr
   return $! PS fp 0 len
 
-exportToWkb :: WkbByteOrder -> Geometry -> ByteString
-exportToWkb bo = unsafePerformIO . exportToWkbIO bo
+geomToWkb :: WkbByteOrder -> Geometry -> ByteString
+geomToWkb bo = unsafePerformIO . geomToWkbIO bo
 
 
 exportWith :: (Ptr Geometry -> IO CString) -> Geometry -> IO ByteString
@@ -238,25 +238,25 @@ exportWith f g =
       Just (GDALException CE_Failure AssertionFailed "exportWith: null ptr")
     checkit e _ = e
 
-exportToKmlIO :: Geometry -> IO ByteString
-exportToKmlIO =
+geomToKmlIO :: Geometry -> IO ByteString
+geomToKmlIO =
   exportWith (flip {#call unsafe OGR_G_ExportToKML as ^ #} nullPtr)
 
-exportToKml :: Geometry -> ByteString
-exportToKml = unsafePerformIO . exportToKmlIO
+geomToKml :: Geometry -> ByteString
+geomToKml = unsafePerformIO . geomToKmlIO
 
-exportToJsonIO :: Geometry -> IO ByteString
-exportToJsonIO = exportWith {#call unsafe OGR_G_ExportToJson as ^ #}
+geomToJsonIO :: Geometry -> IO ByteString
+geomToJsonIO = exportWith {#call unsafe OGR_G_ExportToJson as ^ #}
 
-exportToJson :: Geometry -> ByteString
-exportToJson = unsafePerformIO . exportToJsonIO
+geomToJson :: Geometry -> ByteString
+geomToJson = unsafePerformIO . geomToJsonIO
 
 
-exportToGmlIO :: Geometry -> IO ByteString
-exportToGmlIO = exportWith {#call unsafe OGR_G_ExportToGML as ^ #}
+geomToGmlIO :: Geometry -> IO ByteString
+geomToGmlIO = exportWith {#call unsafe OGR_G_ExportToGML as ^ #}
 
-exportToGml :: Geometry -> ByteString
-exportToGml = unsafePerformIO . exportToGmlIO
+geomToGml :: Geometry -> ByteString
+geomToGml = unsafePerformIO . geomToGmlIO
 
 geomEqIO :: Geometry -> Geometry -> IO Bool
 geomEqIO a b = withGeometry a $ \aPtr -> withGeometry b $ \bPtr ->
@@ -282,7 +282,7 @@ geometryType g =
   } -> `()'#}
 
 instance Show Geometry where
-  show = unpack . exportToWkt
+  show = unpack . geomToWkt
 
 instance Eq Geometry where
   a == b = unsafePerformIO (geomEqIO a b)

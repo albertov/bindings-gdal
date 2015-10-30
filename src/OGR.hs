@@ -41,15 +41,15 @@ module OGR (
 
   , runOGR
 
-  , createFromWkt
-  , createFromWkb
-  , createFromGml
+  , geomFromWkt
+  , geomFromWkb
+  , geomFromGml
 
-  , exportToWkt
-  , exportToWkb
-  , exportToGml
-  , exportToKml
-  , exportToJson
+  , geomToWkt
+  , geomToWkb
+  , geomToGml
+  , geomToKml
+  , geomToJson
 
   , geometrySpatialReference
   , geometryType

@@ -29,8 +29,8 @@ spec = setupAndTeardown $ do
   describe "reprojectImage" $ do
 
     it "works with SpatialReferences in dataset" $ do
-      let Right srs1 = fromEPSG 23030
-          Right srs2 = fromEPSG 4326
+      let Right srs1 = srsFromEPSG 23030
+          Right srs2 = srsFromEPSG 4326
 
       ds' <- createMem (XY 100 100) 1 GDT_Int16 []
       setDatasetProjection ds' srs1
@@ -43,8 +43,8 @@ spec = setupAndTeardown $ do
       reprojectImage ds Nothing ds2 Nothing NearestNeighbour 0 0 Nothing []
 
     it "does not work with no geotransforms" $ do
-      let Right srs1 = fromEPSG 23030
-          Right srs2 = fromEPSG 4326
+      let Right srs1 = srsFromEPSG 23030
+          Right srs2 = srsFromEPSG 4326
       ds' <- createMem (XY 100 100) 1 GDT_Int16 []
       setDatasetProjection ds' srs1
       ds <- unsafeToReadOnly ds'
@@ -55,8 +55,8 @@ spec = setupAndTeardown $ do
       action `shouldThrow` ((==AppDefined) . gdalErrNum)
 
     it "works with SpatialReferences as args" $ do
-      let Right srs1 = fromEPSG 23030
-          Right srs2 = fromEPSG 4326
+      let Right srs1 = srsFromEPSG 23030
+          Right srs2 = srsFromEPSG 4326
       ds' <- createMem (XY 100 100) 1 GDT_Int16 []
       setDatasetGeotransform ds' (Geotransform 0 10 0 0 0 (-10))
       ds <- unsafeToReadOnly ds'

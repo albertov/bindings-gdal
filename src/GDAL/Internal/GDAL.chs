@@ -319,7 +319,7 @@ datasetProjection ds = liftIO $ do
   c <- peek srs
   if c == 0
     then return Nothing
-    else fromWktIO srs >>=
+    else srsFromWktIO srs >>=
           either (throwBindingException . InvalidProjection)
                  (return . Just)
 
@@ -327,7 +327,7 @@ datasetProjection ds = liftIO $ do
 setDatasetProjection :: RWDataset s -> SpatialReference -> GDAL s ()
 setDatasetProjection ds srs =
   liftIO $ checkCPLError $
-    unsafeUseAsCString (toWkt srs)
+    unsafeUseAsCString (srsToWkt srs)
       ({#call unsafe SetProjection as ^#} (unDataset ds))
 
 data Geotransform

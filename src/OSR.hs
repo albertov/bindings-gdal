@@ -2,14 +2,14 @@ module OSR (
     SpatialReference
   , CoordinateTransformation
 
-  , fromWkt
-  , fromProj4
-  , fromEPSG
-  , fromXML
+  , srsFromWkt
+  , srsFromProj4
+  , srsFromEPSG
+  , srsFromXML
 
-  , toWkt
-  , toProj4
-  , toXML
+  , srsToWkt
+  , srsToProj4
+  , srsToXML
 
   , isGeographic
   , isLocal
