@@ -95,5 +95,5 @@ import qualified GDAL.Internal.OSR as OSR
 --   Should only be called from the main thread
 withGDAL :: IO a -> IO a
 withGDAL a =
-    (GDAL.allRegister >> OGR.registerAll >> a)
+    (GDAL.allRegister >> OGR.registerAll >> OSR.initialize >> a)
       `finally` (OGR.cleanupAll >> GDAL.destroyDriverManager >> OSR.cleanup)

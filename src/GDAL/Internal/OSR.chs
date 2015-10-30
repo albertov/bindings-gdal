@@ -1,4 +1,6 @@
-{-# LANGUAGE ForeignFunctionInterface , BangPatterns  #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module GDAL.Internal.OSR (
     SpatialReference
@@ -25,6 +27,7 @@ module GDAL.Internal.OSR (
   , getLinearUnits
 
   , cleanup
+  , initialize
   , srsFromWktIO
   , withSpatialReference
   , withMaybeSRAsCString
@@ -41,7 +44,7 @@ module GDAL.Internal.OSR (
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (catch, bracketOnError, try)
+import Control.Exception (catch, bracketOnError, try, bracket)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
@@ -60,6 +63,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import GDAL.Internal.OGRError
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLString (peekCPLString)
+import GDAL.Internal.CPLConv (cplFree)
 
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
 
@@ -83,8 +87,12 @@ exportWith
   :: (Ptr SpatialReference -> Ptr CString -> IO CInt)
   -> SpatialReference
   -> ByteString
-exportWith fun s = unsafePerformIO $ peekCPLString $ \ptr ->
-  checkOGRError (withSpatialReference s (\s' -> fun s' ptr))
+exportWith fun srs =
+  unsafePerformIO $
+  withSpatialReference srs $ \pSrs ->
+  peekCPLString $
+  checkOGRError . fun pSrs
+{-# NOINLINE exportWith #-}
 
 
 foreign import ccall "ogr_srs_api.h &OSRRelease"
@@ -230,3 +238,9 @@ foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
   c_destroyCT :: FunPtr (Ptr CoordinateTransformation -> IO ())
 
 {#fun OSRCleanup as cleanup {} -> `()'#}
+
+initialize :: IO ()
+initialize
+  = unsafeUseAsCString "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs" $
+    \p -> bracket ({#call unsafe OCTProj4Normalize as ^#} p)
+                  cplFree (const (return ()))
