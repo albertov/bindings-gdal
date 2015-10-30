@@ -44,7 +44,7 @@ module GDAL.Internal.OSR (
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (catch, bracketOnError, try, bracket)
+import Control.Exception (catch, bracketOnError, try)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
@@ -223,16 +223,29 @@ withMaybeSpatialReference (Just s) = withSpatialReference s
 
 coordinateTransformation
   :: SpatialReference -> SpatialReference -> Maybe CoordinateTransformation
-coordinateTransformation source target = unsafePerformIO $
+coordinateTransformation source target =
+  unsafePerformIO $
   withSpatialReference source $ \pSource ->
-  withSpatialReference target $ \pTarget -> do
-    pCt <- {#call unsafe OCTNewCoordinateTransformation as ^#}
-            pSource pTarget
-    if pCt == nullPtr
-      then return Nothing
-      else liftM (Just . CoordinateTransformation)
-                 (newForeignPtr c_destroyCT pCt)
+  withSpatialReference target $ \pTarget ->
+  maybeNewCoordinateTransformation pSource pTarget
 {-# NOINLINE coordinateTransformation #-}
+
+maybeNewCoordinateTransformation
+  :: Ptr SpatialReference
+  -> Ptr SpatialReference
+  -> IO (Maybe CoordinateTransformation)
+maybeNewCoordinateTransformation pSource pTarget =
+  bracketOnError alloc freeIfNotNull go
+  where
+    alloc =
+      {#call unsafe OCTNewCoordinateTransformation as ^#} pSource pTarget
+    go p
+      | p==nullPtr = return Nothing
+      | otherwise  = liftM (Just . CoordinateTransformation)
+                           (newForeignPtr c_destroyCT p)
+    freeIfNotNull p
+      | p/=nullPtr = {#call unsafe OCTDestroyCoordinateTransformation as ^#} p
+      | otherwise  = return ()
 
 foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
   c_destroyCT :: FunPtr (Ptr CoordinateTransformation -> IO ())
@@ -240,7 +253,5 @@ foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
 {#fun OSRCleanup as cleanup {} -> `()'#}
 
 initialize :: IO ()
-initialize
-  = unsafeUseAsCString "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs" $
-    \p -> bracket ({#call unsafe OCTProj4Normalize as ^#} p)
-                  cplFree (const (return ()))
+initialize =
+  void (maybeNewCoordinateTransformation nullPtr nullPtr)
