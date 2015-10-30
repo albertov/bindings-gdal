@@ -17,6 +17,7 @@ module GDAL.Internal.Types (
   , XY (..)
   , Size
   , BlockIx
+  , ReleaseKey
   , winSize
   , sizeLen
   , AccessMode
@@ -42,6 +43,7 @@ import Control.Monad.Base (MonadBase)
 import Control.Monad.Trans.Resource (
     ResourceT
   , MonadResource
+  , ReleaseKey
   , runResourceT
   , allocate
   , release

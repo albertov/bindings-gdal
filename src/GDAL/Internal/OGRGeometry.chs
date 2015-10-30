@@ -17,6 +17,7 @@ module GDAL.Internal.OGRGeometry (
 
   , createFromWkt
   , createFromWkb
+  , createFromGml
 
   , exportToWkt
   , exportToWkb
@@ -51,7 +52,7 @@ module GDAL.Internal.OGRGeometry (
 {#context lib = "gdal" prefix = "OGR_G_"#}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (throw, bracketOnError)
+import Control.Exception (throw, bracketOnError, catch)
 import Control.Monad (liftM, when, (>=>))
 
 import Data.ByteString.Internal (ByteString(..))
@@ -60,6 +61,7 @@ import Data.ByteString.Unsafe (
     unsafeUseAsCString
   , unsafeUseAsCStringLen
   )
+import Data.Maybe (fromJust, fromMaybe)
 
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CDouble(..), CChar(..), CUChar(..))
@@ -189,6 +191,17 @@ createFromWktIO mSrs bs =
   newGeometryHandle $
     liftM toEnumC . {#call unsafe OGR_G_CreateFromWkt as ^#} spp srs
 
+createFromGml
+  :: ByteString -> Either OGRError Geometry
+createFromGml = unsafePerformIO . createFromGmlIO
+{-# NOINLINE createFromGml #-}
+
+createFromGmlIO
+  :: ByteString -> IO (Either OGRError Geometry)
+createFromGmlIO bs =
+  liftM (maybe (Left CorruptData) Right) $
+  maybeNewGeometryHandle $
+  unsafeUseAsCString bs $ {#call unsafe OGR_G_CreateFromGML as ^#}
 
 
 exportToWktIO :: Geometry -> IO ByteString

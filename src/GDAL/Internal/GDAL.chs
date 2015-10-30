@@ -34,6 +34,7 @@ module GDAL.Internal.GDAL (
   , create
   , createMem
   , flushCache
+  , closeDataset
   , openReadOnly
   , openReadWrite
   , unsafeToReadOnly
@@ -196,7 +197,13 @@ nullDatasetH = DatasetH nullPtr
 deriving instance Eq DatasetH
 
 newtype Dataset s (t::AccessMode) =
-  Dataset { unDataset :: DatasetH }
+  Dataset (ReleaseKey, DatasetH)
+
+unDataset :: Dataset s t -> DatasetH
+unDataset (Dataset (_,s)) = s
+
+closeDataset :: MonadIO m => Dataset s t -> m ()
+closeDataset (Dataset (rk,_)) = release rk
 
 type RODataset s = Dataset s ReadOnly
 type RWDataset s = Dataset s ReadWrite
@@ -284,10 +291,9 @@ createCopy driver path ds strict options progressFun =
 
 
 newDatasetHandle :: IO DatasetH -> GDAL s (Dataset s t)
-newDatasetHandle act = liftM snd $ allocate alloc free
+newDatasetHandle act =
+  liftM Dataset $ allocate (checkGDALCall checkit act) {#call GDALClose as ^#}
   where
-    alloc = liftM Dataset (checkGDALCall checkit act)
-    free  = {#call GDALClose as ^#} . unDataset
     checkit exc p
       | p==nullDatasetH = Just (fromMaybe
                                 (GDALBindingException NullDataset) exc)

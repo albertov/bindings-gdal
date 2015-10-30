@@ -2,8 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main (main) where
 
-import Control.Exception (throw)
-import Control.Monad (forM_, liftM)
+import Control.Monad (forM_)
 import Control.Monad.IO.Class (liftIO)
 
 import Data.Conduit

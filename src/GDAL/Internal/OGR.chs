@@ -42,7 +42,7 @@ module GDAL.Internal.OGR (
   , createMem
   , canCreateMultipleGeometryFields
 
-  , datasourceName
+  , dataSourceName
 
   , createLayer
   , createLayerWithDef
@@ -63,12 +63,13 @@ module GDAL.Internal.OGR (
   , syncLayerToDisk
   , syncToDisk
 
-  , getSpatialFilter
-  , setSpatialFilter
+  , layerSpatialFilter
+  , setLayerSpatialFilter
 
-  , layerCount
+  , dataSourceLayerCount
   , layerName
   , layerExtent
+  , layerFeatureCount
   , layerFeatureDef
 
   , createFeature
@@ -112,7 +113,7 @@ import Control.Monad.Catch (
   , finally
   )
 import Control.Monad.Trans (lift)
-import Control.Monad.Trans.Resource (MonadResource, ReleaseKey)
+import Control.Monad.Trans.Resource (MonadResource)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Foreign.C.String (CString, peekCString, withCString)
@@ -122,7 +123,7 @@ import Foreign.C.Types (CLLong(..))
 #endif
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Utils (toBool)
+import Foreign.Marshal.Utils (toBool, fromBool)
 
 import Foreign.Storable (Storable, peek)
 
@@ -498,13 +499,13 @@ layerGeomFieldDef p =
           ({#call unsafe OGR_L_GetSpatialRef as ^#} p)
     <*> pure True
 
-layerCount :: DataSource s t -> GDAL s Int
-layerCount = liftM fromIntegral
+dataSourceLayerCount :: DataSource s t -> GDAL s Int
+dataSourceLayerCount = liftM fromIntegral
            . liftIO . {#call OGR_DS_GetLayerCount as ^#} . unDataSource
 
-datasourceName :: DataSource s t -> GDAL s String
-datasourceName =
-  liftIO . (peekCString <=< {#call unsafe OGR_DS_GetName as ^#} . unDataSource)
+dataSourceName :: DataSource s t -> GDAL s String
+dataSourceName =
+  liftIO . (peekCString <=< {#call OGR_DS_GetName as ^#} . unDataSource)
 
 
 data SQLDialect
@@ -560,13 +561,18 @@ layerFeatureDefIO pL = do
   gfd <- layerGeomFieldDef pL
   getLayerSchema pL >>= featureDefFromHandle gfd
 
+layerFeatureCount :: Layer s l t a -> Bool -> GDAL s (Maybe Int)
+layerFeatureCount layer force = liftIO $ do
+  c <- liftM fromIntegral $
+        {#call OGR_L_GetFeatureCount as ^#} (unLayer layer) (fromBool force)
+  if c<0 then return Nothing else return (Just c)
 
-getSpatialFilter :: Layer s l t a -> GDAL s (Maybe Geometry)
-getSpatialFilter l = liftIO $
+layerSpatialFilter :: Layer s l t a -> GDAL s (Maybe Geometry)
+layerSpatialFilter l = liftIO $
   {#call unsafe OGR_L_GetSpatialFilter as ^#} (unLayer l) >>= maybeCloneGeometry
 
-setSpatialFilter :: Layer s l t a -> Geometry -> GDAL s ()
-setSpatialFilter l g = liftIO $
+setLayerSpatialFilter :: Layer s l t a -> Geometry -> GDAL s ()
+setLayerSpatialFilter l g = liftIO $
   withGeometry g $ {#call unsafe OGR_L_SetSpatialFilter as ^#} (unLayer l)
 
 driverHasCapability :: DriverH -> DriverCapability -> Bool

@@ -39,6 +39,7 @@ module GDAL (
   , flushCache
   , openReadOnly
   , openReadWrite
+  , closeDataset
   , unsafeToReadOnly
   , createCopy
 

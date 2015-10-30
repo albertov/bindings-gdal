@@ -60,7 +60,7 @@ spec = setupAndTeardown $ do
       void $ getShapePath >>= openReadOnly
 
     it "can get datasource name" $ do
-      n <- getShapePath >>= openReadOnly >>= datasourceName
+      n <- getShapePath >>= openReadOnly >>= dataSourceName
       n `shouldContain` "fondo.shp"
 
     it "can get a layer by index" $ do
@@ -78,7 +78,7 @@ spec = setupAndTeardown $ do
         `shouldThrow` (==InvalidLayerName "foo")
 
     it "can get layer count" $ do
-      n <- getShapePath >>= openReadOnly >>= layerCount
+      n <- getShapePath >>= openReadOnly >>= dataSourceLayerCount
       n `shouldBe` 1
 
     it "can get layer name" $ do
@@ -207,16 +207,17 @@ spec = setupAndTeardown $ do
 
 
 
-  describe "getSpatialFilter" $ do
+  describe "layerSpatialFilter" $ do
 
     it "return Noting when no filter has been set" $ do
-      mGeom <- getShapePath >>= openReadOnly >>= getLayer 0 >>= getSpatialFilter
+      ds <- getShapePath >>= openReadOnly
+      mGeom <- getLayer 0 ds >>= layerSpatialFilter
       mGeom `shouldSatisfy` isNothing
 
     it "can set a spatial filter and retrieve it" $ do
       l <- getShapePath >>= openReadWrite >>= getLayer 0
-      setSpatialFilter l aPoint
-      mGeom <- getSpatialFilter l
+      setLayerSpatialFilter l aPoint
+      mGeom <- layerSpatialFilter l
       mGeom `shouldBe` Just aPoint
 
 
@@ -260,10 +261,21 @@ spec = setupAndTeardown $ do
       it "succeeds if valid" $ do
         let Right g = createFromWkt Nothing "POINT (34 21)"
             wkb     = exportToWkb WkbXDR g
-        createFromWkb Nothing wkb `shouldSatisfy` isRight
+        createFromWkb Nothing wkb `shouldBe` Right g
 
       it "fails if invalid" $ do
         let eGeom = createFromWkb Nothing "im not wkb"
+        eGeom `shouldBe` Left CorruptData
+
+    describe "createFromGml / exportToGml" $ do
+
+      it "succeeds if valid" $ do
+        let Right g = createFromWkt Nothing "POINT (34 21)"
+            gml     = exportToGml g
+        createFromGml gml `shouldBe` Right g
+
+      it "fails if invalid" $ do
+        let eGeom = createFromGml "im not gml"
         eGeom `shouldBe` Left CorruptData
 
 

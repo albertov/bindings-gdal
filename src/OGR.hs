@@ -43,6 +43,7 @@ module OGR (
 
   , createFromWkt
   , createFromWkb
+  , createFromGml
 
   , exportToWkt
   , exportToWkb
@@ -74,7 +75,8 @@ module OGR (
   , createMem
   , canCreateMultipleGeometryFields
 
-  , datasourceName
+  , dataSourceName
+  , dataSourceLayerCount
   , executeSQL
 
   , createLayer
@@ -94,13 +96,13 @@ module OGR (
   , syncToDisk
   , syncLayerToDisk
 
-  , getSpatialFilter
-  , setSpatialFilter
-
-  , layerCount
   , layerExtent
   , layerName
   , layerFeatureDef
+  , layerFeatureCount
+  , layerSpatialFilter
+  , setLayerSpatialFilter
+
 
   , createFeature
   , createFeatureWithFid
