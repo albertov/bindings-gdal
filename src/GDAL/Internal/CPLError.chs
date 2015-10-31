@@ -20,6 +20,7 @@ module GDAL.Internal.CPLError (
   , checkCPLError
   , checkGDALCall
   , checkGDALCall_
+  , withSilentErrorHandler
 ) where
 
 {# context lib = "gdal" prefix = "CPL" #}
@@ -45,13 +46,11 @@ import Data.Typeable (Typeable, cast)
 import Data.Monoid (mconcat)
 
 import Foreign.C.Types (CInt(..), CChar(..))
-import Foreign.Ptr (nullPtr)
+import Foreign.Ptr (Ptr, FunPtr, nullPtr)
 import Foreign.Storable (peekByteOff)
 
 -- work around  https://github.com/haskell/c2hs/issues/151
 import qualified Foreign.C.Types as C2HSImp
-
-import Foreign.Ptr (Ptr)
 
 import GDAL.Internal.Util (toEnumC, peekEncodedCString)
 
@@ -178,3 +177,13 @@ withErrorHandler act = runBounded $
     runBounded
       | rtsSupportsBoundThreads = runInBoundThread
       | otherwise               = id
+
+withSilentErrorHandler :: IO a -> IO a
+withSilentErrorHandler a = (pushIt >> a) `finally` popIt
+  where
+    pushIt = {#call unsafe CPLPushErrorHandler as ^#} c_quietErrorHandler
+    popIt  = {#call unsafe CPLPopErrorHandler as ^#}
+
+
+foreign import ccall "cpl_error.h &CPLQuietErrorHandler"
+  c_quietErrorHandler :: FunPtr (CInt -> CInt -> Ptr CChar -> IO ())

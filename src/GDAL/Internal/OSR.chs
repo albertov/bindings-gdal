@@ -256,6 +256,6 @@ foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
 --   in the main thread (via 'withGDAL') with this function which creates
 --   a dummy 'CoordinateTransformation'
 initialize :: IO ()
-initialize = do
+initialize = withSilentErrorHandler $ do
   dummy <- emptySpatialRef
   void (coordinateTransformationIO dummy dummy)
