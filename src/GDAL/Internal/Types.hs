@@ -33,7 +33,7 @@ module GDAL.Internal.Types (
   , unsafeGDALToIO
 ) where
 
-import Control.Applicative (Applicative(..), liftA2)
+import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.DeepSeq (NFData(rnf), force)
 import Control.Exception (evaluate)
 import Control.Monad (liftM)
