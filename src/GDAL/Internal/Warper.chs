@@ -19,7 +19,7 @@ module GDAL.Internal.Warper (
 {#context lib = "gdal" prefix = "GDAL" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Monad (when, forM_, forM)
+import Control.Monad (when, forM_, forM, liftM)
 import Control.Monad.IO.Class (liftIO)
 import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), bracket)
@@ -45,12 +45,15 @@ import GDAL.Internal.CPLConv
 {#import GDAL.Internal.CPLString #}
 {#import GDAL.Internal.CPLProgress #}
 {#import GDAL.Internal.OSR #}
+{#import GDAL.Internal.OGRGeometry #}
 {#import GDAL.Internal.GDAL #}
 
 #include "gdalwarper.h"
 
 data GDALWarpException
   = WarpStopped
+  | CannotSetTransformer
+  | NonPolygonCutline
   deriving (Typeable, Show, Eq)
 
 instance NFData GDALWarpException where
@@ -76,24 +79,28 @@ deriving instance Show BandOptions
 
 data WarpOptions s =
   WarpOptions {
-      woResampleAlg     :: ResampleAlg
-    , woWarpOptions     :: OptionList
-    , woMemoryLimit     :: Double
-    , woWorkingDataType :: DataType
-    , woBands           :: [BandOptions]
-    , woTransfomer      :: SomeTransformer s
+      woResampleAlg      :: ResampleAlg
+    , woWarpOptions      :: OptionList
+    , woMemoryLimit      :: Double
+    , woWorkingDataType  :: DataType
+    , woBands            :: [BandOptions]
+    , woTransfomer       :: SomeTransformer s
+    , woCutline          :: Maybe Geometry
+    , woCutlineBlendDist :: Double
     }
 
 {#pointer *GDALWarpOptions as WarpOptionsH newtype #}
 
 instance Default (WarpOptions s) where
   def = WarpOptions {
-          woResampleAlg     = NearestNeighbour
-        , woWarpOptions     = []
-        , woMemoryLimit     = 0
-        , woWorkingDataType = GDT_Unknown
-        , woBands           = []
-        , woTransfomer      = DefaultTransformer
+          woResampleAlg      = NearestNeighbour
+        , woWarpOptions      = []
+        , woMemoryLimit      = 0
+        , woWorkingDataType  = GDT_Unknown
+        , woBands            = []
+        , woTransfomer       = def
+        , woCutline          = Nothing
+        , woCutlineBlendDist = 0
         }
 
 setOptionDefaults
@@ -130,11 +137,16 @@ anyBandHasDstNoData wo = any (\BandOptions{..} -> isJust biDstNoData) (woBands w
 
 withWarpOptionsH
   :: RODataset s -> WarpOptions s -> (WarpOptionsH -> IO c) -> IO c
-withWarpOptionsH ds wo@WarpOptions{..}
-  = bracket createWarpOptions {#call unsafe GDALDestroyWarpOptions as ^#}
+withWarpOptionsH _ WarpOptions{woCutline=Just g} _
+  | geomType g /= WkbPolygon = throwBindingException NonPolygonCutline
+withWarpOptionsH ds wo@WarpOptions{..} act =
+  withTransformerAndArg woTransfomer $ \t tArg ->
+  bracket (createWarpOptions t tArg)
+          {#call unsafe GDALDestroyWarpOptions as ^#}
+          act
   where
     DatasetH dsPtr = unDataset ds
-    createWarpOptions = do
+    createWarpOptions t tArg = do
       p <- {#call unsafe GDALCreateWarpOptions as ^#}
       {#set GDALWarpOptions->hSrcDS #} p (castPtr dsPtr)
       {#set GDALWarpOptions->eResampleAlg #} p (fromEnumC woResampleAlg)
@@ -147,23 +159,23 @@ withWarpOptionsH ds wo@WarpOptions{..}
         listToArray (map (fromIntegral . biSrc) woBands)
       {#set GDALWarpOptions->panDstBands #} p =<<
         listToArray (map (fromIntegral . biDst) woBands)
-      -- ignores finalizer since GDALClose from WarpedVRT takes care of it
-      (t, tArg, _) <- createTransformerAndArg woTransfomer
       {#set GDALWarpOptions->pfnTransformer #} p t
       {#set GDALWarpOptions->pTransformerArg #} p tArg
+      {#set GDALWarpOptions->hCutline #} p =<<
+        liftM castPtr (maybeCloneGeometryAndTransferOwnership woCutline)
+      {#set GDALWarpOptions->dfCutlineBlendDist#} p
+        (realToFrac woCutlineBlendDist)
       when (anyBandHasNoData wo) $ do
-        vPtrSrcR <- listToArray
-                      (map (\BandOptions{..} ->
+        {#set GDALWarpOptions->padfSrcNoDataReal #} p =<<
+          listToArray (map (\BandOptions{..} ->
                               toCDouble (fromMaybe nodata biSrcNoData)) woBands)
-        vPtrSrcI <- listToArray (replicate (length woBands) 0)
-        vPtrDstR <- listToArray
-                      (map (\BandOptions{..} ->
+        {#set GDALWarpOptions->padfDstNoDataImag #} p =<<
+          listToArray (replicate (length woBands) 0)
+        {#set GDALWarpOptions->padfDstNoDataReal #} p =<<
+          listToArray (map (\BandOptions{..} ->
                               toCDouble (fromMaybe nodata biDstNoData)) woBands)
-        vPtrDstI <- listToArray (replicate (length woBands) 0)
-        {#set GDALWarpOptions->padfDstNoDataReal #} p vPtrDstR
-        {#set GDALWarpOptions->padfDstNoDataImag #} p vPtrDstI
-        {#set GDALWarpOptions->padfSrcNoDataReal #} p vPtrSrcR
-        {#set GDALWarpOptions->padfSrcNoDataImag #} p vPtrSrcI
+        {#set GDALWarpOptions->padfSrcNoDataImag #} p =<<
+          listToArray (replicate (length woBands) 0)
       return p
 
 reprojectImage
@@ -171,29 +183,31 @@ reprojectImage
   -> Maybe SpatialReference
   -> RWDataset s
   -> Maybe SpatialReference
-  -> ResampleAlg
-  -> Double
   -> Double
   -> Maybe ProgressFun
-  -> OptionList
+  -> WarpOptions s
   -> GDAL s ()
-reprojectImage srcDs srcSrs dstDs dstSrs algo memLimit maxError progressFun
-               opts = do
-  options' <- setOptionDefaults srcDs (Just dstDs) (def {woWarpOptions=opts})
+reprojectImage _ _ _ _ _ _ WarpOptions{woTransfomer=SomeTransformer _} =
+  throwBindingException CannotSetTransformer
+reprojectImage srcDs srcSrs dstDs dstSrs maxError progressFun options = do
+  opts@WarpOptions{..} <- setOptionDefaults srcDs (Just dstDs) options
   liftIO $
     withProgressFun WarpStopped progressFun $ \pFun ->
     withMaybeSRAsCString srcSrs $ \srcSrs' ->
     withMaybeSRAsCString dstSrs $ \dstSrs' ->
-    withWarpOptionsH srcDs options' $ \wopts ->
-    checkCPLError $
+    withWarpOptionsH srcDs opts $ \wopts ->
+    checkCPLError "GDALReprojectImage" $
     {#call GDALReprojectImage as ^#}
-      srcPtr srcSrs' dstPtr dstSrs' algo' memLimit' maxError' pFun nullPtr wopts
-  where
-    srcPtr    = unDataset srcDs
-    dstPtr    = unDataset dstDs
-    algo'     = fromEnumC algo
-    maxError' = realToFrac maxError
-    memLimit' = realToFrac memLimit
+      (unDataset srcDs)
+      srcSrs'
+      (unDataset dstDs)
+      dstSrs'
+      (fromEnumC woResampleAlg)
+      (realToFrac woMemoryLimit)
+      (realToFrac maxError)
+      pFun
+      nullPtr
+      wopts
 
 createWarpedVRT
   :: forall s. RODataset s

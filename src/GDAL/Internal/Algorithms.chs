@@ -7,15 +7,12 @@
 {-# LANGUAGE KindSignatures #-}
 
 module GDAL.Internal.Algorithms (
-    Transformer (..)
-  , TransformerFun
-  , GenImgProjTransformer (..)
+    GenImgProjTransformer (..)
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)
   , SomeTransformer (..)
 
-  , createTransformerAndArg
-  , getTransformerFunPtr
+  , withTransformerAndArg
 
   , rasterizeLayersBuf
 ) where
@@ -23,8 +20,8 @@ module GDAL.Internal.Algorithms (
 {#context lib = "gdal" prefix = "GDAL" #}
 
 import Control.DeepSeq (NFData(rnf))
-import Control.Monad.Catch (Exception(..), bracket)
-import Control.Monad (liftM, mapM_)
+import Control.Monad.Catch (Exception(..), bracket, mask, onException)
+import Control.Monad (liftM, mapM_, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
 import Data.Proxy (Proxy(Proxy))
@@ -66,38 +63,36 @@ instance Exception GDALAlgorithmException where
   fromException = bindingExceptionFromException
 
 class Transformer t where
-  createTransformerFun  :: t s -> IO (TransformerFun t s)
-  destroyTransformerFun :: TransformerFun t s -> IO ()
+  transformerFun         :: t s -> TransformerFun t s
   createTransformerArg   :: t s -> IO (Ptr (t s))
   destroyTransformerArg  :: Ptr (t s) -> IO ()
 
-  destroyTransformerArg  = {# call GDALDestroyTransformer as ^#} . castPtr
-  destroyTransformerFun = const (return ())
+  destroyTransformerArg p =
+    when (p/=nullPtr) ({# call unsafe GDALDestroyTransformer as ^#} (castPtr p))
 
 data SomeTransformer s
   = forall t. Transformer t => SomeTransformer (t s)
   | DefaultTransformer
 
-createTransformerAndArg
-  :: SomeTransformer s -> IO (TransformerFunPtr, Ptr (), IO ())
-createTransformerAndArg DefaultTransformer =
-  return (nullFunPtr, nullPtr, return ())
-createTransformerAndArg (SomeTransformer tr) = do
-  arg <- createTransformerArg tr
-  t <- createTransformerFun tr
-  return ( getTransformerFunPtr t
-         , castPtr arg
-         , (destroyTransformerFun t >> destroyTransformerArg arg))
+instance Default (SomeTransformer s) where
+  def = DefaultTransformer
+
+withTransformerAndArg
+  :: SomeTransformer s -> (TransformerFunPtr -> Ptr () -> IO c) -> IO c
+withTransformerAndArg DefaultTransformer act  = act nullFunPtr nullPtr
+withTransformerAndArg (SomeTransformer t) act =
+  mask $ \restore -> do
+    arg <- createTransformerArg t
+    -- Assumes arg will be destroyed by whoever takes it if not errors occur
+    restore (act (getTransformerFunPtr (transformerFun t)) (castPtr arg))
+              `onException` destroyTransformerArg arg
+
 
 newtype TransformerFun (t :: * -> *) s
   = TransformerFun {getTransformerFunPtr :: TransformerFunPtr}
 
 {#pointer GDALTransformerFunc as TransformerFunPtr #}
 
-withTransformerAndArg
-  :: SomeTransformer s -> (TransformerFunPtr -> Ptr () -> IO c) -> IO c
-withTransformerAndArg t f = do
-  bracket (createTransformerAndArg t) (\(_,_,d) -> d) (\(tr,arg,_) -> f tr arg)
 
 
 -- ############################################################################
@@ -134,13 +129,13 @@ checkCreateTransformer msg = checkGDALCall checkit
       | otherwise  = Nothing
 
 instance Transformer GenImgProjTransformer where
-  createTransformerFun _ = return c_GDALGenImgProjTransform
+  transformerFun _ = c_GDALGenImgProjTransform
   createTransformerArg GenImgProjTransformer{..} =
     liftM castPtr $
     checkCreateTransformer "GenImgProjTransformer" $
     withMaybeSRAsCString giptSrcSrs $ \sSr ->
     withMaybeSRAsCString giptDstSrs $ \dSr ->
-      {#call CreateGenImgProjTransformer as ^#}
+      {#call unsafe CreateGenImgProjTransformer as ^#}
         (maybe nullDatasetH unDataset giptSrcDs)
         sSr
         (maybe nullDatasetH unDataset giptDstDs)
@@ -172,12 +167,12 @@ instance Default (GenImgProjTransformer2 s) where
         }
 
 instance Transformer GenImgProjTransformer2 where
-  createTransformerFun _ = return c_GDALGenImgProjTransform2
+  transformerFun _ = c_GDALGenImgProjTransform2
   createTransformerArg GenImgProjTransformer2{..} =
     liftM castPtr $
     checkCreateTransformer "GenImgProjTransformer2" $
     withOptionList gipt2Options $ \opts ->
-      {#call CreateGenImgProjTransformer2 as ^#}
+      {#call unsafe CreateGenImgProjTransformer2 as ^#}
         (maybe nullDatasetH unDataset gipt2SrcDs)
         (maybe nullDatasetH unDataset gipt2DstDs)
         opts
@@ -206,7 +201,7 @@ instance Default (GenImgProjTransformer3 s) where
         }
 
 instance Transformer GenImgProjTransformer3 where
-  createTransformerFun _ = return c_GDALGenImgProjTransform3
+  transformerFun _ = c_GDALGenImgProjTransform3
   createTransformerArg GenImgProjTransformer3{..} =
     liftM castPtr $
     checkCreateTransformer "GenImgProjTransformer3" $
@@ -214,7 +209,7 @@ instance Transformer GenImgProjTransformer3 where
     withMaybeSRAsCString gipt3DstSrs $ \dSr ->
     withMaybeGeotransformPtr gipt3SrcGt $ \sGt ->
     withMaybeGeotransformPtr gipt3DstGt $ \dGt ->
-      {#call CreateGenImgProjTransformer3 as ^#}
+      {#call unsafe CreateGenImgProjTransformer3 as ^#}
         sSr (castPtr sGt) dSr (castPtr dGt)
 
 withMaybeGeotransformPtr
@@ -254,7 +249,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
   withTransformerAndArg mTransformer $ \trans tArg -> do
     vec <- Stm.replicate (sizeLen size) nodataValue
     Stm.unsafeWith vec $ \vecPtr ->
-      checkCPLError $
+      checkCPLError "RasterizeLayersBuf" $
       {#call GDALRasterizeLayersBuf as ^#}
         (castPtr vecPtr) nx ny dt 0 0 (fromIntegral len)
         lPtrPtr srsPtr (castPtr gt) trans

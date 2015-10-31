@@ -139,11 +139,11 @@ checkGDALCall_
 {-# INLINE checkGDALCall_ #-}
 checkGDALCall_ isOk = void . checkGDALCall isOk
 
-checkCPLError :: IO CInt -> IO ()
-checkCPLError = checkGDALCall_ $ \mExc r ->
+checkCPLError :: Text -> IO CInt -> IO ()
+checkCPLError msg = checkGDALCall_ $ \mExc r ->
   case (mExc, toEnumC r) of
     (Nothing, CE_None) -> Nothing
-    (Nothing, e)       -> Just (GDALException e AssertionFailed "checkCPLError")
+    (Nothing, e)       -> Just (GDALException e AssertionFailed msg)
     (e, _)             -> e
 {-# INLINE checkCPLError #-}
 

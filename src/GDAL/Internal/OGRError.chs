@@ -75,11 +75,11 @@ isOGRException e = isJust (fromException e :: Maybe OGRException)
   , OGRERR_INVALID_HANDLE            as InvalidHandle
   } deriving (Eq, Show) #}
 
-checkOGRError :: IO CInt -> IO ()
-checkOGRError = checkGDALCall_ $ \mExc r ->
+checkOGRError :: Text -> IO CInt -> IO ()
+checkOGRError msg = checkGDALCall_ $ \mExc r ->
   case (mExc, toEnumC r) of
     (Nothing, None) -> Nothing
-    (Nothing, e)    -> Just (OGRException e AssertionFailed "checkOGRError")
+    (Nothing, e)    -> Just (OGRException e AssertionFailed msg)
     (Just exc, e)   -> Just (gdalToOgrException e exc)
 {-# INLINE checkOGRError #-}
 

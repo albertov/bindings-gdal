@@ -67,6 +67,7 @@ module GDAL.Internal.OGRGeometry (
 
   , withGeometry
   , withMaybeGeometry
+  , maybeCloneGeometryAndTransferOwnership
   , cloneGeometry
   , maybeCloneGeometry
   , maybeNewGeometryHandle
@@ -188,6 +189,11 @@ withMaybeGeometry :: Maybe Geometry -> (Ptr Geometry -> IO a) -> IO a
 withMaybeGeometry (Just g) = withGeometry g
 withMaybeGeometry Nothing  = ($ nullPtr)
 
+maybeCloneGeometryAndTransferOwnership :: Maybe Geometry -> IO (Ptr Geometry)
+maybeCloneGeometryAndTransferOwnership Nothing = return nullPtr
+maybeCloneGeometryAndTransferOwnership (Just g) =
+  withGeometry g {#call unsafe Clone as ^#}
+
 foreign import ccall "ogr_api.h &OGR_G_DestroyGeometry"
   c_destroyGeometry :: FunPtr (Ptr Geometry -> IO ())
 
@@ -199,7 +205,7 @@ newGeometryHandle alloc = with nullPtr $ \pptr ->
   bracketOnError (go pptr) (const (freeIfNotNull pptr)) return
   where
     go pptr = do
-      checkOGRError (liftM fromEnumC (alloc pptr))
+      checkOGRError "newGeometryHandle" (liftM fromEnumC (alloc pptr))
       p <- peek pptr
       when (p==nullPtr) (throwBindingException NullGeometry)
       liftM Geometry (newForeignPtr c_destroyGeometry p)
@@ -267,7 +273,7 @@ geomToWktIO :: Geometry -> IO ByteString
 geomToWktIO g =
   withGeometry g $ \gPtr ->
   peekCPLString $
-    checkOGRError . {#call unsafe OGR_G_ExportToWkt as ^ #} gPtr
+    checkOGRError "geomToWkt" . {#call unsafe OGR_G_ExportToWkt as ^ #} gPtr
 
 
 geomToWkt :: Geometry -> ByteString
@@ -278,7 +284,7 @@ geomToWkbIO bo g = withGeometry g $ \gPtr -> do
   len <- liftM fromIntegral ({#call unsafe OGR_G_WkbSize as ^ #} gPtr)
   fp <- mallocForeignPtrBytes len
   withForeignPtr fp $
-    checkOGRError
+    checkOGRError "geomToWkb"
       . {#call unsafe OGR_G_ExportToWkb as ^ #} gPtr (fromEnumC bo)
       . castPtr
   return $! PS fp 0 len

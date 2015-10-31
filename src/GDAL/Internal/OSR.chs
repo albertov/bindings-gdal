@@ -1,5 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleInstances #-}
 
@@ -96,7 +97,7 @@ exportWith fun srs =
   unsafePerformIO $
   withSpatialReference srs $ \pSrs ->
   peekCPLString $
-  checkOGRError . fun pSrs
+  checkOGRError "srsTo" . fun pSrs
 {-# NOINLINE exportWith #-}
 
 
@@ -170,7 +171,7 @@ fromImporter
   -> Either OGRException SpatialReference
 fromImporter f s = unsafePerformIO $ withErrorHandler $ do
   r <- emptySpatialRef
-  try (checkOGRError (f r s) >> return r)
+  try (checkOGRError "srsFrom" (f r s) >> return r)
 {-# NOINLINE fromImporter #-}
 
 

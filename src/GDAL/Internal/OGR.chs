@@ -288,7 +288,8 @@ createLayerWithDef ds FeatureDef{..} approxOk options =
     pL <- checkGDALCall checkIt $
             {#call OGR_DS_CreateLayer as ^#} pDs pName pSrs gType pOpts
     V.forM_ fdFields $ \(n,f) -> withFieldDefnH n f $ \pFld ->
-      checkOGRError $ {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
+      checkOGRError "CreateField" $
+        {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
     when (not (V.null fdGeoms)) $
       if supportsMultiGeomFields pL
         then
@@ -319,7 +320,7 @@ createFeatureWithFidIO
 createFeatureWithFidIO pL fid feat = do
   pFd <- getLayerSchema pL
   featureToHandle pFd fid feat $ \pF -> do
-    checkOGRError ({#call OGR_L_CreateFeature as ^#} pL pF)
+    checkOGRError "CreateFeature" ({#call OGR_L_CreateFeature as ^#} pL pF)
     getFid pF
 
 createFeatureWithFid
@@ -339,7 +340,7 @@ updateFeature :: OGRFeature a => RWLayer s l a -> Fid -> a -> GDAL s ()
 updateFeature layer fid feat = liftIO $ do
   pFd <- getLayerSchema pL
   featureToHandle pFd (Just fid) feat $
-    checkOGRError . {#call OGR_L_SetFeature as ^#} pL
+    checkOGRError "SetFeature" . {#call OGR_L_SetFeature as ^#} pL
   where pL = unLayer layer
 
 getFeature :: OGRFeature a => Layer s l t a -> Fid -> GDAL s (Maybe a)
@@ -356,7 +357,7 @@ getFeature layer (Fid fid) = liftIO $ do
 
 deleteFeature :: Layer s l t a -> Fid -> GDAL s ()
 deleteFeature layer (Fid fid) = liftIO $
-  checkOGRError $
+  checkOGRError "DeleteFeature" $
     {#call OGR_L_DeleteFeature as ^#} (unLayer layer) (fromIntegral fid)
 
 canCreateMultipleGeometryFields :: Bool
@@ -369,10 +370,14 @@ canCreateMultipleGeometryFields =
 
 syncToDisk :: RWDataSource s -> GDAL s ()
 syncToDisk =
-  liftIO . checkOGRError . {#call OGR_DS_SyncToDisk as ^#} . unDataSource
+  liftIO .
+  checkOGRError "syncToDisk" .
+  {#call OGR_DS_SyncToDisk as ^#} .
+  unDataSource
 
 syncLayerToDiskIO :: RWLayer s l a -> IO ()
-syncLayerToDiskIO = checkOGRError . {#call OGR_L_SyncToDisk as ^#} . unLayer
+syncLayerToDiskIO =
+  checkOGRError "syncLayerToDisk" . {#call OGR_L_SyncToDisk as ^#} . unLayer
 
 syncLayerToDisk :: RWLayer s l a -> GDAL s ()
 syncLayerToDisk = liftIO . syncLayerToDiskIO
@@ -435,7 +440,8 @@ conduitInsertLayer = flip conduitFromLayer createIt
   where
     createIt (l, pFd) = awaitForever $ \(fid, feat) -> do
       fid' <- liftIO $ featureToHandle pFd fid feat $ \pF -> do
-                checkOGRError ({#call OGR_L_CreateFeature as ^#} (unLayer l) pF)
+                checkOGRError "CreateFeature" $
+                  {#call OGR_L_CreateFeature as ^#} (unLayer l) pF
                 getFid pF
       yield fid'
 
@@ -459,7 +465,7 @@ sinkUpdateLayer = flip conduitFromLayer updateIt
   where
     updateIt (l, pFd) = awaitForever $ \(fid, feat) ->
       liftIO $ featureToHandle pFd (Just fid) feat $
-        checkOGRError . {#call OGR_L_SetFeature as ^#} (unLayer l)
+        checkOGRError "SetFeature" . {#call OGR_L_SetFeature as ^#} (unLayer l)
 
 
 layerTransaction
@@ -469,7 +475,7 @@ layerTransaction
 layerTransaction alloc inside = do
   alloc' <- lift (liftOGR (unsafeGDALToIO alloc))
   (rbKey, seed) <- allocate alloc' rollback
-  liftIO $ checkOGRError $
+  liftIO $ checkOGRError "StartTransaction" $
     {#call OGR_L_StartTransaction as ^#} (unLayer (fst seed))
   addCleanup (const (release rbKey))
              (inside seed >> liftIO (commit rbKey seed))
@@ -477,12 +483,15 @@ layerTransaction alloc inside = do
     free = closeLayer . fst
     commit rbKey seed = bracket (unprotect rbKey) (const (free seed)) $ \m -> do
       when (isNothing m) (error "layerTransaction: this should not happen")
-      checkOGRError ({#call OGR_L_CommitTransaction as ^#} (unLayer (fst seed)))
-      checkOGRError ({#call OGR_L_SyncToDisk as ^#} (unLayer (fst seed)))
+      checkOGRError "CommitTransaction" $
+        {#call OGR_L_CommitTransaction as ^#} (unLayer (fst seed))
+      checkOGRError "SyncToDisk" $
+        {#call OGR_L_SyncToDisk as ^#} (unLayer (fst seed))
 
     rollback seed =
-      checkOGRError ({#call OGR_L_RollbackTransaction as ^#} (unLayer (fst seed)))
-        `finally` free seed
+      (checkOGRError "RollbackTransaction" $
+        {#call OGR_L_RollbackTransaction as ^#} (unLayer (fst seed)))
+          `finally` free seed
 
 
 
@@ -558,7 +567,7 @@ layerName =
 
 layerExtent :: Layer s l t a -> GDAL s EnvelopeReal
 layerExtent l = liftIO $ alloca $ \pE -> do
-  checkOGRError ({#call OGR_L_GetExtent as ^#} (unLayer l) pE 1)
+  checkOGRError "GetExtent" ({#call OGR_L_GetExtent as ^#} (unLayer l) pE 1)
   peek pE
 
 layerFeatureDef :: Layer s l t a -> GDAL s FeatureDef

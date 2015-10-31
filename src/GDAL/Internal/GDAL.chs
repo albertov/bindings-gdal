@@ -329,7 +329,7 @@ datasetProjection ds = liftIO $ do
 
 setDatasetProjection :: RWDataset s -> SpatialReference -> GDAL s ()
 setDatasetProjection ds srs =
-  liftIO $ checkCPLError $
+  liftIO $ checkCPLError "SetProjection" $
     unsafeUseAsCString (srsToWkt srs)
       ({#call unsafe SetProjection as ^#} (unDataset ds))
 
@@ -385,7 +385,7 @@ datasetGeotransform ds = liftIO $ alloca $ \p -> do
 
 setDatasetGeotransform :: RWDataset s -> Geotransform -> GDAL s ()
 setDatasetGeotransform ds gt = liftIO $
-  checkCPLError $
+  checkCPLError "SetGeoTransform" $
     with gt ({#call unsafe SetGeoTransform as ^#} (unDataset ds) . castPtr)
 
 
@@ -477,13 +477,13 @@ bandNodataValueIO b = alloca $ \p -> do
 setBandNodataValue :: GDALType a => RWBand s -> a -> GDAL s ()
 setBandNodataValue b v =
   liftIO $
-    checkCPLError $
+    checkCPLError "SetRasterNoDataValue" $
       {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
 
 fillRaster :: CDouble -> CDouble  -> RWBand s -> GDAL s ()
 fillRaster r i b =
   liftIO $
-    checkCPLError $
+    checkCPLError "FillRaster" $
       {#call GDALFillRaster as ^#} (unBand b) r i
 
 
@@ -509,7 +509,7 @@ readBandIO band win (XY bx by) = readMasked band read_
       vec <- Stm.new (bx*by)
       let dtype = fromEnumC (dataType (Proxy :: Proxy a'))
       Stm.unsafeWith vec $ \ptr -> do
-        checkCPLError $
+        checkCPLError "RasterAdviseRead" $
           {#call unsafe RasterAdviseRead as ^#}
             b
             (fromIntegral xoff)
@@ -520,7 +520,7 @@ readBandIO band win (XY bx by) = readMasked band read_
             (fromIntegral by)
             dtype
             (castPtr nullPtr)
-        checkCPLError $
+        checkCPLError "RasterIO" $
           {#call RasterIO as ^#}
             b
             (fromEnumC GF_Read)
@@ -588,7 +588,7 @@ writeBand band win sz@(XY bx by) uvec = liftIO $ do
   if nElems /= len
     then throwBindingException (InvalidRasterSize sz)
     else withForeignPtr fp $ \ptr ->
-      checkCPLError $
+      checkCPLError "RasterIO" $
         {#call RasterIO as ^#}
           (unBand band)
           (fromEnumC GF_Write)
@@ -612,7 +612,7 @@ readBandBlock band blockIx = do
   liftIO $ readMasked band $ \b -> do
     vec <- Stm.new (bandBlockLen band)
     Stm.unsafeWith vec $
-      checkCPLError . {#call ReadBlock as ^#} b x y . castPtr
+      checkCPLError "ReadBlock" . {#call ReadBlock as ^#} b x y . castPtr
     St.unsafeFreeze vec
   where XY x y = fmap fromIntegral blockIx
 {-# INLINE readBandBlock #-}
@@ -649,7 +649,7 @@ ifoldlM' f initialAcc band = do
                         \v -> if toCDouble v == nd then NoData else Value v
           goB !iB !jB !acc
             | iB < nx   = do
-                checkCPLError $
+                checkCPLError "ReadBlock" $
                   {#call ReadBlock as ^#}
                     pBand (fromIntegral iB) (fromIntegral jB) (castPtr ptr)
                 go 0 0 acc >>= goB (iB+1) jB
@@ -689,7 +689,9 @@ writeBandBlock band blockIx uvec = do
     if nElems /= len
       then throwBindingException (InvalidBlockSize len)
       else withForeignPtr fp $
-             checkCPLError . {#call WriteBlock as ^#} pBand x y . castPtr
+           checkCPLError "WriteBlock" .
+           {#call WriteBlock as ^#} pBand x y .
+           castPtr
   where XY x y = fmap fromIntegral blockIx
         pBand  = unBand band
 {-# INLINE writeBandBlock #-}

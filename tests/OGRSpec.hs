@@ -346,10 +346,6 @@ srs23030 :: SpatialReference
 srs23030 = either exc id (srsFromEPSG 23030)
   where exc = error . ("Unexpected srsFromEPSG error: " ++) . show
 
-srs4326 :: SpatialReference
-srs4326 = either exc id (srsFromEPSG 4326)
-  where exc = error . ("Unexpected srsFromEPSG error: " ++) . show
-
 data TestFeature a
   = TestFeature  {
       tfGeom :: Geometry
