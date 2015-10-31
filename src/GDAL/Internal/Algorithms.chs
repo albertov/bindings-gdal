@@ -66,6 +66,7 @@ class Transformer t where
   transformerFun         :: t s -> TransformerFun t s
   createTransformerArg   :: t s -> IO (Ptr (t s))
   destroyTransformerArg  :: Ptr (t s) -> IO ()
+  setGeotransform        :: Geotransform -> Ptr (t s) -> IO ()
 
   destroyTransformerArg p =
     when (p/=nullPtr) ({# call unsafe GDALDestroyTransformer as ^#} (castPtr p))
@@ -78,11 +79,17 @@ instance Default (SomeTransformer s) where
   def = DefaultTransformer
 
 withTransformerAndArg
-  :: SomeTransformer s -> (TransformerFunPtr -> Ptr () -> IO c) -> IO c
-withTransformerAndArg DefaultTransformer act  = act nullFunPtr nullPtr
-withTransformerAndArg (SomeTransformer t) act =
+  :: SomeTransformer s
+  -> Maybe Geotransform
+  -> (TransformerFunPtr -> Ptr () -> IO c)
+  -> IO c
+withTransformerAndArg DefaultTransformer _ act  = act nullFunPtr nullPtr
+withTransformerAndArg (SomeTransformer t) mGt act =
   mask $ \restore -> do
     arg <- createTransformerArg t
+    case mGt of
+      Just gt -> setGeotransform gt arg
+      Nothing -> return ()
     -- Assumes arg will be destroyed by whoever takes it if not errors occur
     restore (act (getTransformerFunPtr (transformerFun t)) (castPtr arg))
               `onException` destroyTransformerArg arg
@@ -130,6 +137,7 @@ checkCreateTransformer msg = checkGDALCall checkit
 
 instance Transformer GenImgProjTransformer where
   transformerFun _ = c_GDALGenImgProjTransform
+  setGeotransform = setGenImgProjTransfomerGeotransform
   createTransformerArg GenImgProjTransformer{..} =
     liftM castPtr $
     checkCreateTransformer "GenImgProjTransformer" $
@@ -168,6 +176,7 @@ instance Default (GenImgProjTransformer2 s) where
 
 instance Transformer GenImgProjTransformer2 where
   transformerFun _ = c_GDALGenImgProjTransform2
+  setGeotransform = setGenImgProjTransfomerGeotransform
   createTransformerArg GenImgProjTransformer2{..} =
     liftM castPtr $
     checkCreateTransformer "GenImgProjTransformer2" $
@@ -202,6 +211,7 @@ instance Default (GenImgProjTransformer3 s) where
 
 instance Transformer GenImgProjTransformer3 where
   transformerFun _ = c_GDALGenImgProjTransform3
+  setGeotransform = setGenImgProjTransfomerGeotransform
   createTransformerArg GenImgProjTransformer3{..} =
     liftM castPtr $
     checkCreateTransformer "GenImgProjTransformer3" $
@@ -211,6 +221,13 @@ instance Transformer GenImgProjTransformer3 where
     withMaybeGeotransformPtr gipt3DstGt $ \dGt ->
       {#call unsafe CreateGenImgProjTransformer3 as ^#}
         sSr (castPtr sGt) dSr (castPtr dGt)
+
+setGenImgProjTransfomerGeotransform :: Geotransform -> Ptr a -> IO ()
+setGenImgProjTransfomerGeotransform geotransform pArg =
+  with geotransform $ \gt ->
+    {#call unsafe GDALSetGenImgProjTransformerDstGeoTransform as ^#}
+    (castPtr pArg) (castPtr gt)
+
 
 withMaybeGeotransformPtr
   :: Maybe Geotransform -> (Ptr Geotransform -> IO a) -> IO a
@@ -243,10 +260,10 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
   liftIO $
   withProgressFun RasterizeStopped progressFun $ \pFun ->
   withArrayLen (map unLayer layers) $ \len lPtrPtr ->
-  with geotransform $ \gt ->
   withMaybeSRAsCString (Just srs) $ \srsPtr ->
   withOptionList options $ \opts ->
-  withTransformerAndArg mTransformer $ \trans tArg -> do
+  withTransformerAndArg mTransformer (Just geotransform) $ \trans tArg ->
+  with geotransform $ \gt -> do
     vec <- Stm.replicate (sizeLen size) nodataValue
     Stm.unsafeWith vec $ \vecPtr ->
       checkCPLError "RasterizeLayersBuf" $

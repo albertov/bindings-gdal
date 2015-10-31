@@ -104,8 +104,8 @@ instance Default (WarpOptions s) where
         }
 
 setOptionDefaults
-  :: forall s t. RODataset s -> Maybe (Dataset s t) -> WarpOptions s
-  -> GDAL s (WarpOptions s)
+  :: forall s t. RODataset s
+  -> Maybe (Dataset s t) -> WarpOptions s -> GDAL s (WarpOptions s)
 setOptionDefaults ds moDs wo@WarpOptions{..} = do
   bands <- if null woBands
             then do
@@ -136,11 +136,15 @@ anyBandHasDstNoData :: WarpOptions s -> Bool
 anyBandHasDstNoData wo = any (\BandOptions{..} -> isJust biDstNoData) (woBands wo)
 
 withWarpOptionsH
-  :: RODataset s -> WarpOptions s -> (WarpOptionsH -> IO c) -> IO c
-withWarpOptionsH _ WarpOptions{woCutline=Just g} _
+  :: RODataset s
+  -> Maybe Geotransform
+  -> WarpOptions s
+  -> (WarpOptionsH -> IO c)
+  -> IO c
+withWarpOptionsH _ _ WarpOptions{woCutline=Just g} _
   | geomType g /= WkbPolygon = throwBindingException NonPolygonCutline
-withWarpOptionsH ds wo@WarpOptions{..} act =
-  withTransformerAndArg woTransfomer $ \t tArg ->
+withWarpOptionsH ds mGt wo@WarpOptions{..} act =
+  withTransformerAndArg woTransfomer mGt $ \t tArg ->
   bracket (createWarpOptions t tArg)
           {#call unsafe GDALDestroyWarpOptions as ^#}
           act
@@ -195,7 +199,7 @@ reprojectImage srcDs srcSrs dstDs dstSrs maxError progressFun options = do
     withProgressFun WarpStopped progressFun $ \pFun ->
     withMaybeSRAsCString srcSrs $ \srcSrs' ->
     withMaybeSRAsCString dstSrs $ \dstSrs' ->
-    withWarpOptionsH srcDs opts $ \wopts ->
+    withWarpOptionsH srcDs Nothing opts $ \wopts ->
     checkCPLError "GDALReprojectImage" $
     {#call GDALReprojectImage as ^#}
       (unDataset srcDs)
@@ -215,27 +219,24 @@ createWarpedVRT
   -> Geotransform
   -> WarpOptions s
   -> GDAL s (RODataset s)
-createWarpedVRT srcDs (XY nPixels nLines) geotransform wo@WarpOptions{..} = do
-  options'' <- setOptionDefaults srcDs Nothing options'
+createWarpedVRT srcDs (XY nPixels nLines) geotransform wo = do
+  options <- setOptionDefaults srcDs Nothing (setWarpedVRTDefaultTransformer wo)
   oDs <- newDatasetHandle $
-    withWarpOptionsH srcDs options'' $ \opts ->
-    with geotransform $ \gt -> do
-      pArg <- {#get GDALWarpOptions->pTransformerArg #} opts
-      when (pArg /= nullPtr) $
-        {#call GDALSetGenImgProjTransformerDstGeoTransform as ^#} pArg
-          (castPtr gt)
-      {#call GDALCreateWarpedVRT as ^#} dsPtr nPixels' nLines' (castPtr gt) opts
-  setDstNodata oDs options''
+         with geotransform $ \gt ->
+         withWarpOptionsH srcDs (Just geotransform) options $
+         {#call unsafe GDALCreateWarpedVRT as ^#}
+           (unDataset srcDs)
+           (fromIntegral nPixels)
+           (fromIntegral nLines)
+           (castPtr gt)
+  setDstNodata oDs options
   unsafeToReadOnly oDs
-  where
-    nPixels' = fromIntegral nPixels
-    nLines'  = fromIntegral nLines
-    dsPtr    = unDataset srcDs
-    options' = case woTransfomer of
-                 DefaultTransformer ->
-                   wo { woTransfomer =
-                          SomeTransformer (def :: GenImgProjTransformer s)}
-                 _  -> wo
+
+setWarpedVRTDefaultTransformer
+  :: forall s. WarpOptions s -> WarpOptions s
+setWarpedVRTDefaultTransformer wo@WarpOptions{woTransfomer=DefaultTransformer} =
+  wo { woTransfomer = SomeTransformer (def :: GenImgProjTransformer s)}
+setWarpedVRTDefaultTransformer wo = wo
 
 setDstNodata :: RWDataset s -> WarpOptions s -> GDAL s ()
 setDstNodata oDs options
