@@ -19,7 +19,6 @@ import Control.Monad.Catch (try, throwM)
 import Data.ByteString (ByteString)
 import Data.Conduit (($$))
 import qualified Data.Conduit.List as CL
-import Data.Either (isRight)
 import Data.Int
 import Data.Word
 import Data.Maybe (isNothing, isJust)
@@ -239,89 +238,6 @@ spec = setupAndTeardown $ do
       (runOGR (src $$ CL.consume >>= \(_::[Feature])->undefined))
         `shouldThrow` isSqlError
 
-
-  describe "Geometry" $ do
-
-    describe "geomFromWkt / geomToWkt" $ do
-
-      it "succeeds if valid" $ do
-        let eGeom = geomFromWkt Nothing "POINT (34 21)"
-        eGeom `shouldSatisfy` isRight
-
-      it "fails if invalid" $ do
-        let eGeom = geomFromWkt Nothing "im not wkt"
-        eGeom `shouldSatisfy` \case
-          Left OGRException{ogrErrType=UnsupportedGeometryType} -> True
-          _                                                     -> False
-
-      it "export is same as original" $ do
-        let Right g = geomFromWkt Nothing wkt
-            wkt     = "POINT (34 21)"
-        geomToWkt g `shouldBe` wkt
-
-    describe "geomFromWkb / geomToWkb" $ do
-
-      it "succeeds if valid" $ do
-        let Right g = geomFromWkt Nothing "POINT (34 21)"
-            wkb     = geomToWkb WkbXDR g
-        geomFromWkb Nothing wkb `shouldBe` Right g
-
-      it "fails if invalid" $ do
-        let eGeom = geomFromWkb Nothing "im not wkb"
-        eGeom `shouldSatisfy` \case
-          Left OGRException{ogrErrType=CorruptData} -> True
-          _                                         -> False
-
-    describe "geomFromGml / geomToGml" $ do
-
-      it "succeeds if valid" $ do
-        let Right g = geomFromWkt Nothing "POINT (34 21)"
-            gml     = geomToGml g
-        geomFromGml gml `shouldBe` Right g
-
-      it "fails if invalid" $ do
-        let eGeom = geomFromGml "im not gml"
-        eGeom `shouldSatisfy` \case
-          Left OGRException{ogrErrType=CorruptData} -> True
-          _                                         -> False
-
-
-    it "compares equal when equal with no srs" $ do
-      geomFromWkt Nothing "POINT (2 5)"
-        `shouldBe` geomFromWkt Nothing "POINT (2 5)"
-
-    it "compares equal when equal with srs" $ do
-      let Right srs = srsFromWkt (srsToWkt srs23030)
-      srs `shouldBe` srs23030
-      geomFromWkt (Just srs) "POINT (2 5)"
-        `shouldBe` geomFromWkt (Just srs23030) "POINT (2 5)"
-
-    it "compares not equal when not equal" $ do
-      geomFromWkt Nothing "POINT (2 6)"
-        `shouldNotBe` geomFromWkt Nothing "POINT (2 5)"
-
-    it "is projectable" $ do
-      let Right g         = geomFromWkt Nothing "POINT (439466 4482586)"
-          Right expected  = geomFromWkt (Just srs4326)
-                              "POINT (-3.715491503365956 40.489899869998304)"
-          Right coordTrans = coordinateTransformation srs23030 srs4326
-      case g `transformWith` coordTrans of
-        Nothing -> expectationFailure "Should have transformed the geom"
-        Just t  -> do
-          geomSpatialReference t `shouldBe` Just srs4326
-          -- We compare WKT or else they won't match (TODO investigate why!)
-          --t  `shouldBe` expected
-          geomToWkt t  `shouldBe` geomToWkt expected
-
-    describe "geomSpatialReference" $ do
-
-      it "is Nothing when it has no srs" $ do
-        let Right g = geomFromWkt Nothing "POINT (34 21)"
-        geomSpatialReference g `shouldSatisfy` isNothing
-
-      it "is is the same as the one that was set" $ do
-        let Right g = geomFromWkt (Just srs23030) "POINT (34 21)"
-        geomSpatialReference g `shouldBe` Just srs23030
 
 
   describe "OGRField instances" $

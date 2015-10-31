@@ -1,22 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLists #-}
-module OSRSpec (main, spec) where
+module OSRSpec (spec) where
 
 import Data.Either (isRight, isLeft)
 import qualified Data.Vector.Storable as St
 
-import TestUtils
+-- We don't use TestUtils' to make sure it can be used outside of the GDAL
+-- monad
+import Test.Hspec
 
 import OSR
 import GDAL (XY(XY))
 
-main :: IO ()
-main = hspec spec
-
 spec :: Spec
-spec = do
+spec = parallel $ do
 
-  describe "SpatialReference" $ do
+  describe "SpatialReference" $ parallel $ do
 
     it "can be created from EPSG number" $
       srsFromEPSG 23030 `shouldSatisfy` isRight
