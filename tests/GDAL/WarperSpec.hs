@@ -9,7 +9,7 @@ import qualified Data.Vector.Unboxed as U
 
 import GDAL
 import OSR
-import OGR (geomFromWkt)
+import OGR (Envelope(..), geomFromWkt)
 import GDAL.Warper
 import GDAL.Algorithms
 
@@ -134,6 +134,29 @@ spec = setupAndTeardown $ do
         U.sum v2 `shouldBe` U.sum v1
 
   describe "createWarpedVRT" $ do
+
+    it "can receive cutline" $ do
+      let gt = northUpGeotransform 100 (Envelope (-500) 500)
+          Right cl = geomFromWkt Nothing
+                     "POLYGON ((0 0, 0 100, 100 100, 100 0, 0 0))"
+          opts = def {woCutline=Just cl}
+          sz  = XY 100 100
+          sz2 = XY 200 200
+          v1 :: U.Vector (Value Int32)
+          v1  = U.generate (sizeLen sz)
+                (\i -> if i<50 then NoData else Value (fromIntegral i))
+      ds' <- createMem sz 1 GDT_Int32 []
+      setDatasetGeotransform ds' gt
+      b <- getBand 1 ds'
+      setBandNodataValue b ((-1) :: Int32)
+      writeBand b (allBand b) sz v1
+      ds <- unsafeToReadOnly ds'
+
+      ds2 <- createWarpedVRT ds sz2 gt opts
+      b2 <- getBand 1 ds2
+      v2 <- readBand b2 (allBand b2) sz2
+      v2 `shouldSatisfy` U.all (> Value 0)
+      U.sum v2 `shouldSatisfy` (< U.sum v1)
 
     forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
       it ("handles nodata (GenImgProjTransformer) " ++ show algo) $ do
