@@ -1,6 +1,7 @@
 module OSR (
     SpatialReference
   , CoordinateTransformation
+  , Projectable (..)
 
   , srsFromWkt
   , srsFromProj4

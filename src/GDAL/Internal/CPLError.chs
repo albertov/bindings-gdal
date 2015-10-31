@@ -20,7 +20,7 @@ module GDAL.Internal.CPLError (
   , checkCPLError
   , checkGDALCall
   , checkGDALCall_
-  , withSilentErrorHandler
+  , withQuietErrorHandler
 ) where
 
 {# context lib = "gdal" prefix = "CPL" #}
@@ -178,8 +178,8 @@ withErrorHandler act = runBounded $
       | rtsSupportsBoundThreads = runInBoundThread
       | otherwise               = id
 
-withSilentErrorHandler :: IO a -> IO a
-withSilentErrorHandler a = (pushIt >> a) `finally` popIt
+withQuietErrorHandler :: IO a -> IO a
+withQuietErrorHandler a = (pushIt >> a) `finally` popIt
   where
     pushIt = {#call unsafe CPLPushErrorHandler as ^#} c_quietErrorHandler
     popIt  = {#call unsafe CPLPopErrorHandler as ^#}

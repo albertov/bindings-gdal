@@ -1,9 +1,12 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module GDAL.Internal.OSR (
     SpatialReference
   , CoordinateTransformation
+  , Projectable (..)
 
   , srsFromWkt
   , srsFromProj4
@@ -43,11 +46,14 @@ module GDAL.Internal.OSR (
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (catch, bracketOnError, try)
+import Control.Exception (bracketOnError, try)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
+
+import qualified Data.Vector.Storable.Mutable as Stm
+import qualified Data.Vector.Storable as St
 
 import Foreign.C.String (CString, peekCString)
 import Foreign.C.Types (CInt(..), CDouble(..), CChar(..))
@@ -59,6 +65,7 @@ import Foreign.Marshal.Utils (toBool)
 
 import System.IO.Unsafe (unsafePerformIO)
 
+import GDAL.Internal.Types
 import GDAL.Internal.OGRError
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLString (peekCPLString)
@@ -131,14 +138,22 @@ emptySpatialRef =
 
 srsFromWkt, srsFromProj4, srsFromXML
   :: ByteString -> Either OGRException SpatialReference
-srsFromWkt = unsafePerformIO . (flip unsafeUseAsCString srsFromWktIO)
+srsFromWkt =
+  unsafePerformIO . flip unsafeUseAsCString srsFromWktIO
 {-# NOINLINE srsFromWkt #-}
 
 srsFromWktIO :: CString -> IO (Either OGRException SpatialReference)
 srsFromWktIO a =
-  (liftM Right
-    (newSpatialRefHandle ({#call unsafe NewSpatialReference as ^#} a)))
-  `catch` (return . Left)
+  try $
+  withErrorHandler $
+  newSpatialRefHandle $
+  checkGDALCall checkIt ({#call unsafe NewSpatialReference as ^#} a)
+  where
+    checkIt e p
+      | p==nullPtr = Just (maybe defExc toOgrExc e)
+      | otherwise  = fmap toOgrExc e
+    defExc = NullSpatialReference
+    toOgrExc = gdalToOgrException Failure
 
 srsFromProj4 = fromImporter importFromProj4
 {-# NOINLINE srsFromProj4 #-}
@@ -153,7 +168,7 @@ srsFromEPSG = fromImporter importFromEPSG
 fromImporter
   :: (SpatialReference -> a -> IO CInt) -> a
   -> Either OGRException SpatialReference
-fromImporter f s = unsafePerformIO $ do
+fromImporter f s = unsafePerformIO $ withErrorHandler $ do
   r <- emptySpatialRef
   try (checkOGRError (f r s) >> return r)
 {-# NOINLINE fromImporter #-}
@@ -221,7 +236,8 @@ withMaybeSpatialReference (Just s) = withSpatialReference s
   foreign newtype#}
 
 coordinateTransformation
-  :: SpatialReference -> SpatialReference -> Maybe CoordinateTransformation
+  :: SpatialReference -> SpatialReference
+  -> Either OGRException CoordinateTransformation
 coordinateTransformation source =
   unsafePerformIO . coordinateTransformationIO source
 {-# NOINLINE coordinateTransformation #-}
@@ -229,25 +245,54 @@ coordinateTransformation source =
 coordinateTransformationIO
   :: SpatialReference
   -> SpatialReference
-  -> IO (Maybe CoordinateTransformation)
+  -> IO (Either OGRException CoordinateTransformation)
 coordinateTransformationIO source target =
-  bracketOnError alloc freeIfNotNull go
+  try $
+  withErrorHandler $
+  liftM CoordinateTransformation $
+  withSpatialReference source $ \pSource ->
+  withSpatialReference target $ \pTarget ->
+  newForeignPtr c_destroyCT =<<
+    checkGDALCall checkIt
+      ({#call unsafe OCTNewCoordinateTransformation as ^#} pSource pTarget)
   where
-    alloc =
-      withSpatialReference source $ \pSource ->
-      withSpatialReference target $ \pTarget ->
-      {#call unsafe OCTNewCoordinateTransformation as ^#} pSource pTarget
-
-    go p
-      | p==nullPtr = return Nothing
-      | otherwise  = liftM (Just . CoordinateTransformation)
-                           (newForeignPtr c_destroyCT p)
-    freeIfNotNull p
-      | p/=nullPtr = {#call unsafe OCTDestroyCoordinateTransformation as ^#} p
-      | otherwise  = return ()
+    checkIt e p
+      | p==nullPtr = Just (maybe defExc toOgrExc e)
+      | otherwise  = fmap toOgrExc e
+    defExc = NullCoordinateTransformation
+    toOgrExc = gdalToOgrException Failure
 
 foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
   c_destroyCT :: FunPtr (Ptr CoordinateTransformation -> IO ())
+
+class Projectable a where
+  transformWith :: a -> CoordinateTransformation -> Maybe a
+
+instance Projectable (St.Vector (XY Double)) where
+  transformWith = flip transformPoints
+
+transformPoints
+  :: CoordinateTransformation
+  -> St.Vector (XY Double)
+  -> Maybe (St.Vector (XY Double))
+transformPoints ct v = unsafePerformIO $ withQuietErrorHandler $ do
+  xs <- St.unsafeThaw (St.unsafeCast (St.map px v))
+  ys <- St.unsafeThaw (St.unsafeCast (St.map py v))
+  zs <- Stm.replicate len 0
+  ok <- liftM toBool $
+        withCoordinateTransformation ct $ \pCt ->
+        Stm.unsafeWith xs $ \pXs ->
+        Stm.unsafeWith ys $ \pYs ->
+        Stm.unsafeWith zs $ \pZs ->
+          {#call unsafe OCTTransform as ^#} pCt (fromIntegral len) pXs pYs pZs
+  if not ok
+    then return Nothing
+    else do
+      fXs <- liftM St.unsafeCast (St.unsafeFreeze xs)
+      fYs <- liftM St.unsafeCast (St.unsafeFreeze ys)
+      return (Just (St.zipWith XY fXs fYs))
+  where len = St.length v
+
 
 {#fun OSRCleanup as cleanup {} -> `()'#}
 
@@ -256,6 +301,6 @@ foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
 --   in the main thread (via 'withGDAL') with this function which creates
 --   a dummy 'CoordinateTransformation'
 initialize :: IO ()
-initialize = withSilentErrorHandler $ do
+initialize = do
   dummy <- emptySpatialRef
   void (coordinateTransformationIO dummy dummy)

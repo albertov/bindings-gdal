@@ -5,6 +5,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveDataTypeable #-}
@@ -64,9 +65,6 @@ module GDAL.Internal.OGRGeometry (
   , geomIsRing
   , geomPolygonize
 
-  , transformWith
-  , transformTo
-
   , withGeometry
   , withMaybeGeometry
   , cloneGeometry
@@ -97,6 +95,8 @@ import Data.ByteString.Unsafe (
   , unsafeUseAsCStringLen
   )
 import Data.Typeable (Typeable)
+import qualified Data.Vector.Storable as St
+
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CDouble(..), CChar(..), CUChar(..))
 import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr)
@@ -116,7 +116,11 @@ import System.IO.Unsafe (unsafePerformIO)
 {#import GDAL.Internal.OSR#}
 import GDAL.Internal.Types
 import GDAL.Internal.CPLString (peekCPLString)
-import GDAL.Internal.CPLError (withErrorHandler, throwBindingException)
+import GDAL.Internal.CPLError (
+    withErrorHandler
+  , withQuietErrorHandler
+  , throwBindingException
+  )
 import GDAL.Internal.Util
 
 
@@ -151,6 +155,10 @@ instance Storable EnvelopeReal where
     {#set OGREnvelope->MaxX#} p (realToFrac eMaxX)
     {#set OGREnvelope->MaxY#} p (realToFrac eMaxY)
 
+instance Projectable EnvelopeReal where
+  transformWith (Envelope e0 e1) ct = do
+    [e0', e1'] <- ([e0, e1] :: St.Vector (XY Double)) `transformWith` ct
+    return (Envelope e0' e1')
 
 {#enum OGRwkbGeometryType as GeometryType {upcaseFirstLetter}
   deriving (Eq,Show)#}
@@ -326,23 +334,16 @@ geomType g =
   #}
 
 
-transformWith :: Geometry -> CoordinateTransformation -> Maybe Geometry
-transformWith g ct = unsafePerformIO $ do
-  transformed <- withGeometry g cloneGeometry
-  err <- liftM toEnumC $
-         withGeometry transformed $
-         withCoordinateTransformation ct .
-         {#call unsafe OGR_G_Transform as ^#}
-  return (if err==None then Just transformed else Nothing)
-
-transformTo :: Geometry -> SpatialReference -> Maybe Geometry
-transformTo g srs = unsafePerformIO $ do
-  transformed <- withGeometry g cloneGeometry
-  err <- liftM toEnumC $
-         withGeometry transformed $
-         withSpatialReference srs .
-         {#call unsafe OGR_G_TransformTo as ^#}
-  return (if err==None then Just transformed else Nothing)
+instance Projectable Geometry where
+  transformWith g ct =
+    unsafePerformIO $
+    withQuietErrorHandler $ do
+      transformed <- withGeometry g cloneGeometry
+      err <- liftM toEnumC $
+             withGeometry transformed $
+             withCoordinateTransformation ct .
+             {#call unsafe OGR_G_Transform as ^#}
+      return (if err==None then Just transformed else Nothing)
 
 geomSimplify :: Double -> Geometry -> Maybe Geometry
 geomSimplify =

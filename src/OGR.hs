@@ -88,9 +88,6 @@ module OGR (
   , geomIsRing
   , geomPolygonize
 
-  , transformWith
-  , transformTo
-
   , fieldTypedAs
   , (.:)
   , (.=)

@@ -300,6 +300,19 @@ spec = setupAndTeardown $ do
       geomFromWkt Nothing "POINT (2 6)"
         `shouldNotBe` geomFromWkt Nothing "POINT (2 5)"
 
+    it "is projectable" $ do
+      let Right g         = geomFromWkt Nothing "POINT (439466 4482586)"
+          Right expected  = geomFromWkt (Just srs4326)
+                              "POINT (-3.715491503365956 40.489899869998304)"
+          Right coordTrans = coordinateTransformation srs23030 srs4326
+      case g `transformWith` coordTrans of
+        Nothing -> expectationFailure "Should have transformed the geom"
+        Just t  -> do
+          geomSpatialReference t `shouldBe` Just srs4326
+          -- We compare WKT or else they won't match (TODO investigate why!)
+          --t  `shouldBe` expected
+          geomToWkt t  `shouldBe` geomToWkt expected
+
     describe "geomSpatialReference" $ do
 
       it "is Nothing when it has no srs" $ do
@@ -309,36 +322,6 @@ spec = setupAndTeardown $ do
       it "is is the same as the one that was set" $ do
         let Right g = geomFromWkt (Just srs23030) "POINT (34 21)"
         geomSpatialReference g `shouldBe` Just srs23030
-
-    describe "transformWith" $ do
-
-      it "transforms a geometry without srs" $ do
-        let Right g         = geomFromWkt Nothing "POINT (439466 4482586)"
-            Right expected  = geomFromWkt (Just srs4326)
-                                "POINT (-3.715491503365956 40.489899869998304)"
-            Just coordTrans = coordinateTransformation srs23030 srs4326
-        case g `transformWith` coordTrans of
-          Nothing -> expectationFailure "Should have transformed the geom"
-          Just t  -> do
-            geomSpatialReference t `shouldBe` Just srs4326
-            -- We compare WKT or else they won't match (TODO investigate why!)
-            --t  `shouldBe` expected
-            geomToWkt t  `shouldBe` geomToWkt expected
-
-    describe "transformTo" $ do
-
-      it "transforms a geometry" $ do
-        let Right g         = geomFromWkt (Just srs23030)
-                                "POINT (439466 4482586)"
-            Right expected  = geomFromWkt (Just srs4326)
-                                "POINT (-3.715491503365956 40.489899869998304)"
-        case g `transformTo` srs4326 of
-          Nothing -> expectationFailure "Should have transformed the geom"
-          Just t  -> do
-            geomSpatialReference t `shouldBe` Just srs4326
-            -- We compare WKT or else they won't match (TODO investigate why!)
-            --t  `shouldBe` expected
-            geomToWkt t  `shouldBe` geomToWkt expected
 
 
   describe "OGRField instances" $

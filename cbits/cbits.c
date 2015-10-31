@@ -1,4 +1,5 @@
 #include "cbits.h"
+#include <assert.h>
 
 typedef ErrorCell* error_stack;
 
@@ -29,13 +30,16 @@ void pop_error_handler()
 
 void clear_stack()
 {
-  clear_stack_(get_stack());
+  error_stack stack = get_stack();
+  if (stack) {
+    clear_stack_(stack);
+  }
 }
 
 ErrorCell pop_last()
 {
   error_stack stack = get_stack();
-  ErrorCell ret = *stack;
+  ErrorCell ret = stack? *stack : NULL;
   if (ret) {
     *stack = ret->next;
   }
@@ -59,28 +63,27 @@ void destroy_ErrorCell(ErrorCell cell)
 static void error_handler(CPLErr errClass, int errNo, const char *msg)
 {
   error_stack stack = get_stack();
-  if (stack) {
-    ErrorCell cell = malloc(sizeof(struct error_cell));
-    if (cell) {
-      cell->errClass = errClass;
-      cell->errNo    = errNo;
-      cell->msg      = strdup(msg);
-      cell->next     = *stack;
-      *stack         = cell;
-    }
+  assert(stack);
+  ErrorCell cell = malloc(sizeof(struct error_cell));
+  if (cell) {
+    cell->errClass = errClass;
+    cell->errNo    = errNo;
+    cell->msg      = strdup(msg);
+    cell->next     = *stack;
+    *stack         = cell;
   }
 }
 
 static void destroy_stack (error_stack stack)
 {
-  if (stack) {
-    clear_stack_(stack);
-    free(stack);
-  }
+  assert(stack);
+  clear_stack_(stack);
+  free(stack);
 }
 
 static void clear_stack_ (error_stack stack)
 {
+  assert(stack);
   ErrorCell cur = *stack;
   while (cur) {
     ErrorCell next = cur->next;
@@ -94,8 +97,7 @@ static void clear_stack_ (error_stack stack)
 static error_stack new_stack()
 {
   error_stack stack = malloc(sizeof(error_stack));
-  if (stack) {
-    *stack = NULL;
-  }
+  assert(stack);
+  *stack = NULL;
   return stack;
 }

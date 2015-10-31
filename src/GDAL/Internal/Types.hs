@@ -50,12 +50,11 @@ import Control.Monad.Trans.Resource (
   , getInternalState
   )
 import Control.Monad.Catch (
-    MonadThrow(..)
+    MonadThrow
   , MonadCatch
   , MonadMask
-  , catch
   )
-import Control.Monad.IO.Class (MonadIO(..))
+import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Typeable (Typeable)
 import Data.Coerce (coerce)
@@ -78,7 +77,10 @@ data AccessMode = ReadOnly | ReadWrite
 type ReadOnly  = 'ReadOnly
 type ReadWrite = 'ReadWrite
 
-data XY a = XY {px :: !a, py :: !a} deriving (Eq, Ord, Show, Read, Typeable)
+data XY a =
+  XY { px :: {-# UNPACK #-} !a
+     , py :: {-# UNPACK #-} !a
+     } deriving (Eq, Ord, Show, Read, Typeable)
 
 instance NFData a => NFData (XY a) where
   rnf (XY a b) = rnf a `seq` rnf b `seq` ()
@@ -168,9 +170,21 @@ instance Floating a => Floating (XY a) where
     acosh = fmap acosh
     {-# INLINE acosh #-}
 
+instance Storable a => Storable (XY a) where
+  sizeOf _ = 2 * sizeOf (undefined::a)
+  {-# INLINE sizeOf #-}
+  alignment _ = alignment (undefined::a)
+  {-# INLINE alignment #-}
+  poke ptr (XY x y) = poke ptr' x >> pokeElemOff ptr' 1 y
+    where ptr' = castPtr ptr
+  {-# INLINE poke #-}
+  peek ptr = XY <$> peek ptr' <*> peekElemOff ptr' 1
+    where ptr' = castPtr ptr
+  {-# INLINE peek #-}
+
 
 data Value a
-  = Value {unValue :: !a}
+  = Value {unValue :: {-# UNPACK #-} !a}
   | NoData
   deriving (Eq, Ord, Show, Read)
 

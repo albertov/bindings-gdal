@@ -31,7 +31,7 @@ spec = setupAndTeardown $ do
      ds <- OGR.createMem []
      let fDef = featureDef (Proxy :: Proxy (TestFeature Double Double))
          size = 100
-         env  = Envelope (-500) 500
+         env  = Envelope (XY (-3) 42) (XY (-2) 43)
          mkLayer = liftM unsafeToReadOnlyLayer $
                      createLayerWithDef ds fDef StrictOK []
      v <- runOGR $
@@ -42,7 +42,7 @@ spec = setupAndTeardown $ do
             1
             []
             Nothing
-            srs23030
+            srs4326
             size
             (northUpGeotransform size env)
      (v :: U.Vector (Value Double)) `shouldSatisfy` U.all (==NoData)
@@ -52,10 +52,63 @@ spec = setupAndTeardown $ do
      let size = 100
          burnValue = 10 :: Double
          Just geom = do
-           g <- liftMaybe (geomFromWkt (Just srs23030) "POINT (0 0)")
-           geomBuffer 10 10 g
+           g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
+           geomBuffer 0.05 10 g
          feat = TestFeature geom (0 :: Double) (0 :: Double)
-         env  = Envelope (-500) 500
+         env  = Envelope (XY (-3) 42) (XY (-2) 43)
+     l <- createLayer ds StrictOK []
+     createFeature_ l feat
+     syncLayerToDisk l
+
+     v <- runOGR $
+          rasterizeLayersBuf
+            (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
+            DefaultTransformer
+            0
+            burnValue
+            []
+            Nothing
+            srs4326
+            size
+            (northUpGeotransform size env)
+     v `shouldSatisfy` U.any (==(Value burnValue))
+
+   it "burns attribute from feature" $ do
+     ds <- OGR.createMem []
+     let size = 100
+         Just geom = do
+           g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
+           geomBuffer 0.05 10 g
+         feat = TestFeature geom (15 :: Double) (0 :: Double)
+         env  = Envelope (XY (-3) 42) (XY (-2) 43)
+     l <- createLayer ds StrictOK []
+     createFeature_ l feat
+     syncLayerToDisk l
+
+     v <- runOGR $
+          rasterizeLayersBuf
+            (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
+            DefaultTransformer
+            0
+            0
+            [("attribute","field1")]
+            Nothing
+            srs4326
+            size
+            (northUpGeotransform size env)
+     v `shouldSatisfy` U.any (==(Value (tfField1 feat)))
+
+   it "transforms geometries" $ do
+     ds <- OGR.createMem []
+     let size = 100
+         burnValue = 10 :: Double
+         Just geom = do
+           g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
+           geomBuffer 0.05 10 g
+         feat = TestFeature geom (0 :: Double) (0 :: Double)
+         Right ct = coordinateTransformation srs4326 srs23030
+         env4326  = Envelope (XY (-3) 42) (XY (-2) 43)
+         Just env23030 = env4326 `transformWith` ct
      l <- createLayer ds StrictOK []
      createFeature_ l feat
      syncLayerToDisk l
@@ -70,33 +123,21 @@ spec = setupAndTeardown $ do
             Nothing
             srs23030
             size
-            (northUpGeotransform size env)
-     v `shouldSatisfy` U.any (==(Value burnValue))
+            (northUpGeotransform size env4326)
+     v `shouldSatisfy` U.all (==NoData)
 
-   it "burns attribute from feature" $ do
-     ds <- OGR.createMem []
-     let size = 100
-         Just geom = do
-           g <- liftMaybe (geomFromWkt (Just srs23030) "POINT (0 0)")
-           geomBuffer 10 10 g
-         feat = TestFeature geom (15 :: Double) (0 :: Double)
-         env  = Envelope (-500) 500
-     l <- createLayer ds StrictOK []
-     createFeature_ l feat
-     syncLayerToDisk l
-
-     v <- runOGR $
+     w <- runOGR $
           rasterizeLayersBuf
             (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
             DefaultTransformer
             0
-            0
-            [("attribute","field1")]
+            burnValue
+            []
             Nothing
             srs23030
             size
-            (northUpGeotransform size env)
-     v `shouldSatisfy` U.any (==(Value (tfField1 feat)))
+            (northUpGeotransform size env23030)
+     w `shouldSatisfy` U.any (==(Value burnValue))
 
 liftMaybe :: Either b a -> Maybe a
 liftMaybe = either (const Nothing) Just
@@ -131,6 +172,6 @@ instance (OGRField a, OGRField b) => OGRFeatureDef (TestFeature a b) where
     , fdFields = [ "field1" `fieldTypedAs` (undefined :: a)
                  , "field2" `fieldTypedAs` (undefined :: b)
                  ]
-    , fdGeom   = GeomFieldDef WkbPolygon (Just srs23030) False
+    , fdGeom   = GeomFieldDef WkbPolygon (Just srs4326) False
     , fdGeoms  = mempty}
 

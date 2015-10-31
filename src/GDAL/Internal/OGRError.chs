@@ -11,6 +11,7 @@ module GDAL.Internal.OGRError (
 
   , isOGRException
   , checkOGRError
+  , gdalToOgrException
 ) where
 
 import Control.DeepSeq (NFData(rnf))
@@ -36,6 +37,7 @@ data OGRException
   | NullSpatialReference
   | NullLayer
   | NullDataSource
+  | NullCoordinateTransformation
   | UnexpectedNullFid
   | UnknownDriver     !String
   | InvalidLayerIndex !Int
@@ -78,9 +80,11 @@ checkOGRError = checkGDALCall_ $ \mExc r ->
   case (mExc, toEnumC r) of
     (Nothing, None) -> Nothing
     (Nothing, e)    -> Just (OGRException e AssertionFailed "checkOGRError")
-    (Just exc, e)   -> Just (OGRException e (gdalErrNum exc) (gdalErrMsg exc))
+    (Just exc, e)   -> Just (gdalToOgrException e exc)
 {-# INLINE checkOGRError #-}
 
+gdalToOgrException :: OGRError -> GDALException -> OGRException
+gdalToOgrException e exc = OGRException e (gdalErrNum exc) (gdalErrMsg exc)
 
 instance NFData OGRError where
   rnf e = e `seq`()
