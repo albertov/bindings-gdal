@@ -73,7 +73,7 @@ spec = parallel $ do
 
     it "compares not equal when not equal" $ do
       geomFromWkt Nothing "POINT (2 6)"
-        `shouldNotBe` geomFromWkt Nothing "POINT (2 5)"
+        `shouldSatisfy` (/= geomFromWkt Nothing "POINT (2 5)")
 
     it "is projectable" $ do
       let Right g         = geomFromWkt Nothing "POINT (439466 4482586)"
