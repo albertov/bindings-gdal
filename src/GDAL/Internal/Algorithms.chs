@@ -37,7 +37,7 @@ module GDAL.Internal.Algorithms (
 
 {#context lib = "gdal" prefix = "GDAL" #}
 
-import Control.Applicative ((<$>), (<*>))
+import Control.Applicative ((<$>), (<*>), pure)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad.Catch (
     Exception(..)
