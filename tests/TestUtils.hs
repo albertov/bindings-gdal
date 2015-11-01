@@ -1,5 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 module TestUtils (
     Spec
   , SpecWith
@@ -19,6 +20,7 @@ module TestUtils (
   , withDir
   , after_
   , errorCall
+  , setupAndTeardown
 ) where
 
 import Control.Monad (guard, unless)
@@ -30,6 +32,7 @@ import Data.Typeable (typeOf)
 import System.IO (IOMode(ReadMode), withBinaryFile, hFileSize)
 import System.IO.Error (isDoesNotExistError)
 import System.IO.Temp (withSystemTempDirectory)
+import System.Mem
 
 import Test.Hspec (
     Spec
@@ -116,3 +119,8 @@ expectationFailure = liftIO . Hspec.expectationFailure
 
 warn :: MonadIO m => String -> m ()
 warn = liftIO . pendingWith
+
+setupAndTeardown :: SpecWith a -> SpecWith a
+setupAndTeardown = after_ (rts_revertCAFs >> performGC)
+
+foreign import ccall "revertCAFs" rts_revertCAFs  :: IO ()

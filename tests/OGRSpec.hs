@@ -9,7 +9,7 @@
 
 #include "bindings.h"
 
-module OGRSpec (main, spec, setupAndTeardown) where
+module OGRSpec (main, spec) where
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (void, when, forM_)
@@ -29,7 +29,6 @@ import Data.Typeable (Typeable, typeOf)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 
-import System.Mem (performMajorGC)
 import System.Posix.Files (setFileMode, nullFileMode)
 import System.FilePath (joinPath)
 
@@ -327,9 +326,6 @@ instance Eq ZonedTime where
 
 getShapePath :: GDAL s FilePath
 getShapePath = liftIO $ getDataFileName "tests/fixtures/fondo.shp"
-
-setupAndTeardown :: SpecWith a -> SpecWith a
-setupAndTeardown = after_ performMajorGC
 
 strField, realField :: Text -> (Text, FieldDef)
 strField  name = (name, FieldDef OFTString  Nothing Nothing Nothing True)
