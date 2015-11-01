@@ -1,5 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 module TestUtils (
     Spec
   , SpecWith
@@ -120,4 +121,6 @@ warn :: MonadIO m => String -> m ()
 warn = liftIO . pendingWith
 
 setupAndTeardown :: SpecWith a -> SpecWith a
-setupAndTeardown = after_ performGC
+setupAndTeardown = after_ (rts_revertCAFs >> performGC)
+
+foreign import ccall "revertCAFs" rts_revertCAFs  :: IO ()
