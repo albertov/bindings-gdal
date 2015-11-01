@@ -4,12 +4,14 @@
 {-# LANGUAGE RecordWildCards #-}
 module GDAL.AlgorithmsSpec (main, spec) where
 
+import Data.Default (def)
 import Data.Monoid (mempty)
 import Data.Proxy (Proxy(Proxy))
 import qualified Data.Vector.Unboxed as U
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (liftM, sequence)
+import Control.Monad.IO.Class (liftIO)
 
 import OGR
 import OSR
@@ -138,6 +140,33 @@ spec = setupAndTeardown $ do
             size
             (northUpGeotransform size env23030)
      w `shouldSatisfy` U.any (==(Value burnValue))
+
+
+  describe "createGridIO" $ do
+
+    it "produces a NoData vector when no points" $ do
+      vec <- liftIO $
+             createGridIO
+               def {idpRadius1 = 10}
+               Nothing
+               []
+               (Envelope (-500) 500)
+               (XY 100 100)
+      vec `shouldSatisfy` U.all (==(NoData :: Value Double))
+
+    it "produces a vector with values when some points" $ do
+      vec <- liftIO $
+             createGridIO
+               def { idpRadius1 = 10
+                   , idpRadius2 = 10}
+               Nothing
+               [GP (XY 0 0) 10]
+               (Envelope (-500) 500)
+               (XY 100 100)
+      vec `shouldSatisfy` U.any (/=(NoData :: Value Double))
+
+
+
 
 liftMaybe :: Either b a -> Maybe a
 liftMaybe = either (const Nothing) Just
