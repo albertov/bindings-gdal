@@ -9,10 +9,10 @@ import Data.Default (def)
 import Data.Monoid (mempty)
 import Data.Proxy (Proxy(Proxy))
 import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Storable as St
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (liftM, sequence)
-import Control.Monad.IO.Class (liftIO)
 
 import OGR
 import OSR
@@ -220,6 +220,35 @@ spec = setupAndTeardown $ do
         vec `shouldSatisfy` U.any (==(Value 2 :: Value Double))
         vec `shouldSatisfy` U.all (/=(Value 10 :: Value Double))
 
+  describe "contourGenerateVectorIO" $ do
+
+    itIO "produces no contours if vector is all nodata" $ do
+      let vec    = St.replicate (sizeLen sz) noData
+          noData = 0
+          sz     = 100
+      contours <- contourGenerateVectorIO 10 0 (Just noData) sz vec
+      length contours `shouldBe` 0
+
+    itIO "produces no contours if vector is uniform and no nodata" $ do
+      let vec    = St.replicate (sizeLen sz) val
+          val    = 3
+          sz     = 100
+      contours <- contourGenerateVectorIO 10 0 Nothing sz vec
+      length contours `shouldBe` 0
+
+    itIO "produces contours if vector has data" $ do
+      let vec    = St.generate (sizeLen sz) (distance center . toXY)
+          noData = 0
+          center = fmap fromIntegral (div <$> sz <*> 2)
+          toXY   = fmap fromIntegral . uncurry XY . flip divMod (px sz)
+          sz     = 100
+          distance (XY x y) (XY x' y') = sqrt (sq (x-x') + sq (y-y'))
+          sq     = (^ (2::Int))
+      contours <- contourGenerateVectorIO 10 0 (Just noData) sz vec
+      length contours `shouldBe` 8
+
+
+describeWith :: Show a => a -> (a -> SpecWith ()) -> SpecWith ()
 describeWith opts act = describe ("with "++ show opts) (act opts)
 
 data SomeGridAlgorithm = forall a. GridAlgorithm a => SGA a

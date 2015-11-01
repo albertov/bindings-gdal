@@ -16,6 +16,8 @@ module GDAL.Algorithms (
   , createGrid
   , createGridIO
   , computeProximity
+  , contourGenerateVector
+  , contourGenerateVectorIO
 ) where
 
 import GDAL.Internal.Algorithms

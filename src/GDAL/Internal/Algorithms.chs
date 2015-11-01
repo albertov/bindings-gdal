@@ -5,12 +5,15 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE BangPatterns #-}
 
 module GDAL.Internal.Algorithms (
     GenImgProjTransformer (..)
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)
   , SomeTransformer (..)
+
+  , Contour (..)
 
   , GridPoint (..)
   , GridAlgorithm (..)
@@ -26,6 +29,8 @@ module GDAL.Internal.Algorithms (
   , createGrid
   , createGridIO
   , computeProximity
+  , contourGenerateVector
+  , contourGenerateVectorIO
 
   , withTransformerAndArg
 ) where
@@ -38,6 +43,8 @@ import Control.Monad.Catch (Exception(..), bracket, mask, onException, try)
 import Control.Monad (liftM, mapM_, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
+import Data.IORef (newIORef, readIORef, modifyIORef')
+import Data.Maybe (isJust)
 import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
 import Data.Typeable (Typeable)
@@ -47,7 +54,15 @@ import qualified Data.Vector.Storable.Mutable as Stm
 
 import Foreign.C.Types (CDouble(..), CInt(..), CUInt(..), CChar(..))
 import Foreign.Marshal.Utils (fromBool)
-import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr, nullFunPtr, plusPtr)
+import Foreign.Ptr (
+    Ptr
+  , FunPtr
+  , nullPtr
+  , castPtr
+  , nullFunPtr
+  , plusPtr
+  , freeHaskellFunPtr
+  )
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (withArrayLen)
 import Foreign.Marshal.Utils (with)
@@ -607,3 +622,72 @@ computeProximity srcBand prxBand options progressFun =
     opts
     pFun
     nullPtr
+
+-- ############################################################################
+-- contourVector
+-- ############################################################################
+
+data Contour =
+  Contour {
+    cLevel  :: {-# UNPACK #-} !Double
+  , cPoints :: {-# UNPACK #-} !(St.Vector (XY Double))
+  } deriving (Eq, Show)
+
+contourGenerateVectorIO
+  :: Double
+  -> Double
+  -> Maybe Double
+  -> Size
+  -> (St.Vector Double)
+  -> IO [Contour]
+contourGenerateVectorIO _ _ _ size vector
+  | St.length vector /= sizeLen size =
+      throwBindingException (InvalidRasterSize size)
+contourGenerateVectorIO interval base nodataVal (XY nx ny) vector =
+  withErrorHandler $
+  bracket alloc free $ \(generator,ref,_) -> do
+    St.forM_ (St.enumFromStepN 0 nx (ny-1)) $ \offset ->
+      St.unsafeWith (St.slice offset nx (St.unsafeCast vector)) $
+      checkCPLError "FeedLine" . {#call GDAL_CG_FeedLine as ^#} generator
+    readIORef ref
+  where
+    alloc = do
+      ref <- newIORef []
+      writer <- c_wrapContourWriter $ \level nPoints pXs pYs _ -> do
+        !c <- Contour <$> pure (realToFrac level)
+                      <*> (St.generateM (fromIntegral nPoints) $ \ix ->
+                             XY <$> liftM realToFrac (pXs `peekElemOff` ix)
+                                <*> liftM realToFrac (pYs `peekElemOff` ix))
+        modifyIORef' ref (c:)
+        return (fromEnumC CE_None)
+      gen <- flip onException (freeHaskellFunPtr writer) $
+             {#call unsafe GDAL_CG_Create as ^#}
+               (fromIntegral nx)
+               (fromIntegral ny)
+               (fromBool (isJust nodataVal))
+               (maybe 0 realToFrac nodataVal)
+               (realToFrac interval)
+               (realToFrac base)
+               writer
+               nullPtr
+      return (gen,ref,writer)
+
+    free (gen,_,writer) = do
+      freeHaskellFunPtr writer
+      {#call unsafe GDAL_CG_Destroy as ^#} gen
+
+contourGenerateVector
+  :: Double
+  -> Double
+  -> Maybe Double
+  -> Size
+  -> (St.Vector Double)
+  -> Either GDALException [Contour]
+contourGenerateVector interval base nodataVal size =
+  unsafePerformIO . try . contourGenerateVectorIO interval base nodataVal size
+
+type CContourWriter =
+  CDouble -> CInt -> Ptr CDouble -> Ptr CDouble -> Ptr () -> IO CInt
+
+foreign import ccall "wrapper"
+  c_wrapContourWriter :: CContourWriter -> IO (FunPtr CContourWriter)
