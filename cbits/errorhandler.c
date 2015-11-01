@@ -1,4 +1,4 @@
-#include "cbits.h"
+#include "errorhandler.h"
 #include <assert.h>
 
 typedef ErrorCell* error_stack;

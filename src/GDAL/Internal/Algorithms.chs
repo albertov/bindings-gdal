@@ -39,11 +39,17 @@ module GDAL.Internal.Algorithms (
 
 import Control.Applicative ((<$>), (<*>))
 import Control.DeepSeq (NFData(rnf))
-import Control.Monad.Catch (Exception(..), bracket, mask, onException, try)
+import Control.Monad.Catch (
+    Exception(..)
+  , bracket
+  , mask
+  , onException
+  , try
+  , bracketOnError
+  )
 import Control.Monad (liftM, mapM_, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
-import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
@@ -54,6 +60,7 @@ import qualified Data.Vector.Storable.Mutable as Stm
 
 import Foreign.C.Types (CDouble(..), CInt(..), CUInt(..), CChar(..))
 import Foreign.Marshal.Utils (fromBool)
+import Foreign.ForeignPtr (newForeignPtr)
 import Foreign.Ptr (
     Ptr
   , FunPtr
@@ -61,7 +68,6 @@ import Foreign.Ptr (
   , castPtr
   , nullFunPtr
   , plusPtr
-  , freeHaskellFunPtr
   )
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (withArrayLen)
@@ -81,6 +87,7 @@ import GDAL.Internal.Types
 {#import GDAL.Internal.GDAL#}
 
 #include "gdal_alg.h"
+#include "contourwriter.h"
 
 data GDALAlgorithmException
   = RasterizeStopped
@@ -633,6 +640,12 @@ data Contour =
   , cPoints :: {-# UNPACK #-} !(St.Vector (XY Double))
   } deriving (Eq, Show)
 
+{#pointer contour_list as ContourList #}
+{#pointer *Contour as CContour #}
+{#pointer *Point->XYDouble #}
+
+type XYDouble = XY Double
+
 contourGenerateVectorIO
   :: Double
   -> Double
@@ -645,36 +658,53 @@ contourGenerateVectorIO _ _ _ size vector
       throwBindingException (InvalidRasterSize size)
 contourGenerateVectorIO interval base nodataVal (XY nx ny) vector =
   withErrorHandler $
-  bracket alloc free $ \(generator,ref,_) -> do
+  with nullPtr $ \pList ->
+  bracket (alloc pList) (free pList) $ \generator -> do
     St.forM_ (St.enumFromStepN 0 nx (ny-1)) $ \offset ->
       St.unsafeWith (St.slice offset nx (St.unsafeCast vector)) $
-      checkCPLError "FeedLine" . {#call GDAL_CG_FeedLine as ^#} generator
-    readIORef ref
+      checkCPLError "FeedLine" . {#call unsafe GDAL_CG_FeedLine as ^#} generator
+    getContours pList
   where
-    alloc = do
-      ref <- newIORef []
-      writer <- c_wrapContourWriter $ \level nPoints pXs pYs _ -> do
-        !c <- Contour <$> pure (realToFrac level)
-                      <*> (St.generateM (fromIntegral nPoints) $ \ix ->
-                             XY <$> liftM realToFrac (pXs `peekElemOff` ix)
-                                <*> liftM realToFrac (pYs `peekElemOff` ix))
-        modifyIORef' ref (c:)
-        return (fromEnumC CE_None)
-      gen <- flip onException (freeHaskellFunPtr writer) $
-             {#call unsafe GDAL_CG_Create as ^#}
-               (fromIntegral nx)
-               (fromIntegral ny)
-               (fromBool (isJust nodataVal))
-               (maybe 0 realToFrac nodataVal)
-               (realToFrac interval)
-               (realToFrac base)
-               writer
-               nullPtr
-      return (gen,ref,writer)
+    alloc pList =
+      {#call unsafe GDAL_CG_Create as ^#}
+        (fromIntegral nx)
+        (fromIntegral ny)
+        (fromBool (isJust nodataVal))
+        (maybe 0 realToFrac nodataVal)
+        (realToFrac interval)
+        (realToFrac base)
+        c_contourWriter
+        (castPtr pList)
 
-    free (gen,_,writer) = do
-      freeHaskellFunPtr writer
+    free pList gen = do
+      freeContourList pList
       {#call unsafe GDAL_CG_Destroy as ^#} gen
+
+    getContours pList =
+      bracket
+      ({#call unsafe pop_contour#} pList)
+      {#call unsafe destroy_contour#} $ \c ->
+      if c==nullPtr
+        then return []
+        else do
+          fp <- bracketOnError
+                  ({#get Contour->points#} c)
+                  {#call unsafe destroy_points#}
+                  (newForeignPtr c_destroyPoints)
+          nPoints <- liftM fromIntegral ({#get Contour->nPoints#} c)
+          contour <- Contour <$> liftM realToFrac ({#get Contour->level#} c)
+                             <*> pure (St.unsafeFromForeignPtr0 fp nPoints)
+          liftM (contour:) (getContours pList)
+
+    freeContourList pList = do
+      p <- {#call unsafe pop_contour#} pList
+      if p==nullPtr
+        then return ()
+        else do {#get Contour->points#} p >>= {#call unsafe destroy_points#}
+                {#call unsafe destroy_contour #} p
+                freeContourList pList
+
+
 
 contourGenerateVector
   :: Double
@@ -689,5 +719,8 @@ contourGenerateVector interval base nodataVal size =
 type CContourWriter =
   CDouble -> CInt -> Ptr CDouble -> Ptr CDouble -> Ptr () -> IO CInt
 
-foreign import ccall "wrapper"
-  c_wrapContourWriter :: CContourWriter -> IO (FunPtr CContourWriter)
+foreign import ccall "contourwriter.h &hs_contour_writer"
+  c_contourWriter :: FunPtr CContourWriter
+
+foreign import ccall "contourwriter.h &destroy_points"
+  c_destroyPoints :: FunPtr (Ptr XYDouble -> IO ())

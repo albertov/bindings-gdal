@@ -65,8 +65,10 @@ library
   default-language: Haskell2010
   include-dirs:    src/GDAL/Internal/ cbits
   cc-options:      -Wall -O2 -g
-  c-sources:       cbits/cbits.c
-  includes:        cbits/cbits.h
+  c-sources:       cbits/errorhandler.c
+                 , cbits/contourwriter.c
+  includes:        cbits/errorhandler.h
+                 , cbits/contourwriter.h
 
   if impl(ghc >= 7.10.0)
     cpp-options: -DSTORABLE_COMPLEX

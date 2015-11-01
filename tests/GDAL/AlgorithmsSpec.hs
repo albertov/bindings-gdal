@@ -246,6 +246,16 @@ spec = setupAndTeardown $ do
           sq     = (^ (2::Int))
       contours <- contourGenerateVectorIO 10 0 (Just noData) sz vec
       length contours `shouldBe` 8
+      sum (map cLevel contours) `shouldBe` 360
+      sum (map (St.length . cPoints) contours) `shouldBe` 868
+      minimum (map (St.minimum . St.map px . cPoints) contours)
+        `shouldSatisfy` (>=0)
+      minimum (map (St.minimum . St.map py . cPoints) contours)
+        `shouldSatisfy` (>=0)
+      maximum (map (St.maximum . St.map px . cPoints) contours)
+        `shouldSatisfy` (<=fromIntegral (px sz))
+      maximum (map (St.maximum . St.map py . cPoints) contours)
+        `shouldSatisfy` (<=fromIntegral (py sz))
 
 
 describeWith :: Show a => a -> (a -> SpecWith ()) -> SpecWith ()

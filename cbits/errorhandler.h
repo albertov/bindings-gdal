@@ -1,5 +1,5 @@
-#ifndef CBITS_H
-#define CBITS_H
+#ifndef ERROR_HANDLER_H
+#define ERROR_HANDLER_H
 
 #include "cpl_error.h"
 

@@ -4,6 +4,7 @@ module GDAL.Algorithms (
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)
 
+  , Contour (..)
   , GridPoint (..)
   , GridAlgorithm
   , GridInverseDistanceToAPower (..)

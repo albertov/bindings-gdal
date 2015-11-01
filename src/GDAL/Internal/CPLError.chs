@@ -55,7 +55,7 @@ import qualified Foreign.C.Types as C2HSImp
 import GDAL.Internal.Util (toEnumC, peekEncodedCString)
 
 #include "cpl_error.h"
-#include "cbits.h"
+#include "errorhandler.h"
 
 {# enum CPLErr as ErrorType {upcaseFirstLetter} deriving (Eq, Show) #}
 
