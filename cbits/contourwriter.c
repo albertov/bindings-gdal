@@ -23,7 +23,8 @@ hs_contour_writer(double level, int nPoints, double *xs, double *ys, void *data)
     return CE_Fatal;
   }
 
-  for (int i=0; i<nPoints; i++) {
+  int i;
+  for (i=0; i<nPoints; i++) {
     contour->points[i].px = xs[i];
     contour->points[i].py = ys[i];
   }
