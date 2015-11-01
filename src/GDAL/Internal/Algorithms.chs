@@ -12,11 +12,15 @@ module GDAL.Internal.Algorithms (
   , GenImgProjTransformer3 (..)
   , SomeTransformer (..)
 
-  , GridAlgorithmOptions (..)
-  , GridAlgorithm (..)
-  , InverseDistanceToAPowerOptions (..)
   , GridPoint (..)
+  , GridAlgorithm (..)
+  , GridInverseDistanceToAPower (..)
+  , GridMovingAverage (..)
+  , GridNearestNeighbor (..)
+  , GridDataMetrics (..)
+  , MetricType (..)
 
+  , GridAlgorithmEnum (..)
   , withTransformerAndArg
 
   , rasterizeLayersBuf
@@ -292,92 +296,21 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
     ndValue   = toCDouble nodataValue
     XY nx ny  = fmap fromIntegral size
 
-data GridPoint a =
-  GP {
-    gpXY :: {-# UNPACK #-} !(XY Double)
-  , gpZ  :: {-# UNPACK #-} !a
-  } deriving (Eq, Show, Read)
 
-instance Storable a => Storable (GridPoint a) where
-  sizeOf _ = sizeOf (undefined::XY Double) + sizeOf (undefined::Double)
-  {-# INLINE sizeOf #-}
-  alignment _ = alignment (undefined::Double)
-  {-# INLINE alignment #-}
-  poke ptr (GP xy z) = poke ptr' xy >> poke (castPtr (ptr' `plusPtr` 1)) z
-    where ptr' = castPtr ptr
-  {-# INLINE poke #-}
-  peek ptr = GP <$> peek ptr'
-                <*> peek (castPtr (ptr' `plusPtr` 1))
-    where ptr' = castPtr ptr
-  {-# INLINE peek #-}
+-- ############################################################################
+-- GDALCreateGrid
+-- ############################################################################
 
-{# enum GDALGridAlgorithm as GridAlgorithm {} with prefix = "GGA_"
-     deriving (Eq,Read,Show,Bounded) #}
+{# enum GDALGridAlgorithm as GridAlgorithmEnum {}
+    deriving (Eq,Read,Show,Bounded) #}
 
-class Storable a => GridAlgorithmOptions a where
-  gridAlgorithm :: a -> GridAlgorithm
+
+class (Storable a, Typeable a, Default a, Show a) => GridAlgorithm a where
+  gridAlgorithm :: a -> GridAlgorithmEnum
   setNodata     :: Ptr a -> CDouble -> IO ()
 
-{#pointer
-   *GridInverseDistanceToAPowerOptions->InverseDistanceToAPowerOptions #}
-
-data InverseDistanceToAPowerOptions =
-  InverseDistanceToAPowerOptions {
-    idpPower           :: !Double
-  , idpSmoothing       :: !Double
-  , idpAnisotropyRatio :: !Double
-  , idpAnisotropyAngle :: !Double
-  , idpRadius1         :: !Double
-  , idpRadius2         :: !Double
-  , idpAngle           :: !Double
-  , idpMinPoints       :: !Int
-  , idpMaxPoints       :: !Int
-  } deriving (Eq, Show)
-
-instance GridAlgorithmOptions InverseDistanceToAPowerOptions where
-  gridAlgorithm = const InverseDistanceToAPower
-  setNodata     = {#set GridInverseDistanceToAPowerOptions->dfNoDataValue#}
-
-instance Default InverseDistanceToAPowerOptions where
-  def = InverseDistanceToAPowerOptions {
-          idpPower           = 1
-        , idpSmoothing       = 1
-        , idpAnisotropyRatio = 0
-        , idpAnisotropyAngle = 0
-        , idpRadius1         = 0
-        , idpRadius2         = 0
-        , idpAngle           = 0
-        , idpMinPoints       = 0
-        , idpMaxPoints       = 10
-        }
-
-instance Storable InverseDistanceToAPowerOptions where
-  sizeOf _    = {#sizeof GDALGridInverseDistanceToAPowerOptions#}
-  alignment _ = {#alignof GDALGridInverseDistanceToAPowerOptions#}
-  peek _ = undefined
-  poke p InverseDistanceToAPowerOptions{..}= do
-    {#set GridInverseDistanceToAPowerOptions->dfPower#} p
-      (realToFrac idpPower)
-    {#set GridInverseDistanceToAPowerOptions->dfSmoothing#} p
-      (realToFrac idpSmoothing)
-    {#set GridInverseDistanceToAPowerOptions->dfAnisotropyRatio#} p
-      (realToFrac idpAnisotropyRatio)
-    {#set GridInverseDistanceToAPowerOptions->dfAnisotropyAngle#} p
-      (realToFrac idpAnisotropyAngle)
-    {#set GridInverseDistanceToAPowerOptions->dfRadius1#} p
-      (realToFrac idpRadius1)
-    {#set GridInverseDistanceToAPowerOptions->dfRadius2#} p
-      (realToFrac idpRadius2)
-    {#set GridInverseDistanceToAPowerOptions->dfAngle#} p
-      (realToFrac idpAngle)
-    {#set GridInverseDistanceToAPowerOptions->nMinPoints#} p
-      (fromIntegral idpMinPoints)
-    {#set GridInverseDistanceToAPowerOptions->nMaxPoints#} p
-      (fromIntegral idpMaxPoints)
-
-
 createGridIO
-  :: forall a opts. (GDALType a, GridAlgorithmOptions opts)
+  :: forall a opts. (GDALType a, GridAlgorithm opts)
   => opts
   -> a
   -> Maybe ProgressFun
@@ -428,7 +361,7 @@ createGridIO options noDataVal progressFun points envelope size =
 
 
 createGrid
-  :: forall a opts. (GDALType a, GridAlgorithmOptions opts)
+  :: forall a opts. (GDALType a, GridAlgorithm opts)
   => opts
   -> a
   -> St.Vector (GridPoint a)
@@ -439,3 +372,214 @@ createGrid options noDataVal points envelope =
   unsafePerformIO .
   try .
   createGridIO options noDataVal Nothing points envelope
+
+
+data GridPoint a =
+  GP {
+    gpXY :: {-# UNPACK #-} !(XY Double)
+  , gpZ  :: {-# UNPACK #-} !a
+  } deriving (Eq, Show, Read)
+
+instance Storable a => Storable (GridPoint a) where
+  sizeOf _ = sizeOf (undefined::XY Double) + sizeOf (undefined::Double)
+  {-# INLINE sizeOf #-}
+  alignment _ = alignment (undefined::Double)
+  {-# INLINE alignment #-}
+  poke ptr (GP xy z) = poke ptr' xy >> poke (castPtr (ptr' `plusPtr` 1)) z
+    where ptr' = castPtr ptr
+  {-# INLINE poke #-}
+  peek ptr = GP <$> peek ptr'
+                <*> peek (castPtr (ptr' `plusPtr` 1))
+    where ptr' = castPtr ptr
+  {-# INLINE peek #-}
+
+-- ############################################################################
+-- GridInverseDistanceToAPower
+-- ############################################################################
+
+data GridInverseDistanceToAPower =
+  GridInverseDistanceToAPower {
+    idpPower           :: !Double
+  , idpSmoothing       :: !Double
+  , idpAnisotropyRatio :: !Double
+  , idpAnisotropyAngle :: !Double
+  , idpRadius1         :: !Double
+  , idpRadius2         :: !Double
+  , idpAngle           :: !Double
+  , idpMinPoints       :: !Int
+  , idpMaxPoints       :: !Int
+  } deriving (Eq, Show, Typeable)
+
+instance GridAlgorithm GridInverseDistanceToAPower where
+  gridAlgorithm = const GGA_InverseDistanceToAPower
+  setNodata     = {#set GridInverseDistanceToAPowerOptions->dfNoDataValue#}
+
+instance Default GridInverseDistanceToAPower where
+  def = GridInverseDistanceToAPower {
+          idpPower           = 2
+        , idpSmoothing       = 0
+        , idpAnisotropyRatio = 0
+        , idpAnisotropyAngle = 0
+        , idpRadius1         = 0
+        , idpRadius2         = 0
+        , idpAngle           = 0
+        , idpMinPoints       = 0
+        , idpMaxPoints       = 0
+        }
+
+instance Storable GridInverseDistanceToAPower where
+  sizeOf _    = {#sizeof GridInverseDistanceToAPowerOptions#}
+  alignment _ = {#alignof GridInverseDistanceToAPowerOptions#}
+  peek _      = error "GridInverseDistanceToAPower: peek not implemented"
+  poke p GridInverseDistanceToAPower{..}= do
+    {#set GridInverseDistanceToAPowerOptions->dfPower#} p
+      (realToFrac idpPower)
+    {#set GridInverseDistanceToAPowerOptions->dfSmoothing#} p
+      (realToFrac idpSmoothing)
+    {#set GridInverseDistanceToAPowerOptions->dfAnisotropyRatio#} p
+      (realToFrac idpAnisotropyRatio)
+    {#set GridInverseDistanceToAPowerOptions->dfAnisotropyAngle#} p
+      (realToFrac idpAnisotropyAngle)
+    {#set GridInverseDistanceToAPowerOptions->dfRadius1#} p
+      (realToFrac idpRadius1)
+    {#set GridInverseDistanceToAPowerOptions->dfRadius2#} p
+      (realToFrac idpRadius2)
+    {#set GridInverseDistanceToAPowerOptions->dfAngle#} p
+      (realToFrac idpAngle)
+    {#set GridInverseDistanceToAPowerOptions->nMinPoints#} p
+      (fromIntegral idpMinPoints)
+    {#set GridInverseDistanceToAPowerOptions->nMaxPoints#} p
+      (fromIntegral idpMaxPoints)
+
+-- ############################################################################
+-- GridMovingAverage
+-- ############################################################################
+
+data GridMovingAverage =
+  GridMovingAverage {
+    maRadius1   :: !Double
+  , maRadius2   :: !Double
+  , maAngle     :: !Double
+  , maMinPoints :: !Int
+  } deriving (Eq, Show, Typeable)
+
+instance GridAlgorithm GridMovingAverage where
+  gridAlgorithm = const GGA_MovingAverage
+  setNodata     = {#set GridMovingAverageOptions->dfNoDataValue#}
+
+instance Default GridMovingAverage where
+  def = GridMovingAverage {
+          maRadius1   = 0
+        , maRadius2   = 0
+        , maAngle     = 0
+        , maMinPoints = 0
+        }
+
+instance Storable GridMovingAverage where
+  sizeOf _    = {#sizeof GridMovingAverageOptions#}
+  alignment _ = {#alignof GridMovingAverageOptions#}
+  peek _      = error "GridMovingAverage: peek not implemented"
+  poke p GridMovingAverage{..}= do
+    {#set GridMovingAverageOptions->dfRadius1#} p
+      (realToFrac maRadius1)
+    {#set GridMovingAverageOptions->dfRadius2#} p
+      (realToFrac maRadius2)
+    {#set GridMovingAverageOptions->dfAngle#} p
+      (realToFrac maAngle)
+    {#set GridMovingAverageOptions->nMinPoints#} p
+      (fromIntegral maMinPoints)
+
+-- ############################################################################
+-- GridNearestNeighbor
+-- ############################################################################
+
+data GridNearestNeighbor =
+  GridNearestNeighbor {
+    nnRadius1   :: !Double
+  , nnRadius2   :: !Double
+  , nnAngle     :: !Double
+  } deriving (Eq, Show, Typeable)
+
+instance GridAlgorithm GridNearestNeighbor where
+  gridAlgorithm = const GGA_NearestNeighbor
+  setNodata     = {#set GridNearestNeighborOptions->dfNoDataValue#}
+
+instance Default GridNearestNeighbor where
+  def = GridNearestNeighbor {
+          nnRadius1   = 0
+        , nnRadius2   = 0
+        , nnAngle     = 0
+        }
+
+instance Storable GridNearestNeighbor where
+  sizeOf _    = {#sizeof GridNearestNeighborOptions#}
+  alignment _ = {#alignof GridNearestNeighborOptions#}
+  peek _      = error "GridNearestNeighbor: peek not implemented"
+  poke p GridNearestNeighbor{..}= do
+    {#set GridNearestNeighborOptions->dfRadius1#} p
+      (realToFrac nnRadius1)
+    {#set GridNearestNeighborOptions->dfRadius2#} p
+      (realToFrac nnRadius2)
+    {#set GridNearestNeighborOptions->dfAngle#} p
+      (realToFrac nnAngle)
+
+-- ############################################################################
+-- GridDataMetrics
+-- ############################################################################
+
+data MetricType
+  = MetricMinimum
+  | MetricMaximum
+  | MetricRange
+  | MetricCount
+  | MetricAverageDistance
+  | MetricAverageDistancePts
+  deriving (Eq, Read, Show, Bounded)
+
+
+instance Default MetricType where
+  def = MetricCount
+
+
+data GridDataMetrics =
+  GridDataMetrics {
+    dmRadius1   :: !Double
+  , dmRadius2   :: !Double
+  , dmAngle     :: !Double
+  , dmMinPoints :: !Int
+  , dmType      :: !MetricType
+  } deriving (Eq, Show, Typeable)
+
+instance GridAlgorithm GridDataMetrics where
+  gridAlgorithm = mtToGGA . dmType
+    where
+      mtToGGA MetricMinimum            = GGA_MetricMinimum
+      mtToGGA MetricMaximum            = GGA_MetricMaximum
+      mtToGGA MetricRange              = GGA_MetricRange
+      mtToGGA MetricCount              = GGA_MetricCount
+      mtToGGA MetricAverageDistance    = GGA_MetricAverageDistance
+      mtToGGA MetricAverageDistancePts = GGA_MetricAverageDistancePts
+  setNodata     = {#set GridDataMetricsOptions->dfNoDataValue#}
+
+instance Default GridDataMetrics where
+  def = GridDataMetrics {
+          dmRadius1   = 0
+        , dmRadius2   = 0
+        , dmAngle     = 0
+        , dmMinPoints = 0
+        , dmType      = def
+        }
+
+instance Storable GridDataMetrics where
+  sizeOf _    = {#sizeof GridDataMetricsOptions#}
+  alignment _ = {#alignof GridDataMetricsOptions#}
+  peek _      = error "GridDataMetrics: peek not implemented"
+  poke p GridDataMetrics{..}= do
+    {#set GridDataMetricsOptions->dfRadius1#} p
+      (realToFrac dmRadius1)
+    {#set GridDataMetricsOptions->dfRadius2#} p
+      (realToFrac dmRadius2)
+    {#set GridDataMetricsOptions->dfAngle#} p
+      (realToFrac dmAngle)
+    {#set GridDataMetricsOptions->nMinPoints#} p
+      (fromIntegral dmMinPoints)

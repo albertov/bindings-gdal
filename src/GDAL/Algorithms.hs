@@ -3,9 +3,14 @@ module GDAL.Algorithms (
   , GenImgProjTransformer (..)
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)
+
   , GridPoint (..)
-  , GridAlgorithmOptions
-  , InverseDistanceToAPowerOptions (..)
+  , GridAlgorithm
+  , GridInverseDistanceToAPower (..)
+  , GridMovingAverage (..)
+  , GridNearestNeighbor (..)
+  , GridDataMetrics (..)
+  , MetricType (..)
 
   , rasterizeLayersBuf
   , createGrid

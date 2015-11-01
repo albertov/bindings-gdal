@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ExistentialQuantification #-}
 module GDAL.AlgorithmsSpec (main, spec) where
 
 import Data.Default (def)
@@ -142,12 +143,22 @@ spec = setupAndTeardown $ do
      w `shouldSatisfy` U.any (==(Value burnValue))
 
 
-  describe "createGridIO" $ do
+  createGridIOSpec (SGA (def :: GridInverseDistanceToAPower))
+  createGridIOSpec (SGA (def :: GridMovingAverage))
+  createGridIOSpec (SGA (def :: GridNearestNeighbor))
+
+
+data SomeGridAlgorithm = forall a. GridAlgorithm a => SGA a
+
+createGridIOSpec :: SomeGridAlgorithm -> SpecWith (Arg (IO ()))
+createGridIOSpec (SGA opts) = do
+
+  describe ("createGridIO (with "++ show opts ++")") $ do
 
     it "produces a NoData vector when no points" $ do
       vec <- liftIO $
              createGridIO
-               def {idpRadius1 = 10}
+               opts
                (-1)
                Nothing
                []
@@ -158,15 +169,13 @@ spec = setupAndTeardown $ do
     it "produces a vector with values when some points" $ do
       vec <- liftIO $
              createGridIO
-               def { idpRadius1 = 10
-                   , idpRadius2 = 10}
+               opts
                (-1)
                Nothing
                [GP (XY 0 0) 10]
                (Envelope (-500) 500)
                (XY 100 100)
       vec `shouldSatisfy` U.any (/=(NoData :: Value Double))
-
 
 
 
