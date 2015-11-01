@@ -21,12 +21,13 @@ module GDAL.Internal.Algorithms (
   , MetricType (..)
 
   , GridAlgorithmEnum (..)
-  , withTransformerAndArg
 
   , rasterizeLayersBuf
   , createGrid
-
   , createGridIO
+  , computeProximity
+
+  , withTransformerAndArg
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
@@ -69,6 +70,7 @@ import GDAL.Internal.Types
 data GDALAlgorithmException
   = RasterizeStopped
   | CreateGridStopped
+  | ComputeProximityStopped
   | NullTransformer !Text
   deriving (Typeable, Show, Eq)
 
@@ -583,3 +585,25 @@ instance Storable GridDataMetrics where
       (realToFrac dmAngle)
     {#set GridDataMetricsOptions->nMinPoints#} p
       (fromIntegral dmMinPoints)
+
+-- ############################################################################
+-- ComputeProximity
+-- ############################################################################
+
+computeProximity
+  :: Band s t
+  -> RWBand s
+  -> OptionList
+  -> Maybe ProgressFun
+  -> GDAL s ()
+computeProximity srcBand prxBand options progressFun =
+  liftIO $
+  withOptionList options $ \opts ->
+  withProgressFun ComputeProximityStopped progressFun $ \pFun ->
+  checkCPLError "computeProximity" $
+  {#call GDALComputeProximity as ^#}
+    (unBand srcBand)
+    (unBand prxBand)
+    opts
+    pFun
+    nullPtr

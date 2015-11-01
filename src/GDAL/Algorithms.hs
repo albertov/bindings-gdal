@@ -15,6 +15,7 @@ module GDAL.Algorithms (
   , rasterizeLayersBuf
   , createGrid
   , createGridIO
+  , computeProximity
 ) where
 
 import GDAL.Internal.Algorithms
