@@ -5,77 +5,75 @@ module OGRGeometrySpec (spec) where
 import Data.Either (isRight)
 import Data.Maybe (isNothing)
 
--- We don't use TestUtils' to make sure it can be used outside of the GDAL
--- monad
-import Test.Hspec
+import TestUtils
 
 import OSR
 import OGR
 
 spec :: Spec
-spec = parallel $ do
+spec = do
 
-  describe "Geometry" $ parallel $ do
+  describe "Geometry" $ do
 
-    describe "geomFromWkt / geomToWkt" $ parallel $ do
+    describe "geomFromWkt / geomToWkt" $ do
 
-      it "succeeds if valid" $ do
+      itIO "succeeds if valid" $ do
         let eGeom = geomFromWkt Nothing "POINT (34 21)"
         eGeom `shouldSatisfy` isRight
 
-      it "fails if invalid" $ do
+      itIO "fails if invalid" $ do
         let eGeom = geomFromWkt Nothing "im not wkt"
         eGeom `shouldSatisfy` \case
           Left OGRException{ogrErrType=UnsupportedGeometryType} -> True
           _                                                     -> False
 
-      it "export is same as original" $ do
+      itIO "export is same as original" $ do
         let Right g = geomFromWkt Nothing wkt
             wkt     = "POINT (34 21)"
         geomToWkt g `shouldBe` wkt
 
-    describe "geomFromWkb / geomToWkb" $ parallel $ do
+    describe "geomFromWkb / geomToWkb" $ do
 
-      it "succeeds if valid" $ do
+      itIO "succeeds if valid" $ do
         let Right g = geomFromWkt Nothing "POINT (34 21)"
             wkb     = geomToWkb WkbXDR g
         geomFromWkb Nothing wkb `shouldBe` Right g
 
-      it "fails if invalid" $ do
+      itIO "fails if invalid" $ do
         let eGeom = geomFromWkb Nothing "im not wkb"
         eGeom `shouldSatisfy` \case
           Left OGRException{ogrErrType=CorruptData} -> True
           _                                         -> False
 
-    describe "geomFromGml / geomToGml" $ parallel $ do
+    describe "geomFromGml / geomToGml" $ do
 
-      it "succeeds if valid" $ do
+      itIO "succeeds if valid" $ do
         let Right g = geomFromWkt Nothing "POINT (34 21)"
             gml     = geomToGml g
         geomFromGml gml `shouldBe` Right g
 
-      it "fails if invalid" $ do
+      itIO "fails if invalid" $ do
         let eGeom = geomFromGml "im not gml"
         eGeom `shouldSatisfy` \case
           Left OGRException{ogrErrType=CorruptData} -> True
           _                                         -> False
 
 
-    it "compares equal when equal with no srs" $ do
+    itIO "compares equal when equal with no srs" $ do
       geomFromWkt Nothing "POINT (2 5)"
         `shouldBe` geomFromWkt Nothing "POINT (2 5)"
 
-    it "compares equal when equal with srs" $ do
+    itIO "compares equal when equal with srs" $ do
       let Right srs = srsFromWkt (srsToWkt srs23030)
       srs `shouldBe` srs23030
       geomFromWkt (Just srs) "POINT (2 5)"
         `shouldBe` geomFromWkt (Just srs23030) "POINT (2 5)"
 
-    it "compares not equal when not equal" $ do
+    itIO "compares not equal when not equal" $ do
       geomFromWkt Nothing "POINT (2 6)"
         `shouldSatisfy` (/= geomFromWkt Nothing "POINT (2 5)")
 
-    it "is projectable" $ do
+    itIO "is projectable" $ do
       let Right g         = geomFromWkt Nothing "POINT (439466 4482586)"
           Right expected  = geomFromWkt (Just srs4326)
                               "POINT (-3.715491503365956 40.489899869998304)"
@@ -88,13 +86,13 @@ spec = parallel $ do
           --t  `shouldBe` expected
           geomToWkt t  `shouldBe` geomToWkt expected
 
-    describe "geomSpatialReference" $ parallel $ do
+    describe "geomSpatialReference" $ do
 
-      it "is Nothing when it has no srs" $ do
+      itIO "is Nothing when itIO has no srs" $ do
         let Right g = geomFromWkt Nothing "POINT (34 21)"
         geomSpatialReference g `shouldSatisfy` isNothing
 
-      it "is is the same as the one that was set" $ do
+      itIO "is is the same as the one that was set" $ do
         let Right g = geomFromWkt (Just srs23030) "POINT (34 21)"
         geomSpatialReference g `shouldBe` Just srs23030
 

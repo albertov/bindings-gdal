@@ -12,6 +12,7 @@ module TestUtils (
   , expectationFailure
   , existsAndSizeIsGreaterThan
   , it
+  , itIO
   , describe
   , hspec
   , warn
@@ -21,7 +22,7 @@ module TestUtils (
 ) where
 
 import Control.Monad (guard, unless)
-import Control.Monad.Catch (Exception, tryJust, try)
+import Control.Monad.Catch (Exception, MonadCatch, tryJust, try)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Typeable (typeOf)
@@ -46,11 +47,15 @@ import GDAL (GDAL, GDALException, runGDAL)
 hspec :: Spec -> IO ()
 hspec = Hspec.hspec . Hspec.parallel
 
-describe :: String -> SpecWith a -> SpecWith a
+describe :: String -> SpecWith (Arg (IO ())) -> SpecWith (Arg (IO ()))
 describe name = Hspec.describe name . Hspec.parallel
 
 it :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
 it n a = Hspec.it n (runGDAL' a)
+
+-- For things that we want to make sure that can run outside of the GDAL monad
+itIO :: String -> IO () -> SpecWith (Arg (IO ()))
+itIO n = Hspec.it n
 
 withDir :: String -> (forall s. FilePath -> GDAL s ()) -> SpecWith (Arg (IO ()))
 withDir n a =
@@ -66,7 +71,9 @@ runGDAL' a = do
     Right ((),msgs) ->
       Hspec.expectationFailure ("Uncollected GDALExceptions " ++ show msgs)
 
-existsAndSizeIsGreaterThan :: FilePath -> Integer -> GDAL s ()
+existsAndSizeIsGreaterThan
+  :: (MonadIO m, MonadCatch m)
+  => FilePath -> Integer -> m ()
 existsAndSizeIsGreaterThan p s = do
   r <- tryJust (guard . isDoesNotExistError)
                (liftIO (withBinaryFile p ReadMode hFileSize))
@@ -74,7 +81,9 @@ existsAndSizeIsGreaterThan p s = do
     Left _   -> expectationFailure "File was not created"
     Right sz -> sz `shouldSatisfy` (>s)
 
-shouldThrow :: Exception e => GDAL s a -> Selector e -> GDAL s ()
+shouldThrow
+  :: (MonadCatch m, MonadIO m)
+  => Exception e => m a -> Selector e -> m ()
 action `shouldThrow` p = do
   r <- try action
   case r of
@@ -90,20 +99,20 @@ action `shouldThrow` p = do
         instanceOf :: Selector a -> a
         instanceOf _ = error "OSGeo.TestUtils.shouldThrow: broken Typeable instance"
 
-shouldSatisfy :: Show a => a -> (a -> Bool) -> GDAL s ()
+shouldSatisfy :: (MonadIO m, Show a) => a -> (a -> Bool) -> m ()
 shouldSatisfy a = liftIO . Hspec.shouldSatisfy a
 
-shouldContain :: (Show a, Eq a) => [a] -> [a] -> GDAL s ()
+shouldContain :: (MonadIO m, Show a, Eq a) => [a] -> [a] -> m ()
 shouldContain a  = liftIO . Hspec.shouldContain a
 
-shouldBe :: (Show a, Eq a) => a -> a -> GDAL s ()
+shouldBe :: (MonadIO m, Show a, Eq a) => a -> a -> m ()
 shouldBe a  = liftIO . Hspec.shouldBe a
 
-shouldNotBe :: (Show a, Eq a) => a -> a -> GDAL s ()
+shouldNotBe :: (MonadIO m, Show a, Eq a) => a -> a -> m ()
 shouldNotBe a  = liftIO . flip Hspec.shouldSatisfy (/=a)
 
-expectationFailure :: String -> GDAL s ()
+expectationFailure :: MonadIO m => String -> m ()
 expectationFailure = liftIO . Hspec.expectationFailure
 
-warn :: String -> GDAL s ()
+warn :: MonadIO m => String -> m ()
 warn = liftIO . pendingWith

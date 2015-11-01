@@ -147,17 +147,91 @@ spec = setupAndTeardown $ do
   createGridIOSpec (SGA (def :: GridMovingAverage))
   createGridIOSpec (SGA (def :: GridNearestNeighbor))
 
+  describe "createGridIO (GridDataMetrics)" $ do
+
+    describeWith (def {dmType = MetricCount}) $ \opts -> do
+
+      itIO "produces all zeros when no points" $ do
+        vec <- createGridIO
+                 opts
+                 (-1)
+                 Nothing
+                 []
+                 (Envelope (-500) 500)
+                 (XY 100 100)
+        vec `shouldSatisfy` U.all (==(Value 0 :: Value Double))
+
+      itIO "produces a vector with some values > 0" $ do
+        vec <- createGridIO
+                 opts
+                 (-1)
+                 Nothing
+                 [GP (XY 0 0) 10]
+                 (Envelope (-500) 500)
+                 (XY 100 100)
+        vec `shouldSatisfy` U.any (>(Value 0 :: Value Double))
+
+
+    describeWith (def {dmType = MetricMaximum}) $ \opts -> do
+
+      itIO "produces a NoData vector when no points" $ do
+        vec <- createGridIO
+                 opts
+                 (-1)
+                 Nothing
+                 []
+                 (Envelope (-500) 500)
+                 (XY 100 100)
+        vec `shouldSatisfy` U.all (==(NoData :: Value Double))
+
+      itIO "produces a vector that contains the maximum value" $ do
+        vec <- createGridIO
+                 opts
+                 (-1)
+                 Nothing
+                 [ GP (XY 2 2) 10
+                 , GP (XY 0 0) 2]
+                 (Envelope (-500) 500)
+                 (XY 100 100)
+        vec `shouldSatisfy` U.any (==(Value 10 :: Value Double))
+        vec `shouldSatisfy` U.all (/=(Value 2 :: Value Double))
+
+    describeWith (def {dmType = MetricMinimum}) $ \opts -> do
+
+      itIO "produces a NoData vector when no points" $ do
+        vec <- createGridIO
+                 opts
+                 (-1)
+                 Nothing
+                 []
+                 (Envelope (-500) 500)
+                 (XY 100 100)
+        vec `shouldSatisfy` U.all (==(NoData :: Value Double))
+
+      itIO "produces a vector that contains the minimum value" $ do
+        vec <- createGridIO
+                 opts
+                 (-1)
+                 Nothing
+                 [ GP (XY 2 2) 10
+                 , GP (XY 0 0) 2]
+                 (Envelope (-500) 500)
+                 (XY 100 100)
+        vec `shouldSatisfy` U.any (==(Value 2 :: Value Double))
+        vec `shouldSatisfy` U.all (/=(Value 10 :: Value Double))
+
+describeWith opts act = describe ("with "++ show opts) (act opts)
 
 data SomeGridAlgorithm = forall a. GridAlgorithm a => SGA a
+
 
 createGridIOSpec :: SomeGridAlgorithm -> SpecWith (Arg (IO ()))
 createGridIOSpec (SGA opts) = do
 
   describe ("createGridIO (with "++ show opts ++")") $ do
 
-    it "produces a NoData vector when no points" $ do
-      vec <- liftIO $
-             createGridIO
+    itIO "produces a NoData vector when no points" $ do
+      vec <- createGridIO
                opts
                (-1)
                Nothing
@@ -166,9 +240,8 @@ createGridIOSpec (SGA opts) = do
                (XY 100 100)
       vec `shouldSatisfy` U.all (==(NoData :: Value Double))
 
-    it "produces a vector with values when some points" $ do
-      vec <- liftIO $
-             createGridIO
+    itIO "produces a vector with values when some points" $ do
+      vec <- createGridIO
                opts
                (-1)
                Nothing
@@ -214,4 +287,3 @@ instance (OGRField a, OGRField b) => OGRFeatureDef (TestFeature a b) where
                  ]
     , fdGeom   = GeomFieldDef WkbPolygon (Just srs4326) False
     , fdGeoms  = mempty}
-

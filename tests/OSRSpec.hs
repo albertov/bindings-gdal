@@ -5,37 +5,35 @@ module OSRSpec (spec) where
 import Data.Either (isRight, isLeft)
 import qualified Data.Vector.Storable as St
 
--- We don't use TestUtils' to make sure it can be used outside of the GDAL
--- monad
-import Test.Hspec
+import TestUtils
 
 import OSR
 import GDAL (XY(XY))
 
 spec :: Spec
-spec = parallel $ do
+spec = do
 
-  describe "SpatialReference" $ parallel $ do
+  describe "SpatialReference" $ do
 
-    it "can be created from EPSG number" $
+    itIO "can be created from EPSG number" $
       srsFromEPSG 23030 `shouldSatisfy` isRight
 
-    it "can created from Proj4 string" $
+    itIO "can created from Proj4 string" $
       srsFromProj4 "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
         `shouldSatisfy` isRight
 
-    it "srsFromProj4 returns Left if invalid" $
+    itIO "srsFromProj4 returns Left if invalid" $
       srsFromProj4 "foo" `shouldSatisfy` isLeft
 
   describe "CoordinateTransformation" $ do
 
-    it "can be created" $ do
+    itIO "can be created" $ do
       let ct = do src <- srsFromEPSG 23030
                   dst <- srsFromEPSG 4326
                   coordinateTransformation src dst
       isRight ct `shouldBe` True
 
-    it "can transform points" $ do
+    itIO "can transform points" $ do
       let Right ct = do src <- srsFromEPSG 23030
                         dst <- srsFromEPSG 4326
                         coordinateTransformation src dst
