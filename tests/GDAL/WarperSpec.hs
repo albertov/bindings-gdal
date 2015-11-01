@@ -15,8 +15,6 @@ import GDAL.Algorithms
 
 import TestUtils
 
-import GDALSpec (setupAndTeardown)
-
 main :: IO ()
 main = hspec spec
 

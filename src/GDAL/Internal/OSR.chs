@@ -253,9 +253,11 @@ coordinateTransformationIO source target =
   liftM CoordinateTransformation $
   withSpatialReference source $ \pSource ->
   withSpatialReference target $ \pTarget ->
-  newForeignPtr c_destroyCT =<<
-    checkGDALCall checkIt
-      ({#call unsafe OCTNewCoordinateTransformation as ^#} pSource pTarget)
+  bracketOnError
+    (checkGDALCall checkIt $
+      ({#call unsafe OCTNewCoordinateTransformation as ^#} pSource pTarget))
+    {#call unsafe OCTDestroyCoordinateTransformation as ^#}
+    (newForeignPtr c_destroyCT)
   where
     checkIt e p
       | p==nullPtr = Just (maybe defExc toOgrExc e)

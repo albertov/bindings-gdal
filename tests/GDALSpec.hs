@@ -2,7 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
-module GDALSpec (main, spec, setupAndTeardown) where
+module GDALSpec (main, spec) where
 
 import Control.Monad (void, forM_)
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -17,7 +17,6 @@ import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
 
 import System.FilePath (joinPath)
-import System.Mem (performMajorGC)
 
 import GDAL
 import OSR
@@ -289,9 +288,6 @@ spec = setupAndTeardown $ do
     it_can_foldl                fCDouble f2C zC [("TILED", "YES")]
 #endif
 
-
-setupAndTeardown :: SpecWith a -> SpecWith a
-setupAndTeardown = after_ performMajorGC
 
 
 it_can_write_and_read_band
