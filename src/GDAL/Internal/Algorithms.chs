@@ -660,7 +660,7 @@ contourGenerateVectorIO interval base nodataVal (XY nx ny) vector =
   withErrorHandler $
   with nullPtr $ \pList ->
   bracket (alloc pList) (free pList) $ \generator -> do
-    St.forM_ (St.enumFromStepN 0 nx (ny-1)) $ \offset ->
+    St.forM_ (St.enumFromStepN 0 nx ny) $ \offset ->
       St.unsafeWith (St.slice offset nx (St.unsafeCast vector)) $
       checkCPLError "FeedLine" . {#call unsafe GDAL_CG_FeedLine as ^#} generator
     getContours pList
