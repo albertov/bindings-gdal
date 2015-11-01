@@ -678,7 +678,7 @@ contourGenerateVectorIO interval base nodataVal (XY nx ny) vector =
 
     free pList gen = do
       freeContourList pList
-      {#call unsafe GDAL_CG_Destroy as ^#} gen
+      when (gen/=nullPtr) ({#call unsafe GDAL_CG_Destroy as ^#} gen)
 
     getContours pList =
       bracket
