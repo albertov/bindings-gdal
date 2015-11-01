@@ -680,21 +680,23 @@ contourGenerateVectorIO interval base nodataVal (XY nx ny) vector =
       freeContourList pList
       when (gen/=nullPtr) ({#call unsafe GDAL_CG_Destroy as ^#} gen)
 
-    getContours pList =
-      bracket
-      ({#call unsafe pop_contour#} pList)
-      {#call unsafe destroy_contour#} $ \c ->
-      if c==nullPtr
-        then return []
-        else do
-          fp <- bracketOnError
-                  ({#get Contour->points#} c)
-                  {#call unsafe destroy_points#}
-                  (newForeignPtr c_destroyPoints)
-          nPoints <- liftM fromIntegral ({#get Contour->nPoints#} c)
-          contour <- Contour <$> liftM realToFrac ({#get Contour->level#} c)
-                             <*> pure (St.unsafeFromForeignPtr0 fp nPoints)
-          liftM (contour:) (getContours pList)
+    getContours pList = go []
+      where
+        go acc =
+          bracket
+          ({#call unsafe pop_contour#} pList)
+          {#call unsafe destroy_contour#} $ \c ->
+          if c==nullPtr
+            then return acc
+            else do
+              fp <- bracketOnError
+                      ({#get Contour->points#} c)
+                      {#call unsafe destroy_points#}
+                      (newForeignPtr c_destroyPoints)
+              nPoints <- liftM fromIntegral ({#get Contour->nPoints#} c)
+              contour <- Contour <$> liftM realToFrac ({#get Contour->level#} c)
+                                 <*> pure (St.unsafeFromForeignPtr0 fp nPoints)
+              go (contour:acc)
 
     freeContourList pList = do
       p <- {#call unsafe pop_contour#} pList
