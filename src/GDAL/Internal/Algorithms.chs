@@ -379,12 +379,13 @@ instance Storable InverseDistanceToAPowerOptions where
 createGridIO
   :: forall a opts. (GDALType a, GridAlgorithmOptions opts)
   => opts
+  -> a
   -> Maybe ProgressFun
   -> St.Vector (GridPoint a)
   -> EnvelopeReal
   -> Size
   -> IO (U.Vector (Value a))
-createGridIO options progressFun points envelope size =
+createGridIO options noDataVal progressFun points envelope size =
   withProgressFun CreateGridStopped progressFun $ \pFun ->
   withErrorHandler $
   with options $ \opts -> do
@@ -421,7 +422,6 @@ createGridIO options progressFun points envelope size =
       | toCDouble v == ndValue     = NoData
       | otherwise                  = Value v
     ndValue                        = toCDouble noDataVal
-    noDataVal                      = (nodata :: a)
     XY nx ny                       = fmap fromIntegral size
     Envelope (XY x0 y0) (XY x1 y1) = fmap realToFrac envelope
     gtype                          = fromEnumC (dataType (Proxy :: Proxy a))
@@ -430,11 +430,12 @@ createGridIO options progressFun points envelope size =
 createGrid
   :: forall a opts. (GDALType a, GridAlgorithmOptions opts)
   => opts
+  -> a
   -> St.Vector (GridPoint a)
   -> EnvelopeReal
   -> Size
   -> Either GDALException (U.Vector (Value a))
-createGrid options points envelope =
+createGrid options noDataVal points envelope =
   unsafePerformIO .
   try .
-  createGridIO options Nothing points envelope
+  createGridIO options noDataVal Nothing points envelope

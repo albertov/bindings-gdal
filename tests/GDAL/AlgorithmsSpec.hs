@@ -148,6 +148,7 @@ spec = setupAndTeardown $ do
       vec <- liftIO $
              createGridIO
                def {idpRadius1 = 10}
+               (-1)
                Nothing
                []
                (Envelope (-500) 500)
@@ -159,6 +160,7 @@ spec = setupAndTeardown $ do
              createGridIO
                def { idpRadius1 = 10
                    , idpRadius2 = 10}
+               (-1)
                Nothing
                [GP (XY 0 0) 10]
                (Envelope (-500) 500)
