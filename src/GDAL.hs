@@ -14,6 +14,7 @@ module GDAL (
   , isBindingException
 
   , Geotransform (..)
+  , OverviewResampling (..)
   , Driver (..)
   , Dataset
   , OptionList
@@ -41,6 +42,7 @@ module GDAL (
   , closeDataset
   , unsafeToReadOnly
   , createCopy
+  , buildOverviews
 
   , dataTypeSize
   , dataTypeByName
@@ -61,6 +63,7 @@ module GDAL (
   , bandBlockCount
   , bandBlockLen
   , bandSize
+  , bandHasOverviews
   , allBand
   , sizeLen
   , bandNodataValue
@@ -70,6 +73,7 @@ module GDAL (
   , readBandBlock
   , writeBand
   , writeBandBlock
+  , copyBand
 
   , foldl'
   , foldlM'

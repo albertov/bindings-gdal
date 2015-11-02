@@ -20,6 +20,7 @@ module GDAL.Internal.GDAL (
   , GDALRasterException (..)
   , DataType (..)
   , Geotransform (..)
+  , OverviewResampling (..)
   , Driver (..)
   , Dataset
   , DatasetH (..)
@@ -49,6 +50,7 @@ module GDAL.Internal.GDAL (
   , openReadWrite
   , unsafeToReadOnly
   , createCopy
+  , buildOverviews
   , driverCreationOptionList
 
   , dataTypeSize
@@ -70,6 +72,7 @@ module GDAL.Internal.GDAL (
   , bandBlockCount
   , bandBlockLen
   , bandSize
+  , bandHasOverviews
   , allBand
   , bandNodataValue
   , setBandNodataValue
@@ -78,6 +81,7 @@ module GDAL.Internal.GDAL (
   , readBandBlock
   , writeBand
   , writeBandBlock
+  , copyBand
 
   , foldl'
   , foldlM'
@@ -116,7 +120,7 @@ import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (withForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (allocaArray)
+import Foreign.Marshal.Array (allocaArray, withArrayLen)
 import Foreign.Marshal.Utils (toBool, fromBool, with)
 
 import System.IO.Unsafe (unsafePerformIO)
@@ -151,6 +155,7 @@ data GDALRasterException
   | InvalidProjection !OGRException
   | InvalidDriverOptions
   | CopyStopped
+  | BuildOverviewsStopped
   | UnknownRasterDataType
   | UnsupportedRasterDataType !DataType
   | NullDataset
@@ -341,6 +346,43 @@ setDatasetProjection ds srs =
     unsafeUseAsCString (srsToWkt srs)
       ({#call unsafe SetProjection as ^#} (unDataset ds))
 
+data OverviewResampling
+  = OvNearest
+  | OvGauss
+  | OvCubic
+  | OvAverage
+  | OvMode
+  | OvAverageMagphase
+  | OvNone
+
+buildOverviews
+  :: RWDataset s -> OverviewResampling -> [Int] -> [Int] -> Maybe ProgressFun
+  -> GDAL s ()
+buildOverviews ds resampling overviews bands progressFun =
+  liftIO $
+  withResampling resampling $ \pResampling ->
+  withArrayLen (map fromIntegral overviews) $ \nOverviews pOverviews ->
+  withArrayLen (map fromIntegral bands) $ \nBands pBands ->
+  withProgressFun BuildOverviewsStopped progressFun $ \pFunc ->
+  checkCPLError "buildOverviews" $
+    {#call GDALBuildOverviews as ^#}
+      (unDataset ds)
+      pResampling
+      (fromIntegral nOverviews)
+      pOverviews
+      (fromIntegral nBands)
+      pBands
+      pFunc
+      nullPtr
+  where
+    withResampling OvNearest         = unsafeUseAsCString "NEAREST"
+    withResampling OvGauss           = unsafeUseAsCString "GAUSS"
+    withResampling OvCubic           = unsafeUseAsCString "CUBIC"
+    withResampling OvAverage         = unsafeUseAsCString "AVERAGE"
+    withResampling OvMode            = unsafeUseAsCString "MODE"
+    withResampling OvAverageMagphase = unsafeUseAsCString "AVERAGE_MAGPHASE"
+    withResampling OvNone            = unsafeUseAsCString "NONE"
+
 data Geotransform
   = Geotransform {
       gtXOff   :: {-# UNPACK #-} !Double
@@ -511,6 +553,10 @@ bandBlockCount b = fmap ceiling $ liftA2 ((/) :: Double -> Double -> Double)
                      (fmap fromIntegral (bandSize b))
                      (fmap fromIntegral (bandBlockSize b))
 
+bandHasOverviews :: Band s t -> GDAL s Bool
+bandHasOverviews =
+  liftIO . liftM toBool . {#call unsafe HasArbitraryOverviews as ^#} . unBand
+
 checkType
   :: GDALType a => Band s t -> Proxy a -> GDAL s ()
 checkType b p
@@ -673,6 +719,17 @@ readBandBlock band blockIx = do
     St.unsafeFreeze vec
   where XY x y = fmap fromIntegral blockIx
 {-# INLINE readBandBlock #-}
+
+copyBand
+  :: Band s t -> RWBand s -> OptionList
+  -> Maybe ProgressFun -> GDAL s ()
+copyBand src dst options progressFun =
+  liftIO $
+  withProgressFun CopyStopped progressFun $ \pFunc ->
+  withOptionList options $ \o ->
+  checkCPLError "copyBand" $
+  {#call RasterBandCopyWholeRaster as ^#}
+    (unBand src) (unBand dst) o pFunc nullPtr
 
 foldl'
   :: forall s t a b. GDALType a
