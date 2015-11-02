@@ -303,18 +303,21 @@ createCopy driver path ds strict options progressFun =
       validateCreationOptions d o
       withCString path $ \p ->
         {#call GDALCreateCopy as ^#}
-          d p (unDataset ds) (fromBool strict) o pFunc (castPtr nullPtr)
+          d p (unDataset ds) (fromBool strict) o pFunc nullPtr
+
 
 
 newDatasetHandle :: IO DatasetH -> GDAL s (Dataset s t)
 newDatasetHandle act =
-  liftM Dataset $ allocate (checkGDALCall checkit act) {#call GDALClose as ^#}
+  liftM Dataset $ allocate (checkGDALCall checkit act) free
   where
     checkit exc p
       | p==nullDatasetH = Just (fromMaybe
                                 (GDALBindingException NullDataset) exc)
       | otherwise       = Nothing
-
+    free ds = do
+      refCount <- {#call unsafe DereferenceDataset as ^#} ds
+      when (refCount==0) ({#call GDALClose as ^#} ds)
 
 createMem
   :: Size -> Int -> DataType -> OptionList -> GDAL s (Dataset s ReadWrite)
