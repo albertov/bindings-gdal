@@ -533,8 +533,8 @@ data SQLDialect
 
 withSQLDialect :: SQLDialect -> (CString -> IO a) -> IO a
 withSQLDialect DefaultDialect = ($ nullPtr)
-withSQLDialect SqliteDialect  = unsafeUseAsCString "SQLITE"
-withSQLDialect OGRDialect     = unsafeUseAsCString "OGRSQL"
+withSQLDialect SqliteDialect  = unsafeUseAsCString "SQLITE\0"
+withSQLDialect OGRDialect     = unsafeUseAsCString "OGRSQL\0"
 
 executeSQL
   :: OGRFeature a

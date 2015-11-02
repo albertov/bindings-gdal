@@ -90,7 +90,7 @@ import Control.Exception (throw, bracketOnError, try)
 import Control.Monad (liftM, when, (>=>))
 
 import Data.ByteString.Internal (ByteString(..))
-import Data.ByteString.Char8 (unpack)
+import Data.ByteString.Char8 (unpack, useAsCString)
 import Data.ByteString.Unsafe (
     unsafeUseAsCString
   , unsafeUseAsCStringLen
@@ -260,7 +260,7 @@ geomFromGml = unsafePerformIO . geomFromGmlIO
 geomFromGmlIO
   :: ByteString -> IO (Either OGRException Geometry)
 geomFromGmlIO bs =
-  unsafeUseAsCString bs $ \pS ->
+  useAsCString bs $ \pS ->
   newGeometryHandle $ \gPtr -> do
     gP <- {#call unsafe OGR_G_CreateFromGML as ^#} pS
     if gP == nullPtr

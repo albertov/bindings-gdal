@@ -408,13 +408,13 @@ buildOverviews ds resampling overviews bands progressFun =
       pFunc
       nullPtr
   where
-    withResampling OvNearest         = unsafeUseAsCString "NEAREST"
-    withResampling OvGauss           = unsafeUseAsCString "GAUSS"
-    withResampling OvCubic           = unsafeUseAsCString "CUBIC"
-    withResampling OvAverage         = unsafeUseAsCString "AVERAGE"
-    withResampling OvMode            = unsafeUseAsCString "MODE"
-    withResampling OvAverageMagphase = unsafeUseAsCString "AVERAGE_MAGPHASE"
-    withResampling OvNone            = unsafeUseAsCString "NONE"
+    withResampling OvNearest         = unsafeUseAsCString "NEAREST\0"
+    withResampling OvGauss           = unsafeUseAsCString "GAUSS\0"
+    withResampling OvCubic           = unsafeUseAsCString "CUBIC\0"
+    withResampling OvAverage         = unsafeUseAsCString "AVERAGE\0"
+    withResampling OvMode            = unsafeUseAsCString "MODE\0"
+    withResampling OvAverageMagphase = unsafeUseAsCString "AVERAGE_MAGPHASE\0"
+    withResampling OvNone            = unsafeUseAsCString "NONE\0"
 
 data Geotransform
   = Geotransform {

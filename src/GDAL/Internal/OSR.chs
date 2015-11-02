@@ -51,6 +51,7 @@ import Control.Exception (bracketOnError, try)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
+import Data.ByteString.Char8 (useAsCString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 
 import qualified Data.Vector.Storable.Mutable as Stm
@@ -140,7 +141,7 @@ emptySpatialRef =
 srsFromWkt, srsFromProj4, srsFromXML
   :: ByteString -> Either OGRException SpatialReference
 srsFromWkt =
-  unsafePerformIO . flip unsafeUseAsCString srsFromWktIO
+  unsafePerformIO . flip useAsCString srsFromWktIO
 {-# NOINLINE srsFromWkt #-}
 
 srsFromWktIO :: CString -> IO (Either OGRException SpatialReference)
@@ -177,14 +178,14 @@ fromImporter f s = unsafePerformIO $ withErrorHandler $ do
 
 {#fun ImportFromProj4 as ^
    { withSpatialReference* `SpatialReference'
-   , unsafeUseAsCString* `ByteString'} -> `CInt' #}
+   , useAsCString* `ByteString'} -> `CInt' #}
 
 {#fun ImportFromEPSG as ^
    {withSpatialReference* `SpatialReference', `Int'} -> `CInt' #}
 
 {#fun ImportFromXML as ^
    { withSpatialReference* `SpatialReference'
-   , unsafeUseAsCString* `ByteString'} -> `CInt' #}
+   , useAsCString* `ByteString'} -> `CInt' #}
 
 {#fun pure unsafe IsGeographic as ^
    {withSpatialReference* `SpatialReference'} -> `Bool'#}
