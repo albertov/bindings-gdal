@@ -22,7 +22,10 @@ import GDAL
 import OSR
 import OGR (Envelope(..))
 
+import Test.QuickCheck (getPositive)
+import Test.Hspec.QuickCheck (prop)
 import TestUtils
+import Arbitrary (InversibleGeotransform(..))
 
 main :: IO ()
 main = hspec spec
@@ -289,6 +292,46 @@ spec = setupAndTeardown $ do
 #endif
 
 
+  describe "Geotransform" $ do
+
+    prop "|$| is right associative" $ \(g1, g2, p) ->
+      g1 |$| g2 |$| p ~== g1 |$| (g2 |$| p)
+
+    prop "|$| with (inv gt) inverts |$| with gt" $
+      \(InversibleGeotransform gt, p) -> inv gt |$| gt |$| p ~== p
+
+    prop "can compose geotransforms" $ \(g1, g2, p) ->
+      g1 |.| g2 |$| p ~== g1 |$| g2 |$| p
+
+    describe "northUpGeotransform" $ do
+
+      prop "pixel (0,0) is upper left corner" $ \(env, size) ->
+        let gt = northUpGeotransform sz env
+            sz = fmap getPositive size
+            ul = XY (px (envelopeMin env)) (py (envelopeMax env))
+        in gt |$| 0 ~== ul
+
+      prop "pixel (sizeX,0) upper right corner" $ \(env, size) ->
+        let gt  = northUpGeotransform sz env
+            sz  = fmap getPositive size
+            sz' = fmap fromIntegral sz
+            ur  = XY (px (envelopeMax env)) (py (envelopeMax env))
+        in gt |$| (XY (px sz') 0) ~== ur
+
+      prop "pixel (0,sizeY) upper right corner" $ \(env, size) ->
+        let gt  = northUpGeotransform sz env
+            sz  = fmap getPositive size
+            sz' = fmap fromIntegral sz
+            ll  = XY (px (envelopeMin env)) (py (envelopeMin env))
+        in gt |$| (XY 0 (py sz')) ~== ll
+
+      prop "pixel (sizeX,sizeY) lower right corner" $ \(env, size) ->
+        let gt  = northUpGeotransform sz env
+            sz  = fmap getPositive size
+            sz' = fmap fromIntegral sz
+            lr  = XY (px (envelopeMax env)) (py (envelopeMin env))
+        in gt |$| (XY (px sz') (py sz')) ~== lr
+
 
 it_can_write_and_read_band
   :: forall a. (Eq a , GDALType a)
@@ -334,3 +377,8 @@ it_can_foldl f f2 z options = withDir name $ \tmpDir -> do
   value `shouldBe` U.foldl' f2 z vec
   where name = "can foldl with options " ++ show options ++ " " ++ typeName
         typeName = show (typeOf (undefined :: a))
+
+infix 4 ~==
+(~==) :: (Fractional a, Ord a) => a -> a -> Bool
+a ~== b = abs(a-b)<epsilon
+  where epsilon = 1e-3

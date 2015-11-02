@@ -78,6 +78,12 @@ module GDAL (
   , version
 
   , northUpGeotransform
+  , applyGeotransform
+  , (|$|)
+  , invertGeotransform
+  , inv
+  , composeGeotransforms
+  , (|.|)
 ) where
 
 import Control.Exception (finally)

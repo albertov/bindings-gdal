@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -30,6 +31,13 @@ module GDAL.Internal.GDAL (
   , RasterBandH (..)
 
   , northUpGeotransform
+  , applyGeotransform
+  , (|$|)
+  , invertGeotransform
+  , inv
+  , composeGeotransforms
+  , (|.|)
+
   , nullDatasetH
   , allRegister
   , destroyDriverManager
@@ -335,12 +343,12 @@ setDatasetProjection ds srs =
 
 data Geotransform
   = Geotransform {
-      gtXOff   :: !Double
-    , gtXDelta :: !Double
-    , gtXRot   :: !Double
-    , gtYOff   :: !Double
-    , gtYRot   :: !Double
-    , gtYDelta :: !Double
+      gtXOff   :: {-# UNPACK #-} !Double
+    , gtXDelta :: {-# UNPACK #-} !Double
+    , gtXRot   :: {-# UNPACK #-} !Double
+    , gtYOff   :: {-# UNPACK #-} !Double
+    , gtYRot   :: {-# UNPACK #-} !Double
+    , gtYDelta :: {-# UNPACK #-} !Double
   } deriving (Eq, Show)
 
 northUpGeotransform :: Size -> Envelope Double -> Geotransform
@@ -353,6 +361,55 @@ northUpGeotransform size envelope =
     , gtYRot   = 0
     , gtYDelta = negate (py (envelopeSize envelope / fmap fromIntegral size))
   }
+
+applyGeotransform :: Geotransform -> XY Double -> XY Double
+applyGeotransform Geotransform{..} (XY x y) =
+  XY (gtXOff + gtXDelta*x + gtXRot   * y)
+     (gtYOff + gtYRot  *x + gtYDelta * y)
+{-# INLINE applyGeotransform #-}
+
+infixr 5 |$|
+(|$|) :: Geotransform -> XY Double -> XY Double
+(|$|) = applyGeotransform
+
+invertGeotransform :: Geotransform -> Maybe Geotransform
+invertGeotransform (Geotransform g0 g1 g2 g3 g4 g5)
+  | g2==0 && g4==0 && g1/=0 && g5/=0 -- No rotation
+  = Just $! Geotransform (-g0/g1) (1/g1) 0 (-g3/g5) 0 (1/g5)
+  | abs det < 1e-15 = Nothing -- not invertible
+  | otherwise
+  = Just $! Geotransform ((g2*g3 - g0*g5) * idet)
+                         (g5*idet)
+                         (-g2*idet)
+                         ((-g1*g3 + g0*g4) * idet)
+                         (-g4*idet)
+                         (g1*idet)
+  where
+    idet = 1/det
+    det  = g1*g5 - g2*g4
+{-# INLINE invertGeotransform #-}
+
+inv :: Geotransform -> Geotransform
+inv = fromMaybe (error "Could not invert geotransform") . invertGeotransform
+
+-- | Creates a Geotransform equivalent to applying a and then b
+composeGeotransforms :: Geotransform -> Geotransform -> Geotransform
+b `composeGeotransforms` a =
+  Geotransform (b1*a0 + b2*a3 + b0)
+               (b1*a1 + b2*a4)
+               (b1*a2 + b2*a5)
+               (b4*a0 + b5*a3 + b3)
+               (b4*a1 + b5*a4)
+               (b4*a2 + b5*a5)
+
+  where
+    Geotransform a0 a1 a2 a3 a4 a5 = a
+    Geotransform b0 b1 b2 b3 b4 b5 = b
+{-# INLINE composeGeotransforms #-}
+
+infixr 9 |.|
+(|.|) :: Geotransform -> Geotransform -> Geotransform
+(|.|) = composeGeotransforms
 
 instance Storable Geotransform where
   sizeOf _     = sizeOf (undefined :: CDouble) * 6
