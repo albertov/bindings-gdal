@@ -1,6 +1,7 @@
 module GDAL (
     GDAL
   , GDALType (..)
+  , ApproxOK (..)
   , DataType (..)
   , XY (..)
   , Size
@@ -108,6 +109,7 @@ import GDAL.Internal.CPLProgress
 import GDAL.Internal.GCP
 import GDAL.Internal.GDAL as GDAL
 import GDAL.Internal.Types
+import GDAL.Internal.Common
 
 import qualified GDAL.Internal.OGR as OGR
 import qualified GDAL.Internal.OSR as OSR

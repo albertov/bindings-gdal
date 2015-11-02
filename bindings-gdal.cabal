@@ -30,6 +30,7 @@ library
 
                    , GDAL.Internal.Types
                    , GDAL.Internal.Util
+                   , GDAL.Internal.Common
                    , GDAL.Internal.CPLString
                    , GDAL.Internal.CPLError
                    , GDAL.Internal.CPLProgress

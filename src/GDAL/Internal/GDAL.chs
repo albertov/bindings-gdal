@@ -31,6 +31,7 @@ module GDAL.Internal.GDAL (
   , RasterBandH (..)
 
   , northUpGeotransform
+  , gcpGeotransform
   , applyGeotransform
   , (|$|)
   , invertGeotransform
@@ -137,6 +138,7 @@ import Foreign.Marshal.Utils (toBool, fromBool, with)
 import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
+import GDAL.Internal.Common
 import GDAL.Internal.Util
 {#import GDAL.Internal.GCP#}
 {#import GDAL.Internal.CPLError#}
@@ -477,6 +479,19 @@ northUpGeotransform size envelope =
     , gtYRot   = 0
     , gtYDelta = negate (py (envelopeSize envelope / fmap fromIntegral size))
   }
+
+gcpGeotransform :: [GroundControlPoint] -> ApproxOK -> Maybe Geotransform
+gcpGeotransform gcps approxOk =
+  unsafePerformIO $
+  alloca $ \pGt ->
+  withGCPArrayLen gcps $ \nGcps pGcps -> do
+    ret <- liftM toBool $
+           {#call unsafe GCPsToGeoTransform as ^#}
+             (fromIntegral nGcps)
+             pGcps
+             (castPtr pGt)
+             (fromEnumC approxOk)
+    if ret then liftM Just (peek pGt) else return Nothing
 
 applyGeotransform :: Geotransform -> XY Double -> XY Double
 applyGeotransform Geotransform{..} (XY x y) =

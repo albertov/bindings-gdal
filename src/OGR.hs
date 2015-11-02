@@ -144,8 +144,9 @@ module OGR (
   , unsafeToReadOnlyLayer
 ) where
 
-import GDAL.Internal.OGRError as X
-import GDAL.Internal.OGRGeometry as X
-import GDAL.Internal.OGRFeature as X
-import GDAL.Internal.OGR as X
+import GDAL.Internal.Common
+import GDAL.Internal.OGRError
+import GDAL.Internal.OGRGeometry
+import GDAL.Internal.OGRFeature
+import GDAL.Internal.OGR
 import GDAL.Internal.OGRFieldInstances ()

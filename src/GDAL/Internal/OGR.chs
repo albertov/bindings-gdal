@@ -21,7 +21,6 @@ module GDAL.Internal.OGR (
     DataSource
   , DataSourceH
   , SQLDialect (..)
-  , ApproxOK (..)
   , Layer
   , LayerH (..)
   , RODataSource
@@ -140,6 +139,7 @@ import System.IO.Unsafe (unsafePerformIO)
 {#import GDAL.Internal.OGRFeature#}
 {#import GDAL.Internal.OGRError#}
 {#import GDAL.Internal.CPLString#}
+import GDAL.Internal.Common
 import GDAL.Internal.CPLError
 import GDAL.Internal.Util
 import GDAL.Internal.Types
@@ -266,11 +266,6 @@ driverByName (Driver name) = useAsCString name $ \pName -> do
   if drv == nullPtr
     then throwBindingException (UnknownDriver name)
     else return drv
-
-{#enum define ApproxOK
-  { TRUE as ApproxOK
-  , FALSE as StrictOK
-  } deriving (Eq, Show) #}
 
 createLayer
   :: forall s l a. OGRFeatureDef a
