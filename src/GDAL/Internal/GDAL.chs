@@ -94,6 +94,7 @@ module GDAL.Internal.GDAL (
   , unBand
   , version
   , newDatasetHandle
+  , openDatasetCount
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
@@ -135,7 +136,6 @@ import GDAL.Internal.Util
 {#import GDAL.Internal.CPLError#}
 {#import GDAL.Internal.CPLString#}
 {#import GDAL.Internal.CPLProgress#}
-import GDAL.Internal.OGRError
 import GDAL.Internal.OSR
 import GDAL.Internal.OGRGeometry (Envelope(..), envelopeSize)
 
@@ -147,9 +147,7 @@ $(let names = fmap (words . map toUpper) $
   in createEnum "Driver" names)
 
 version :: (Int, Int)
-version =
-  ( {#const GDAL_VERSION_MAJOR#}
-  , {#const GDAL_VERSION_MINOR#})
+version = ({#const GDAL_VERSION_MAJOR#} , {#const GDAL_VERSION_MINOR#})
 
 data GDALRasterException
   = InvalidRasterSize !Size
@@ -319,7 +317,7 @@ newDatasetHandle act =
       | otherwise       = Nothing
     free ds = do
       refCount <- {#call unsafe DereferenceDataset as ^#} ds
-      when (refCount==0) ({#call GDALClose as ^#} ds)
+      when (refCount<=0) ({#call GDALClose as ^#} ds)
 
 createMem
   :: Size -> Int -> DataType -> OptionList -> GDAL s (Dataset s ReadWrite)
@@ -835,6 +833,12 @@ writeBandBlock band blockIx uvec = do
         pBand  = unBand band
 {-# INLINE writeBandBlock #-}
 
+openDatasetCount :: IO Int
+openDatasetCount =
+  alloca $ \ppDs ->
+  alloca $ \pCount -> do
+    {#call unsafe GetOpenDatasets as ^#} ppDs pCount
+    liftM fromIntegral (peek pCount)
 
 
 instance GDALType Word8 where
