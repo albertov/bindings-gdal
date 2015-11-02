@@ -37,6 +37,9 @@ module GDAL (
   , fromValue
   , create
   , createMem
+  , delete
+  , rename
+  , copyFiles
   , flushCache
   , openReadOnly
   , openReadWrite
@@ -51,7 +54,9 @@ module GDAL (
   , dataTypeIsComplex
   , reifyDataType
 
+  , datasetDriver
   , datasetSize
+  , datasetFileList
   , datasetProjection
   , setDatasetProjection
   , datasetGeotransform

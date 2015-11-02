@@ -4,28 +4,26 @@ module GDAL.Internal.CPLString (
     OptionList
   , withOptionList
   , toOptionListPtr
-  , fromOptionListPtr
   , peekCPLString
+  , fromCPLStringList
 ) where
 
-import Control.Exception (bracket, bracketOnError)
-import Control.Monad (forM, foldM, liftM, when, void)
+import Control.Exception (bracket, mask_, finally)
+import Control.Monad (foldM, void)
 
 import Data.ByteString.Internal (ByteString(..))
 import Data.Monoid (mempty)
 import Data.Text (Text)
-import qualified Data.Text as T
-import Data.Word (Word8)
 
 import Foreign.C.String (CString)
-import Foreign.C.Types (CInt(..), CChar(..))
+import Foreign.C.Types (CChar(..))
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek)
 import Foreign.ForeignPtr (newForeignPtr)
 import Foreign.Marshal.Utils (with)
-import Foreign.Marshal.Array (lengthArray0)
+import Foreign.Marshal.Array (lengthArray0, advancePtr)
 
-import GDAL.Internal.Util (useAsEncodedCString, peekEncodedCString)
+import GDAL.Internal.Util (useAsEncodedCString)
 import GDAL.Internal.CPLConv (c_cplFree, cplFree)
 
 #include "cpl_string.h"
@@ -44,26 +42,28 @@ toOptionListPtr = foldM folder nullPtr
       useAsEncodedCString v $ \v' ->
         {#call unsafe CSLSetNameValue as ^#} acc k' v'
 
-fromOptionListPtr :: Ptr CString -> IO OptionList
-fromOptionListPtr ptr = do
-  n <- {#call unsafe CSLCount as ^#} ptr
-  forM [0..n-1] $ \ix -> do
-    s <- {#call unsafe CSLGetField as ^#} ptr ix >>= peekEncodedCString
-    return $ T.break (/='=') s
-
 peekCPLString :: (Ptr CString -> IO a) -> IO ByteString
-peekCPLString act = with nullPtr $ \pptr ->
-  bracketOnError (go pptr) (const (freeIfNotNull pptr)) return
-  where
-    go pptr = do
-      void (act pptr)
-      p <- liftM castPtr (peek pptr) :: IO (Ptr Word8)
-      if p /= nullPtr
-        then do len <- lengthArray0 0 p
-                fp <- newForeignPtr c_cplFree p
-                return $! PS fp 0 len
-        else return mempty
+peekCPLString act =
+  mask_ $
+  with nullPtr $ \pptr -> do
+    void (act pptr)
+    peek pptr >>= byteStringFromCPLString >>= maybe (return mempty) return
 
-    freeIfNotNull pptr = do
-      p <- peek pptr
-      when (p /= nullPtr) (cplFree p)
+byteStringFromCPLString :: CString -> IO (Maybe ByteString)
+byteStringFromCPLString p
+  | p==nullPtr = return Nothing
+  | otherwise  = do len <- lengthArray0 0 p
+                    fp <- newForeignPtr c_cplFree (castPtr p)
+                    return $! Just $! PS fp 0 len
+
+fromCPLStringList :: IO (Ptr CString) -> IO [ByteString]
+fromCPLStringList io =
+  mask_ $ do
+    pList <- io
+    if pList==nullPtr
+      then return []
+      else go pList [] `finally` cplFree pList
+  where
+    go !pp acc = do
+      mS <- byteStringFromCPLString =<< peek pp
+      maybe (return (reverse acc)) (\s -> go (pp `advancePtr` 1) (s:acc)) mS

@@ -48,7 +48,7 @@ module GDAL.Internal.OSR (
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (bracketOnError, try, throw)
+import Control.Exception (try, throw, mask_)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
@@ -113,14 +113,12 @@ newSpatialRefHandle = maybeNewSpatialRefHandle >=> maybe exc return
 
 maybeNewSpatialRefHandle
   :: IO (Ptr SpatialReference) -> IO (Maybe SpatialReference)
-maybeNewSpatialRefHandle alloc = bracketOnError alloc freeIfNotNull go
-  where
-    go p
-      | p==nullPtr = return Nothing
-      | otherwise  = liftM (Just . SpatialReference) (newForeignPtr c_release p)
-    freeIfNotNull p
-      | p/=nullPtr = {#call unsafe OSRRelease as ^#} p
-      | otherwise  = return ()
+maybeNewSpatialRefHandle io =
+  mask_ $ do
+    p <- io
+    if p==nullPtr
+      then return Nothing
+      else liftM (Just . SpatialReference) (newForeignPtr c_release p)
 
 newSpatialRefBorrowedHandle
   :: IO (Ptr SpatialReference) -> IO SpatialReference
@@ -262,15 +260,14 @@ coordinateTransformationIO source target =
   liftM CoordinateTransformation $
   withSpatialReference source $ \pSource ->
   withSpatialReference target $ \pTarget ->
-  bracketOnError
-    (checkGDALCall checkIt $
+  mask_ $
+  newForeignPtr c_destroyCT =<<
+    (checkGDALCall checkIt
       ({#call unsafe OCTNewCoordinateTransformation as ^#} pSource pTarget))
-    {#call unsafe OCTDestroyCoordinateTransformation as ^#}
-    (newForeignPtr c_destroyCT)
   where
     checkIt e p
       | p==nullPtr = Just (maybe defExc toOgrExc e)
-      | otherwise  = fmap toOgrExc e
+      | otherwise  = Nothing
     defExc = NullCoordinateTransformation
     toOgrExc = gdalToOgrException Failure
 

@@ -7,7 +7,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -44,6 +43,9 @@ module GDAL.Internal.GDAL (
   , destroyDriverManager
   , create
   , createMem
+  , delete
+  , rename
+  , copyFiles
   , flushCache
   , closeDataset
   , openReadOnly
@@ -58,7 +60,9 @@ module GDAL.Internal.GDAL (
   , dataTypeUnion
   , dataTypeIsComplex
 
+  , datasetDriver
   , datasetSize
+  , datasetFileList
   , reifyDataType
   , datasetProjection
   , setDatasetProjection
@@ -107,17 +111,21 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Int (Int16, Int32)
 import Data.Bits ((.&.))
+import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Complex (Complex(..), realPart)
 import Data.Coerce (coerce)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy(..))
+import Data.String (IsString)
+import Data.Text (Text)
+import Data.Text.Encoding (decodeUtf8)
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
-import Foreign.C.String (withCString, CString, peekCString)
+import Foreign.C.String (withCString, CString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
@@ -127,8 +135,6 @@ import Foreign.Marshal.Array (allocaArray, withArrayLen)
 import Foreign.Marshal.Utils (toBool, fromBool, with)
 
 import System.IO.Unsafe (unsafePerformIO)
-import System.Process (readProcess)
-import Data.Char (toUpper)
 
 import GDAL.Internal.Types
 import GDAL.Internal.Util
@@ -142,9 +148,11 @@ import GDAL.Internal.OGRGeometry (Envelope(..), envelopeSize)
 
 #include "gdal.h"
 
-$(let names = fmap (words . map toUpper) $
-                readProcess "gdal-config" ["--formats"] ""
-  in createEnum "Driver" names)
+newtype Driver = Driver ByteString
+  deriving (Eq, IsString)
+
+instance Show Driver where
+  show (Driver s) = show s
 
 version :: (Int, Int)
 version = ({#const GDAL_VERSION_MAJOR#} , {#const GDAL_VERSION_MINOR#})
@@ -160,6 +168,7 @@ data GDALRasterException
   | UnsupportedRasterDataType !DataType
   | NullDataset
   | NullBand
+  | UnknownDriver !ByteString
   deriving (Typeable, Show, Eq)
 
 instance NFData GDALRasterException where
@@ -242,19 +251,23 @@ type ROBand s = Band s ReadOnly
 type RWBand s = Band s ReadWrite
 
 
-{#pointer DriverH newtype#}
+{#pointer DriverH #}
 
 {#fun AllRegister as ^ {} -> `()'  #}
 
 {#fun DestroyDriverManager as ^ {} -> `()'#}
 
 driverByName :: Driver -> IO DriverH
-driverByName s = withCString (show s) {#call unsafe GetDriverByName as ^#}
+driverByName (Driver s) = do
+  d <- useAsCString s {#call unsafe GetDriverByName as ^#}
+  if d == nullPtr
+    then throwBindingException (UnknownDriver s)
+    else return d
 
-driverCreationOptionList :: Driver -> String
+driverCreationOptionList :: Driver -> ByteString
 driverCreationOptionList driver = unsafePerformIO $ do
   d <- driverByName driver
-  {#call GetDriverCreationOptionList	as ^#} d >>= peekCString
+  {#call GetDriverCreationOptionList	as ^#} d >>= packCString
 
 validateCreationOptions :: DriverH -> Ptr CString -> IO ()
 validateCreationOptions d o = do
@@ -276,6 +289,29 @@ create drv path (XY nx ny) bands dtype  options =
     withOptionList options $ \opts -> do
       validateCreationOptions d opts
       {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' opts
+
+delete :: Driver -> String -> GDAL s ()
+delete driver path =
+  liftIO $
+  checkCPLError "deleteDataset" $ do
+    d <- driverByName driver
+    withCString path ({#call DeleteDataset as ^#} d)
+
+rename :: Driver -> String -> String -> GDAL s ()
+rename driver newName oldName =
+  liftIO $
+  checkCPLError "renameDataset" $ do
+    d <- driverByName driver
+    withCString newName $
+      withCString oldName . ({#call RenameDataset as ^#} d)
+
+copyFiles :: Driver -> String -> String -> GDAL s ()
+copyFiles driver newName oldName =
+  liftIO $
+  checkCPLError "copyFiles" $ do
+    d <- driverByName driver
+    withCString newName $
+      withCString oldName . ({#call CopyDatasetFiles as ^#} d)
 
 openReadOnly :: String -> GDAL s (RODataset s)
 openReadOnly p = openWithMode GA_ReadOnly p
@@ -321,16 +357,31 @@ newDatasetHandle act =
 
 createMem
   :: Size -> Int -> DataType -> OptionList -> GDAL s (Dataset s ReadWrite)
-createMem = create MEM ""
+createMem = create "Mem" ""
 
 flushCache :: forall s. RWDataset s -> GDAL s ()
 flushCache = liftIO . {#call GDALFlushCache as ^#} . unDataset
+
+datasetDriver :: Dataset s t -> Driver
+datasetDriver ds =
+  unsafePerformIO $
+  liftM Driver $ do
+    driver <-{#call unsafe GetDatasetDriver as ^#} (unDataset ds)
+    {#call unsafe GetDriverShortName as ^#} driver >>= packCString
 
 datasetSize :: Dataset s t -> Size
 datasetSize ds =
   fmap fromIntegral $
      XY ({#call pure unsafe GetRasterXSize as ^#} (unDataset ds))
         ({#call pure unsafe GetRasterYSize as ^#} (unDataset ds))
+
+datasetFileList :: Dataset s t -> GDAL s [Text]
+datasetFileList =
+  liftIO .
+  liftM (map decodeUtf8) .
+  fromCPLStringList .
+  {#call unsafe GetFileList as ^#} .
+  unDataset
 
 datasetProjection :: Dataset s t -> GDAL s (Maybe SpatialReference)
 datasetProjection =

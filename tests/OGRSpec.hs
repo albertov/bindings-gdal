@@ -141,8 +141,8 @@ spec = setupAndTeardown $ do
                                           , pointDef {gfdSrs = Just srs23030})]})
 
     describe "layer CRUD" $ do
-      forM_ (["Memory", "ESRI Shapefile"] :: [String]) $ \driverName -> do
-        describe ("with " ++ driverName ++ " driver") $ do
+      forM_ (["Memory", "ESRI Shapefile"] :: [Driver]) $ \driverName -> do
+        describe ("with " ++ show driverName ++ " driver") $ do
 
           withDir "can create and retrieve a feature" $ \tmpDir -> do
             let feat = TestFeature aPoint ("some data" :: String)
@@ -240,8 +240,8 @@ spec = setupAndTeardown $ do
 
 
   describe "OGRField instances" $
-    forM_ (["Memory", "ESRI Shapefile"] :: [String]) $ \driverName -> do
-      describe ("'"++driverName++"' driver") $ do
+    forM_ (["Memory", "ESRI Shapefile"] :: [Driver]) $ \driverName -> do
+      describe ("'"++show driverName++"' driver") $ do
 #if SUPPORTS_WORD_FIELDS
         ogrFieldSpec driverName (34 :: Int)
         ogrFieldSpec driverName (0 :: Int)
@@ -373,7 +373,7 @@ ogrFieldSpec
   , Show (Maybe a)
   , Show a
   )
-  => String -> a -> SpecWith (Arg (IO ()))
+  => Driver -> a -> SpecWith (Arg (IO ()))
 ogrFieldSpec driverName v = do
   let typeName = show (typeOf (undefined :: a))
       suiteName =
@@ -397,6 +397,6 @@ ogrFieldSpec driverName v = do
           Right () -> return ()
           Left OGRException{ogrErrNum=NotSupported,ogrErrMsg=m} ->
             -- driver does not support it, oh well...
-            warn ("Type '"++ tyName++"' not supported by '"++driverName++
+            warn ("Type '"++ tyName++"' not supported by '"++ show driverName++
                   "' driver: " ++ show m)
           Left e  -> throwM e

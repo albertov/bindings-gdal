@@ -1,10 +1,12 @@
 #include "contourwriter.h"
 #include <assert.h>
 
+
 CPLErr
-hs_contour_writer(double level, int nPoints, double *xs, double *ys, void *data)
+hs_contour_writer(double level, int nPoints, double *xs, double *ys, 
+                  ContourList list)
 {
-  assert(data);
+  assert(list);
 
   Contour *contour = malloc(sizeof(Contour));
   if (!contour) {
@@ -30,32 +32,41 @@ hs_contour_writer(double level, int nPoints, double *xs, double *ys, void *data)
   }
   contour->nPoints = nPoints;
   contour->level = level;
-  contour->next = *((contour_list) data);
-  *((contour_list) data) = contour;
+  contour->next = *list,
+  *list = contour;
   return CE_None;
 }
 
-
-Contour *pop_contour(contour_list list)
+Point *pop_contour(ContourList list, double *level, int *nPoints)
 {
   assert (list);
-  Contour *ret = *list;
-  if (ret) {
-    *list = ret->next;
-  }
-  return ret;
-}
-
-void destroy_contour (Contour *contour)
-{
+  Contour *contour = *list;
+  Point *ret = NULL;
   if (contour) {
+    *list    = contour->next;
+    *level   = contour->level;
+    *nPoints = contour->nPoints;
+    ret      = contour->points;
     free(contour);
   }
+  return ret;
 }
 
 void destroy_points (Point *points)
 {
   if (points) {
     free(points);
+  }
+}
+
+void destroy_contours (ContourList list)
+{
+  if (list) {
+    Contour *cur = *list, *next;
+    while (cur) {
+      next = cur->next;
+      destroy_points(cur->points);
+      free(cur);
+    }
   }
 }

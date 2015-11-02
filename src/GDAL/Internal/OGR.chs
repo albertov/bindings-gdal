@@ -4,7 +4,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeSynonymInstances #-}
@@ -95,13 +94,16 @@ module GDAL.Internal.OGR (
 
 {#context lib = "gdal" prefix = "OGR"#}
 
+import Data.ByteString.Char8 (ByteString, useAsCString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Coerce (coerce)
 import Data.Conduit
 import qualified Data.Conduit.List as CL
 import Data.Maybe (isNothing, fromMaybe)
 import Data.Proxy (Proxy(Proxy))
+import Data.String (IsString)
 import Data.Text (Text)
+import Data.Typeable (Typeable)
 import qualified Data.Vector as V
 
 import Control.Applicative (Applicative, (<$>), (<*>), pure)
@@ -146,11 +148,7 @@ import GDAL.Internal.Types
 {#fun RegisterAll as ^ {} -> `()'  #}
 {#fun CleanupAll  as ^ {} -> `()'  #}
 
-{#pointer OGRSFDriverH as DriverH newtype#}
-deriving instance Eq DriverH
-
-nullDriverH :: DriverH
-nullDriverH = DriverH nullPtr
+{#pointer OGRSFDriverH as DriverH #}
 
 
 {#pointer DataSourceH newtype#}
@@ -241,7 +239,11 @@ newDataSourceHandle act = liftM snd $ allocate alloc free
       | otherwise                = return ()
       where dsPtr = unDataSource ds
 
-type Driver = String
+newtype Driver =
+  Driver ByteString deriving (Eq, IsString, Typeable)
+
+instance Show Driver where
+  show (Driver s) = show s
 
 create :: Driver -> String -> OptionList -> GDAL s (RWDataSource s)
 create driverName name options = newDataSourceHandle $ do
@@ -257,10 +259,10 @@ create driverName name options = newDataSourceHandle $ do
 createMem :: OptionList -> GDAL s (RWDataSource s)
 createMem = create "Memory" ""
 
-driverByName :: String -> IO DriverH
-driverByName name = withCString name $ \pName -> do
+driverByName :: Driver -> IO DriverH
+driverByName (Driver name) = useAsCString name $ \pName -> do
   drv <- {#call unsafe GetDriverByName as ^#} pName
-  if drv == nullDriverH
+  if drv == nullPtr
     then throwBindingException (UnknownDriver name)
     else return drv
 

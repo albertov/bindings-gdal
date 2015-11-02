@@ -12,6 +12,7 @@ import Data.Complex (Complex(..))
 import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Int (Int16, Int32)
 import Data.Proxy (Proxy(Proxy))
+import Data.String (fromString)
 import Data.Typeable (typeOf)
 import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
@@ -43,26 +44,37 @@ spec = setupAndTeardown $ do
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("compress","deflate"), ("zlevel", "9"), ("predictor", "2")]
-    ds <- create GTIFF p 3000 1 GDT_Int16 o
+    ds <- create "GTIFF" p 3000 1 GDT_Int16 o
     flushCache ds
     p `existsAndSizeIsGreaterThan` 20000
+
+  withDir "can get filelist" $ \tmpDir -> do
+    let p = joinPath [tmpDir, "test.tif"]
+    ds <- create "GTIFF" p 3000 1 GDT_Int16 []
+    fl <- datasetFileList ds
+    fl `shouldBe` [fromString p]
+
+  it "can get empty filelist" $ do
+    ds <- createMem 3000 1 GDT_Int16 []
+    fl <- datasetFileList ds
+    fl `shouldSatisfy` null
 
   withDir "driver options are validated" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("zlevel", "bad level")]
-        action = create GTIFF p 3000 1 GDT_Int16 o
+        action = create "GTIFF" p 3000 1 GDT_Int16 o
     action `shouldThrow` (==InvalidDriverOptions)
 
   withDir "can create and open dataset" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
-    ds <- create GTIFF p 3000 1 GDT_Int16 []
+    ds <- create "GTIFF" p 3000 1 GDT_Int16 []
     flushCache ds
     void $ (openReadOnly p)
 
   withDir "can create and copy dataset" $ \tmpDir -> do
     let p  = joinPath [tmpDir, "test.tif"]
     ds <- createMem (XY 100 100) 1 GDT_Int16 []
-    ds2 <- createCopy GTIFF p ds True [] Nothing
+    ds2 <- createCopy "GTIFF" p ds True [] Nothing
     flushCache ds2
     p `existsAndSizeIsGreaterThan` 0
 
@@ -71,14 +83,14 @@ spec = setupAndTeardown $ do
       let p  = joinPath [tmpDir, "test.tif"]
       ds <- createMem (XY 100 100) 1 GDT_Int16 []
       let stopIt = Just (\_ _ -> return Stop)
-      createCopy GTIFF p ds True [] stopIt `shouldThrow` (==CopyStopped)
+      createCopy "GTIFF" p ds True [] stopIt `shouldThrow` (==CopyStopped)
 
     withDir "can throw exceptions" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
       ds <- createMem (XY 100 100) 1 GDT_Int16 []
       let crashIt = Just (error msg)
           msg     = "I crashed!"
-      createCopy GTIFF p ds True [] crashIt `shouldThrow` errorCall msg
+      createCopy "GTIFF" p ds True [] crashIt `shouldThrow` errorCall msg
 
     withDir "can report progress" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
@@ -87,7 +99,7 @@ spec = setupAndTeardown $ do
       let report pr m = do
             modifyIORef' msgsRef ((pr,m):)
             return Continue
-      ds2 <- createCopy GTIFF p ds True [] (Just report)
+      ds2 <- createCopy "GTIFF" p ds True [] (Just report)
       flushCache ds2
       p `existsAndSizeIsGreaterThan` 0
       msgs <- liftIO (readIORef msgsRef)
@@ -216,7 +228,7 @@ spec = setupAndTeardown $ do
 
     withDir "throws GDALException when reading block with wrong type" $ \d -> do
       let p = joinPath [d, "test.tif"]
-      ds <- create GTIFF p 100 1 GDT_Int16 []
+      ds <- create "GTIFF" p 100 1 GDT_Int16 []
       flushCache ds
       ds2 <- openReadOnly p
       band <- getBand 1 ds2
@@ -228,7 +240,7 @@ spec = setupAndTeardown $ do
 
     withDir "throws GDALException when writing block with wrong type" $ \d -> do
       let p = joinPath [d, "test.tif"]
-      ds <- create GTIFF p 100 1 GDT_Int32 []
+      ds <- create "GTIFF" p 100 1 GDT_Int32 []
       flushCache ds
       ds2 <- openReadWrite p
       band <- getBand 1 ds2
@@ -394,7 +406,7 @@ it_can_foldl
 it_can_foldl f f2 z options = withDir name $ \tmpDir -> do
   let p = joinPath [tmpDir, "test.tif"]
       sz = XY 200 205
-  ds <- create GTIFF p sz 1 (dataType (Proxy :: Proxy a)) options
+  ds <- create "GTIFF" p sz 1 (dataType (Proxy :: Proxy a)) options
   let vec = U.generate (sizeLen sz) f
   band <- getBand 1 ds
   writeBand band (allBand band) sz vec

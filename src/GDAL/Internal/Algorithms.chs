@@ -43,9 +43,9 @@ import Control.Monad.Catch (
     Exception(..)
   , bracket
   , mask
+  , mask_
   , onException
   , try
-  , bracketOnError
   )
 import Control.Monad (liftM, mapM_, when)
 import Control.Monad.IO.Class (liftIO)
@@ -67,10 +67,9 @@ import Foreign.Ptr (
   , nullPtr
   , castPtr
   , nullFunPtr
-  , plusPtr
   )
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (withArrayLen)
+import Foreign.Marshal.Array (withArrayLen, advancePtr)
 import Foreign.Marshal.Utils (with)
 import Foreign.Storable (Storable(..))
 
@@ -409,12 +408,12 @@ instance Storable a => Storable (GridPoint a) where
   {-# INLINE sizeOf #-}
   alignment _ = alignment (undefined::Double)
   {-# INLINE alignment #-}
-  poke ptr (GP xy z) = poke ptr' xy >> poke (castPtr (ptr' `plusPtr` 1)) z
-    where ptr' = castPtr ptr
+  poke ptr (GP xy z) = poke ptr' xy >> poke (castPtr (ptr' `advancePtr` 1)) z
+    where ptr' = castPtr ptr :: Ptr (XY Double)
   {-# INLINE poke #-}
   peek ptr = GP <$> peek ptr'
-                <*> peek (castPtr (ptr' `plusPtr` 1))
-    where ptr' = castPtr ptr
+                <*> peek (castPtr (ptr' `advancePtr` 1))
+    where ptr' = castPtr ptr :: Ptr (XY Double)
   {-# INLINE peek #-}
 
 -- ############################################################################
@@ -640,8 +639,7 @@ data Contour =
   , cPoints :: {-# UNPACK #-} !(St.Vector (XY Double))
   } deriving (Eq, Show)
 
-{#pointer contour_list as ContourList #}
-{#pointer *Contour as CContour #}
+{#pointer ContourList #}
 {#pointer *Point->XYDouble #}
 
 type XYDouble = XY Double
@@ -663,7 +661,7 @@ contourGenerateVectorIO interval base nodataVal (XY nx ny) vector =
     St.forM_ (St.enumFromStepN 0 nx ny) $ \offset ->
       St.unsafeWith (St.slice offset nx (St.unsafeCast vector)) $
       checkCPLError "FeedLine" . {#call unsafe GDAL_CG_FeedLine as ^#} generator
-    getContours pList
+    mask_ (alloca (alloca . getContours [] pList))
   where
     alloc pList =
       {#call unsafe GDAL_CG_Create as ^#}
@@ -677,36 +675,20 @@ contourGenerateVectorIO interval base nodataVal (XY nx ny) vector =
         (castPtr pList)
 
     free pList gen = do
-      freeContourList pList
+      {#call unsafe destroy_contours#} pList
       when (gen/=nullPtr) ({#call unsafe GDAL_CG_Destroy as ^#} gen)
 
-    getContours pList = go []
-      where
-        go acc =
-          bracket
-          ({#call unsafe pop_contour#} pList)
-          {#call unsafe destroy_contour#} $ \c ->
-          if c==nullPtr
-            then return acc
-            else do
-              fp <- bracketOnError
-                      ({#get Contour->points#} c)
-                      {#call unsafe destroy_points#}
-                      (newForeignPtr c_destroyPoints)
-              nPoints <- liftM fromIntegral ({#get Contour->nPoints#} c)
-              contour <- Contour <$> liftM realToFrac ({#get Contour->level#} c)
-                                 <*> pure (St.unsafeFromForeignPtr0 fp nPoints)
-              go (contour:acc)
-
-    freeContourList pList = do
-      p <- {#call unsafe pop_contour#} pList
-      if p==nullPtr
-        then return ()
-        else do {#get Contour->points#} p >>= {#call unsafe destroy_points#}
-                {#call unsafe destroy_contour #} p
-                freeContourList pList
-
-
+    getContours acc pList pLen pLevel = do
+      ps <- {#call unsafe pop_contour#} pList pLevel pLen
+      if ps==nullPtr
+        then return acc
+        else do
+          c <- Contour
+                <$> liftM realToFrac (peek pLevel)
+                <*> (St.unsafeFromForeignPtr0
+                       <$> newForeignPtr c_destroyPoints ps
+                       <*> liftM fromIntegral (peek pLen))
+          getContours (c:acc) pList pLen pLevel
 
 contourGenerateVector
   :: Double

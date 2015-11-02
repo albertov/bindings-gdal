@@ -22,9 +22,15 @@ import Control.Exception (bracket)
 import Control.Monad (liftM, mapM_)
 
 import Foreign.Marshal.Alloc (free)
-import Foreign.Marshal.Array (mallocArray0, allocaArray, peekArray, copyArray)
+import Foreign.Marshal.Array (
+    mallocArray0
+  , allocaArray
+  , peekArray
+  , copyArray
+  , advancePtr
+  )
 import Foreign.C.Types (CChar(..), CDouble(..))
-import Foreign.Ptr (Ptr, castPtr, plusPtr)
+import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (Storable(..))
 
 import GDAL.Internal.Types (XY(..))
@@ -52,7 +58,7 @@ withGCPArrayLen
 withGCPArrayLen gcps act =
   allocaArray nPoints $ \pPoints ->
   bracket (mapM_ (uncurry (pokeElemOff pPoints)) (zip [0..] gcps'))
-          (const (mapM_ (freeGCP . plusPtr pPoints) [0..nPoints-1]))
+          (const (mapM_ (freeGCP . advancePtr pPoints) [0..nPoints-1]))
           (const (act nPoints (castPtr pPoints)))
   where
     freeGCP p = do

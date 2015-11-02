@@ -86,8 +86,8 @@ module GDAL.Internal.OGRGeometry (
 
 import Control.Applicative ((<$>), (<*>), liftA2)
 import Control.DeepSeq (NFData(rnf))
-import Control.Exception (throw, bracketOnError, try)
-import Control.Monad (liftM, when, (>=>))
+import Control.Exception (throw, mask_, try)
+import Control.Monad (liftM, (>=>))
 
 import Data.ByteString.Internal (ByteString(..))
 import Data.ByteString.Char8 (unpack, useAsCString)
@@ -199,30 +199,23 @@ foreign import ccall "ogr_api.h &OGR_G_DestroyGeometry"
 
 newGeometryHandle
   :: (Ptr (Ptr Geometry) -> IO OGRError) -> IO (Either OGRException Geometry)
-newGeometryHandle alloc = with nullPtr $ \pptr ->
+newGeometryHandle io =
   try $
   withErrorHandler $
-  bracketOnError (go pptr) (const (freeIfNotNull pptr)) return
-  where
-    go pptr = do
-      checkOGRError "newGeometryHandle" (liftM fromEnumC (alloc pptr))
-      p <- peek pptr
-      when (p==nullPtr) (throwBindingException NullGeometry)
-      liftM Geometry (newForeignPtr c_destroyGeometry p)
-    freeIfNotNull pptr = do
-      p <- peek pptr
-      when (p /= nullPtr) ({#call unsafe OGR_G_DestroyGeometry as ^#} p)
+  with nullPtr $ \pptr ->
+  mask_ $ do
+    checkOGRError "newGeometryHandle" (liftM fromEnumC (io pptr))
+    maybeNewGeometryHandle (peek pptr) >>= maybe throwNullGeom return
+  where throwNullGeom = throwBindingException NullGeometry
 
 maybeNewGeometryHandle
   :: IO (Ptr Geometry) -> IO (Maybe Geometry)
-maybeNewGeometryHandle alloc =
-  bracketOnError alloc freeIfNotNull $ \p -> do
+maybeNewGeometryHandle io =
+  mask_ $ do
+    p <- io
     if p == nullPtr
       then return Nothing
       else liftM (Just . Geometry) (newForeignPtr c_destroyGeometry p)
-  where
-    freeIfNotNull p = do
-      when (p /= nullPtr) ({#call unsafe OGR_G_DestroyGeometry as ^#} p)
 
 geomFromWkb
   :: Maybe SpatialReference -> ByteString -> Either OGRException Geometry

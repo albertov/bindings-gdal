@@ -65,7 +65,8 @@ import qualified Data.Vector.Generic.Mutable as M
 import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Unboxed.Base as U
 
-import Foreign.Ptr (Ptr, castPtr, plusPtr)
+import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Marshal.Array (advancePtr)
 import Foreign.Storable (Storable(..))
 
 import GDAL.Internal.CPLError
@@ -273,13 +274,13 @@ instance Storable a => Storable (Value a) where
   sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: FlagType)
   alignment _ = alignment (undefined :: a)
   peek p = let pm = castPtr p :: Ptr FlagType
-               pv = pm `plusPtr` sizeOf (undefined :: FlagType)
+               pv = pm `advancePtr` 1
            in do t <- peek pm
                  if t/=0
                    then fmap Value (peek (castPtr pv))
                    else return NoData
   poke p x = let pm = castPtr p :: Ptr FlagType
-                 pv = pm `plusPtr` sizeOf (undefined :: FlagType)
+                 pv = pm `advancePtr` 1
              in case x of
                   NoData  -> poke pm 0
                   Value a -> poke pm 1 >> poke (castPtr pv) a
