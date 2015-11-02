@@ -1,9 +1,18 @@
+{-# LANGUAGE ForeignFunctionInterface #-}
 module Main where
+
+import System.Mem
 
 import qualified Spec
 
 import GDAL
-import TestUtils (hspec, setupAndTeardown)
+import TestUtils (hspec)
 
 main :: IO ()
-main = withGDAL (hspec (setupAndTeardown Spec.spec))
+main = withGDAL $ do
+  hspec Spec.spec
+  revertCAFs
+  performGC
+  performMajorGC
+
+foreign import ccall "revertCAFs" revertCAFs  :: IO ()
