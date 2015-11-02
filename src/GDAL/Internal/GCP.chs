@@ -22,7 +22,7 @@ import Control.Exception (bracket)
 import Control.Monad (liftM, mapM_)
 
 import Foreign.Marshal.Alloc (free)
-import Foreign.Marshal.Array (callocArray0, allocaArray, peekArray, copyArray)
+import Foreign.Marshal.Array (mallocArray0, allocaArray, peekArray, copyArray)
 import Foreign.C.Types (CChar(..), CDouble(..))
 import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (Storable(..))
@@ -71,11 +71,13 @@ instance Storable GroundControlPointInternal where
   alignment _ = {#alignof GDAL_GCP#}
   poke p (GCPI GCP{..}) = do
     unsafeUseAsCStringLen gcpId $ \(pId,len) -> do
-      ptr0 <- callocArray0 len
+      ptr0 <- mallocArray0 len
+      pokeElemOff ptr0 len 0
       copyArray ptr0 pId len
       {#set GDAL_GCP->pszId#} p ptr0
     unsafeUseAsCStringLen gcpInfo $ \(pInfo,len) -> do
-      ptr0 <- callocArray0 len
+      ptr0 <- mallocArray0 len
+      pokeElemOff ptr0 len 0
       copyArray ptr0 pInfo len
       {#set GDAL_GCP->pszInfo#} p ptr0
     {#set GDAL_GCP->dfGCPPixel#} p (realToFrac (px gcpPixel))
