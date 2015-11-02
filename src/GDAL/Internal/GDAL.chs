@@ -361,7 +361,7 @@ setDatasetGCPs ds gcps mSrs =
   liftIO $
   checkCPLError "setDatasetGCPs" $
   withGCPArrayLen gcps $ \nGcps pGcps ->
-  unsafeUseAsCString (maybe "\0" srsToWkt mSrs) $
+  withMaybeSRAsCString mSrs $
   {#call unsafe GDALSetGCPs as ^#}
     (unDataset ds)
     (fromIntegral nGcps)

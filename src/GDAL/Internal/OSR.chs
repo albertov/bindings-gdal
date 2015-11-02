@@ -226,8 +226,8 @@ getUnitsWith fun s = alloca $ \p -> do
   return (realToFrac value, units)
 
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
-withMaybeSRAsCString Nothing    = ($ nullPtr)
-withMaybeSRAsCString (Just srs) = unsafeUseAsCString (srsToWkt srs)
+withMaybeSRAsCString =
+  unsafeUseAsCString . maybe "\0" srsToWkt
 
 withMaybeSpatialReference
   :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a
