@@ -135,6 +135,32 @@ spec = setupAndTeardown $ do
       proj <- datasetProjection ds
       proj `shouldSatisfy` isNothing
 
+  describe "datasetGCPs" $ do
+
+    it "can set and get with srs" $ do
+      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      let Right proj = srsFromProj4
+                          "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
+          gcps = [gcp "1" (XY 0 0) (XY 45 21)]
+      setDatasetGCPs ds gcps (Just proj)
+      (gcps2,proj2) <- datasetGCPs ds
+      gcps2 `shouldBe` gcps
+      Just proj `shouldBe` proj2
+
+    it "can set and get with no srs" $ do
+      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      let gcps = [gcp "1" (XY 0 0) (XY 45 21)]
+      setDatasetGCPs ds gcps Nothing
+      (gcps2,proj2) <- datasetGCPs ds
+      gcps2 `shouldBe` gcps
+      proj2 `shouldSatisfy` isNothing
+
+    it "returns empty list and Nothing if dataset has no gcps" $ do
+      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      (gcps2,proj2) <- datasetGCPs ds
+      gcps2 `shouldSatisfy` null
+      proj2 `shouldSatisfy` isNothing
+
   it "can set and get nodata value" $ do
     ds <- createMem (XY 10 10) 1 GDT_Int16 []
     b <- getBand 1 ds

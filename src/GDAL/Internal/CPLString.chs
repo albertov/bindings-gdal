@@ -20,9 +20,10 @@ import Data.Word (Word8)
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
-import Foreign.Storable (peek, peekElemOff)
+import Foreign.Storable (peek)
 import Foreign.ForeignPtr (newForeignPtr)
 import Foreign.Marshal.Utils (with)
+import Foreign.Marshal.Array (lengthArray0)
 
 import GDAL.Internal.Util (useAsEncodedCString, peekEncodedCString)
 import GDAL.Internal.CPLConv (c_cplFree, cplFree)
@@ -57,11 +58,8 @@ peekCPLString act = with nullPtr $ \pptr ->
     go pptr = do
       void (act pptr)
       p <- liftM castPtr (peek pptr) :: IO (Ptr Word8)
-      let findLen !n = do
-            v <- p `peekElemOff` n :: IO Word8
-            if v==0 then return n else findLen (n+1)
       if p /= nullPtr
-        then do len <- findLen 0
+        then do len <- lengthArray0 0 p
                 fp <- newForeignPtr c_cplFree p
                 return $! PS fp 0 len
         else return mempty

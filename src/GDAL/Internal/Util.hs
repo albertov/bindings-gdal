@@ -16,7 +16,7 @@ import Data.Text.Encoding.Error (lenientDecode)
 
 import Foreign.C.Types (CInt)
 import Foreign.C.String (CString)
-import Foreign.Storable (peekElemOff)
+import Foreign.Marshal.Array (lengthArray0)
 import Language.Haskell.TH
 
 fromEnumC :: Enum a => a -> CInt
@@ -43,8 +43,6 @@ useAsEncodedCString = useAsCString . encodeUtf8
 
 peekEncodedCString :: CString -> IO Text
 peekEncodedCString p = do
-  nChars <- len 0
+  nChars <- lengthArray0 0 p
   bs <- unsafePackCStringLen (p, nChars)
   return $! decodeUtf8With lenientDecode bs
-  where
-    len !n = peekElemOff p n >>= (\v -> if v==0 then return n else len (n+1))

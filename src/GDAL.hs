@@ -14,6 +14,7 @@ module GDAL (
   , isBindingException
 
   , Geotransform (..)
+  , GroundControlPoint (..)
   , OverviewResampling (..)
   , Driver (..)
   , Dataset
@@ -55,6 +56,8 @@ module GDAL (
   , setDatasetProjection
   , datasetGeotransform
   , setDatasetGeotransform
+  , datasetGCPs
+  , setDatasetGCPs
   , datasetBandCount
 
   , bandDataType
@@ -74,6 +77,8 @@ module GDAL (
   , writeBand
   , writeBandBlock
   , copyBand
+
+  , gcp
 
   , foldl'
   , foldlM'
@@ -95,6 +100,7 @@ import Control.Exception (finally)
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
 import GDAL.Internal.CPLProgress
+import GDAL.Internal.GCP
 import GDAL.Internal.GDAL as GDAL
 import GDAL.Internal.Types
 

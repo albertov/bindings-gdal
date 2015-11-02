@@ -64,6 +64,8 @@ module GDAL.Internal.GDAL (
   , setDatasetProjection
   , datasetGeotransform
   , setDatasetGeotransform
+  , datasetGCPs
+  , setDatasetGCPs
   , datasetBandCount
 
   , bandDataType
@@ -129,6 +131,7 @@ import Data.Char (toUpper)
 
 import GDAL.Internal.Types
 import GDAL.Internal.Util
+{#import GDAL.Internal.GCP#}
 {#import GDAL.Internal.CPLError#}
 {#import GDAL.Internal.CPLString#}
 {#import GDAL.Internal.CPLProgress#}
@@ -333,8 +336,12 @@ datasetSize ds =
         ({#call pure unsafe GetRasterYSize as ^#} (unDataset ds))
 
 datasetProjection :: Dataset s t -> GDAL s (Maybe SpatialReference)
-datasetProjection ds = liftIO $ do
-  srs <- {#call unsafe GetProjectionRef as ^#} (unDataset ds)
+datasetProjection =
+  liftIO . getProjectionWith . {#call unsafe GetProjectionRef as ^#} . unDataset
+
+getProjectionWith :: IO CString -> IO (Maybe SpatialReference)
+getProjectionWith f = do
+  srs <- f
   c <- peek srs
   if c == 0
     then return Nothing
@@ -342,12 +349,35 @@ datasetProjection ds = liftIO $ do
           either (throwBindingException . InvalidProjection)
                  (return . Just)
 
-
 setDatasetProjection :: RWDataset s -> SpatialReference -> GDAL s ()
 setDatasetProjection ds srs =
   liftIO $ checkCPLError "SetProjection" $
     unsafeUseAsCString (srsToWkt srs)
       ({#call unsafe SetProjection as ^#} (unDataset ds))
+
+setDatasetGCPs
+  :: RWDataset s -> [GroundControlPoint] -> Maybe SpatialReference -> GDAL s ()
+setDatasetGCPs ds gcps mSrs =
+  liftIO $
+  checkCPLError "setDatasetGCPs" $
+  withGCPArrayLen gcps $ \nGcps pGcps ->
+  unsafeUseAsCString (maybe "\0" srsToWkt mSrs) $
+  {#call unsafe GDALSetGCPs as ^#}
+    (unDataset ds)
+    (fromIntegral nGcps)
+    pGcps
+
+datasetGCPs
+  :: Dataset s t
+  -> GDAL s ([GroundControlPoint], Maybe SpatialReference)
+datasetGCPs ds =
+  liftIO $ do
+    let pDs = unDataset ds
+    srs <- getProjectionWith ({#call unsafe GetGCPProjection as ^#} pDs)
+    nGcps <- liftM fromIntegral ({#call unsafe GetGCPCount as ^#} pDs)
+    gcps <- {#call unsafe GetGCPs as ^#} pDs >>= fromGCPArray nGcps
+    return (gcps, srs)
+
 
 data OverviewResampling
   = OvNearest

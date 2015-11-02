@@ -34,6 +34,7 @@ library
                    , GDAL.Internal.CPLError
                    , GDAL.Internal.CPLProgress
                    , GDAL.Internal.CPLConv
+                   , GDAL.Internal.GCP
                    , GDAL.Internal.OGRError
                    , GDAL.Internal.OSR
                    , GDAL.Internal.OGRGeometry
