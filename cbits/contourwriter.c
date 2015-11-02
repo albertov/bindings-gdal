@@ -62,11 +62,12 @@ void destroy_points (Point *points)
 void destroy_contours (ContourList list)
 {
   if (list) {
-    Contour *cur = *list, *next;
+    Contour *cur = *list;
     while (cur) {
-      next = cur->next;
       destroy_points(cur->points);
+      Contour *next = cur->next;
       free(cur);
+      cur = next;
     }
   }
 }
