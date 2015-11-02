@@ -35,6 +35,7 @@ module GDAL.Internal.OSR (
   , withSpatialReference
   , withMaybeSRAsCString
   , withMaybeSpatialReference
+  , maybeSpatialReferenceFromCString
   , withCoordinateTransformation
   , newSpatialRefHandle
   , newSpatialRefBorrowedHandle
@@ -47,7 +48,7 @@ module GDAL.Internal.OSR (
 {# context lib = "gdal" prefix = "OSR" #}
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Exception (bracketOnError, try)
+import Control.Exception (bracketOnError, try, throw)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
@@ -228,6 +229,13 @@ getUnitsWith fun s = alloca $ \p -> do
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
 withMaybeSRAsCString =
   unsafeUseAsCString . maybe "\0" srsToWkt
+
+maybeSpatialReferenceFromCString :: CString -> IO (Maybe SpatialReference)
+maybeSpatialReferenceFromCString srs = do
+  c <- peek srs
+  if c == 0
+    then return Nothing
+    else srsFromWktIO srs >>= either throw (return . Just)
 
 withMaybeSpatialReference
   :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a

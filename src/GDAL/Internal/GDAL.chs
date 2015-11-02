@@ -101,7 +101,7 @@ module GDAL.Internal.GDAL (
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), throw)
-import Control.Monad (liftM, liftM2, when)
+import Control.Monad (liftM, liftM2, when, (>=>))
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Int (Int16, Int32)
@@ -155,7 +155,6 @@ data GDALRasterException
   = InvalidRasterSize !Size
   | InvalidBlockSize  !Int
   | InvalidDataType   !DataType
-  | InvalidProjection !OGRException
   | InvalidDriverOptions
   | CopyStopped
   | BuildOverviewsStopped
@@ -337,17 +336,9 @@ datasetSize ds =
 
 datasetProjection :: Dataset s t -> GDAL s (Maybe SpatialReference)
 datasetProjection =
-  liftIO . getProjectionWith . {#call unsafe GetProjectionRef as ^#} . unDataset
+  liftIO . ({#call unsafe GetProjectionRef as ^#} . unDataset
+              >=> maybeSpatialReferenceFromCString)
 
-getProjectionWith :: IO CString -> IO (Maybe SpatialReference)
-getProjectionWith f = do
-  srs <- f
-  c <- peek srs
-  if c == 0
-    then return Nothing
-    else srsFromWktIO srs >>=
-          either (throwBindingException . InvalidProjection)
-                 (return . Just)
 
 setDatasetProjection :: RWDataset s -> SpatialReference -> GDAL s ()
 setDatasetProjection ds srs =
@@ -373,7 +364,8 @@ datasetGCPs
 datasetGCPs ds =
   liftIO $ do
     let pDs = unDataset ds
-    srs <- getProjectionWith ({#call unsafe GetGCPProjection as ^#} pDs)
+    srs <- maybeSpatialReferenceFromCString
+            =<< {#call unsafe GetGCPProjection as ^#} pDs
     nGcps <- liftM fromIntegral ({#call unsafe GetGCPCount as ^#} pDs)
     gcps <- {#call unsafe GetGCPs as ^#} pDs >>= fromGCPArray nGcps
     return (gcps, srs)
