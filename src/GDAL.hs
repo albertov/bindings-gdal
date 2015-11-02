@@ -77,6 +77,7 @@ module GDAL (
   , sizeLen
   , bandNodataValue
   , setBandNodataValue
+  , addBand
   , getBand
   , readBand
   , readBandBlock
@@ -92,6 +93,7 @@ module GDAL (
   , ifoldlM'
   , version
 
+  , gcpGeotransform
   , northUpGeotransform
   , applyGeotransform
   , (|$|)

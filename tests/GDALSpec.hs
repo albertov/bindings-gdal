@@ -107,8 +107,7 @@ spec = setupAndTeardown $ do
 
   it "can get band count" $ do
     ds <- createMem (XY 10 10) 5 GDT_Int16 []
-    nBands <- datasetBandCount ds
-    nBands `shouldBe` 5
+    datasetBandCount ds >>= (`shouldBe` 5)
 
   it "can get existing raster band" $ do
     ds <- createMem (XY 10 10) 1 GDT_Int16 []
@@ -117,6 +116,12 @@ spec = setupAndTeardown $ do
   it "cannot get non-existing raster band" $ do
     ds <- createMem (XY 10 10) 1 GDT_Int16 []
     getBand 2 ds `shouldThrow` ((== IllegalArg) . gdalErrNum)
+
+  it "can add raster band" $ do
+    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    datasetBandCount ds >>= (`shouldBe` 1)
+    void (addBand ds GDT_Float64 [])
+    datasetBandCount ds >>= (`shouldBe` 2)
 
   describe "datasetGeotransform" $ do
 
@@ -176,8 +181,8 @@ spec = setupAndTeardown $ do
   it "can set and get nodata value" $ do
     ds <- createMem (XY 10 10) 1 GDT_Int16 []
     b <- getBand 1 ds
-    (nodata :: Maybe Int16) <- bandNodataValue b
-    nodata `shouldSatisfy` isNothing
+    (nd :: Maybe Int16) <- bandNodataValue b
+    nd `shouldSatisfy` isNothing
     let nodataValue = (-1) :: Int16
     setBandNodataValue b nodataValue
     nodata2 <- bandNodataValue b

@@ -84,6 +84,7 @@ module GDAL.Internal.GDAL (
   , bandNodataValue
   , setBandNodataValue
   , getBand
+  , addBand
   , readBand
   , readBandBlock
   , writeBand
@@ -592,6 +593,14 @@ getBand b ds =
       | p == nullBandH = Just (fromMaybe (GDALBindingException NullBand) exc)
       | otherwise      = Nothing
 
+addBand :: RWDataset s -> DataType -> OptionList -> GDAL s (RWBand s)
+addBand ds dt options = do
+  liftIO $
+    checkCPLError "addBand" $
+    withOptionList options $
+    {#call GDALAddBand as ^#} (unDataset ds) (fromEnumC dt)
+  ix <- datasetBandCount ds
+  getBand ix ds
 
 reifyDataType :: DataType -> (forall a. GDALType a => Proxy a -> b) -> b
 reifyDataType dt f =
