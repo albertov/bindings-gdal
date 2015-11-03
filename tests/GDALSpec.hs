@@ -403,7 +403,9 @@ spec = setupAndTeardown $ do
       withDir "GTIFF driver dataset" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
         meta <- metadata (Just "IMAGE_STRUCTURE") ds
-        meta `shouldBe` [("INTERLEAVE","BAND")]
+        if version >= (1,11)
+           then meta `shouldBe` [("INTERLEAVE","BAND")]
+           else meta `shouldBe` []
 
     describe "metadataItem" $ do
 
