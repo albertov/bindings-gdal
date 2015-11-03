@@ -410,7 +410,9 @@ spec = setupAndTeardown $ do
       withDir "GTIFF driver dataset (existing key)" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
         meta <- metadataItem (Just "IMAGE_STRUCTURE") "INTERLEAVE" ds
-        meta `shouldBe` (Just "BAND")
+        if version >= (1,11)
+           then meta `shouldBe` (Just "BAND")
+           else meta `shouldBe` Nothing
 
       withDir "GTIFF driver dataset (non-existing key)" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
