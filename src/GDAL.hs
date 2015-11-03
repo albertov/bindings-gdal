@@ -56,7 +56,12 @@ module GDAL (
   , dataTypeByName
   , dataTypeUnion
   , dataTypeIsComplex
+  , bandTypedAs
+  , bandCoercedTo
+  {-
+  , reifyBandDataType
   , reifyDataType
+  -}
 
   , datasetDriver
   , datasetSize
@@ -70,7 +75,6 @@ module GDAL (
   , datasetBandCount
 
   , bandDataType
-  , reifyBandDataType
   , bandBlockSize
   , bandBlockCount
   , bandBlockLen

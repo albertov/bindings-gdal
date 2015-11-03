@@ -63,11 +63,16 @@ module GDAL.Internal.GDAL (
   , dataTypeByName
   , dataTypeUnion
   , dataTypeIsComplex
+  , bandTypedAs
+  , bandCoercedTo
+  {-
+  , reifyBandDataType
+  , reifyDataType
+  -}
 
   , datasetDriver
   , datasetSize
   , datasetFileList
-  , reifyDataType
   , datasetProjection
   , setDatasetProjection
   , datasetGeotransform
@@ -77,7 +82,6 @@ module GDAL.Internal.GDAL (
   , datasetBandCount
 
   , bandDataType
-  , reifyBandDataType
   , bandBlockSize
   , bandBlockCount
   , bandBlockLen
@@ -85,6 +89,7 @@ module GDAL.Internal.GDAL (
   , bandHasOverviews
   , allBand
   , bandNodataValue
+  , bandNodataValueIO
   , setBandNodataValue
   , getBand
   , addBand
@@ -117,7 +122,7 @@ module GDAL.Internal.GDAL (
 
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.DeepSeq (NFData(rnf))
-import Control.Exception (Exception(..), throw)
+import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when, (>=>))
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -199,9 +204,23 @@ class (Storable a, Show a, Typeable a) => GDALType a where
   -- | how to convert from double for use with bandNodataValue
   fromCDouble :: CDouble -> a
 
-  fillBand :: a -> RWBand s -> GDAL s ()
+  fillBand :: a -> RWBand s a -> GDAL s ()
   fillBand v = fillRaster (toCDouble v) (toCDouble v)
   {-# INLINE fillBand #-}
+
+  mkToValue :: Maybe a -> (a -> Value a)
+  mkToValue Nothing   v = Value v
+  mkToValue (Just nd) v
+    | vd == ndd || isNaN vd = NoData
+    | otherwise             = Value v
+    where
+      vd = toCDouble v
+      ndd = toCDouble nd
+  {-# INLINE mkToValue #-}
+
+  mkFromValue :: Maybe a -> (Value a -> a)
+  mkFromValue = fromValue . fromMaybe nodata
+  {-# INLINE mkFromValue #-}
 
 {#enum DataType {} omit (GDT_TypeCount) deriving (Eq, Show, Bounded) #}
 
@@ -263,20 +282,28 @@ nullBandH = RasterBandH nullPtr
 
 deriving instance Eq RasterBandH
 
-newtype Band s (t::AccessMode) =
+newtype Band s a (t::AccessMode) =
   Band { unBand :: RasterBandH }
 
-instance MajorObject (Band s) t where
+bandTypedAs :: Band s a t -> a -> Band s a t
+bandTypedAs = const . id
+
+bandCoercedTo :: Band s a t -> b -> Band s b t
+bandCoercedTo = const . coerce
+
+instance MajorObject (Band s a) t where
   majorObject b =
     let RasterBandH p = unBand b
     in MajorObjectH (castPtr p)
 
+{-
 reifyBandDataType
   :: Band s t -> (forall a. GDALType a => Proxy a -> b) -> b
 reifyBandDataType b = reifyDataType (bandDataType b)
+-}
 
-type ROBand s = Band s ReadOnly
-type RWBand s = Band s ReadWrite
+type ROBand s a = Band s a ReadOnly
+type RWBand s a = Band s a ReadWrite
 
 
 {#pointer DriverH #}
@@ -606,7 +633,7 @@ datasetBandCount :: Dataset s t -> GDAL s Int
 datasetBandCount =
   liftM fromIntegral . liftIO . {#call unsafe GetRasterCount as ^#} . unDataset
 
-getBand :: Int -> Dataset s t -> GDAL s (Band s t)
+getBand :: Int -> Dataset s t -> GDAL s (Band s a t)
 getBand b ds =
   liftIO $
   liftM Band $
@@ -617,15 +644,19 @@ getBand b ds =
       | p == nullBandH = Just (fromMaybe (GDALBindingException NullBand) exc)
       | otherwise      = Nothing
 
-addBand :: RWDataset s -> DataType -> OptionList -> GDAL s (RWBand s)
-addBand ds dt options = do
+addBand
+  :: forall s a. GDALType a
+  => RWDataset s -> OptionList -> GDAL s (RWBand s a)
+addBand ds options = do
   liftIO $
     checkCPLError "addBand" $
     withOptionList options $
     {#call GDALAddBand as ^#} (unDataset ds) (fromEnumC dt)
   ix <- datasetBandCount ds
   getBand ix ds
+  where dt = dataType (Proxy :: Proxy a)
 
+{-
 reifyDataType :: DataType -> (forall a. GDALType a => Proxy a -> b) -> b
 reifyDataType dt f =
   case dt of
@@ -647,49 +678,51 @@ reifyDataType dt f =
                     (bindingExceptionToException (UnsupportedRasterDataType d))
 #endif
 
+-}
 
 
 
-bandDataType :: Band s t -> DataType
+bandDataType :: Band s a t -> DataType
 bandDataType = toEnumC . {#call pure unsafe GetRasterDataType as ^#} . unBand
 
-bandBlockSize :: (Band s t) -> Size
+bandBlockSize :: (Band s a t) -> Size
 bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    {#call unsafe GetBlockSize as ^#} (unBand band) xPtr yPtr
    liftM (fmap fromIntegral) (liftM2 XY (peek xPtr) (peek yPtr))
 
-bandBlockLen :: Band s t -> Int
+bandBlockLen :: Band s a t -> Int
 bandBlockLen = (\(XY x y) -> x*y) . bandBlockSize
 
-bandSize :: Band s a -> Size
+bandSize :: Band s a t -> Size
 bandSize band =
   fmap fromIntegral $
     XY ({#call pure unsafe GetRasterBandXSize as ^#} (unBand band))
        ({#call pure unsafe GetRasterBandYSize as ^#} (unBand band))
 
-allBand :: Band s a -> Envelope Int
+allBand :: Band s a t -> Envelope Int
 allBand = Envelope (pure 0) . bandSize
 
-bandBlockCount :: Band s t -> XY Int
+bandBlockCount :: Band s a t -> XY Int
 bandBlockCount b = fmap ceiling $ liftA2 ((/) :: Double -> Double -> Double)
                      (fmap fromIntegral (bandSize b))
                      (fmap fromIntegral (bandBlockSize b))
 
-bandHasOverviews :: Band s t -> GDAL s Bool
+bandHasOverviews :: Band s a t -> GDAL s Bool
 bandHasOverviews =
   liftIO . liftM toBool . {#call unsafe HasArbitraryOverviews as ^#} . unBand
 
 checkType
-  :: GDALType a => Band s t -> Proxy a -> GDAL s ()
-checkType b p
+  :: forall s a t. GDALType a => Band s a t -> GDAL s ()
+checkType b
   | rt == bt  = return ()
   | otherwise = throwBindingException (InvalidDataType bt)
-  where rt = dataType p
+  where rt = dataType (Proxy :: Proxy a)
         bt = bandDataType b
 
-bandNodataValue :: GDALType a => Band s t -> GDAL s (Maybe a)
+bandNodataValue :: GDALType a => Band s a t -> GDAL s (Maybe a)
 bandNodataValue b =
   liftM (fmap fromCDouble) (liftIO (bandNodataValueIO (unBand b)))
+{-# INLINE bandNodataValue #-}
 
 bandNodataValueIO :: RasterBandH -> IO (Maybe CDouble)
 bandNodataValueIO b = alloca $ \p -> do
@@ -699,13 +732,13 @@ bandNodataValueIO b = alloca $ \p -> do
 {-# INLINE bandNodataValueIO #-}
 
 
-setBandNodataValue :: GDALType a => RWBand s -> a -> GDAL s ()
+setBandNodataValue :: GDALType a => RWBand s a -> a -> GDAL s ()
 setBandNodataValue b v =
   liftIO $
     checkCPLError "SetRasterNoDataValue" $
       {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
 
-fillRaster :: CDouble -> CDouble  -> RWBand s -> GDAL s ()
+fillRaster :: CDouble -> CDouble  -> RWBand s a -> GDAL s ()
 fillRaster r i b =
   liftIO $
     checkCPLError "FillRaster" $
@@ -713,19 +746,11 @@ fillRaster r i b =
 
 
 readBand :: forall s t a. GDALType a
-  => (Band s t)
+  => (Band s a t)
   -> Envelope Int
   -> Size
   -> GDAL s (Vector (Value a))
-readBand band win size = liftIO $ readBandIO band win size
-{-# INLINE readBand #-}
-
-readBandIO :: forall s t a. GDALType a
-  => (Band s t)
-  -> Envelope Int
-  -> Size
-  -> IO (Vector (Value a))
-readBandIO band win (XY bx by) = readMasked band read_
+readBand band win (XY bx by) = readMasked band read_
   where
     XY sx sy     = envelopeSize win
     XY xoff yoff = envelopeMin win
@@ -760,34 +785,32 @@ readBandIO band win (XY bx by) = readMasked band read_
             0
             0
       St.unsafeFreeze vec
-{-# INLINE readBandIO #-}
+{-# INLINE readBand #-}
 
 readMasked
   :: GDALType a
-  => Band s t
+  => Band s a t
   -> (forall a'. GDALType a' => RasterBandH -> IO (St.Vector a'))
-  -> IO (Vector (Value a))
+  -> GDAL s (Vector (Value a))
 readMasked band reader = do
-  flags <- {#call unsafe GetMaskFlags as ^#} (unBand band)
-  reader (unBand band) >>= fmap stToUValue . mask flags (unBand band)
+  vec   <- liftIO (reader (unBand band))
+  flags <- liftIO ({#call unsafe GetMaskFlags as ^#} bPtr)
+  liftM stToUValue (mask flags vec)
   where
+    bPtr = unBand band
     mask fs
       | hasFlag fs MaskPerDataset = useMaskBand
       | hasFlag fs MaskNoData     = useNoData
       | hasFlag fs MaskAllValid   = useAsIs
       | otherwise                 = useMaskBand
     hasFlag fs f = fromEnumC f .&. fs == fromEnumC f
-    useAsIs _ = return . St.map Value
-    useNoData bPtr vs = do
-      mNodata <- bandNodataValueIO bPtr
-      let toValue = case mNodata of
-                      Nothing -> Value
-                      Just nd ->
-                        \v -> if toCDouble v == nd then NoData else Value v
-      return (St.map toValue vs)
-    useMaskBand bPtr vs = do
+    useAsIs        = return . St.map Value
+    useNoData vs   = do
+      toValue <- liftM mkToValue (bandNodataValue band)
+      return $! St.map toValue vs
+    useMaskBand vs = liftIO $ do
       ms <- {#call GetMaskBand as ^#} bPtr >>= reader :: IO (St.Vector Word8)
-      return $ St.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
+      return $! St.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
 {-# INLINE readMasked #-}
 
 {#enum define MaskFlag { GMF_ALL_VALID   as MaskAllValid
@@ -798,43 +821,44 @@ readMasked band reader = do
 
 
 writeBand :: forall s a. GDALType a
-  => RWBand s
+  => RWBand s a
   -> Envelope Int
   -> Size
   -> Vector (Value a)
   -> GDAL s ()
-writeBand band win sz@(XY bx by) uvec = liftIO $ do
-  bNodata <- fmap (maybe nodata fromCDouble) (bandNodataValueIO (unBand band))
+writeBand band win sz@(XY bx by) uvec = do
+  fromVal <- liftM mkFromValue (bandNodataValue band)
   let nElems    = bx * by
       (fp, len) = St.unsafeToForeignPtr0 vec
-      vec       = St.map (fromValue bNodata) (uToStValue uvec)
+      vec       = St.map fromVal (uToStValue uvec)
       XY sx sy     = envelopeSize win
       XY xoff yoff = envelopeMin win
   if nElems /= len
     then throwBindingException (InvalidRasterSize sz)
-    else withForeignPtr fp $ \ptr ->
-      checkCPLError "RasterIO" $
-        {#call RasterIO as ^#}
-          (unBand band)
-          (fromEnumC GF_Write)
-          (fromIntegral xoff)
-          (fromIntegral yoff)
-          (fromIntegral sx)
-          (fromIntegral sy)
-          (castPtr ptr)
-          (fromIntegral bx)
-          (fromIntegral by)
-          (fromEnumC (dataType (Proxy :: Proxy a)))
-          0
-          0
+    else liftIO $
+         withForeignPtr fp $ \ptr ->
+         checkCPLError "RasterIO" $
+           {#call RasterIO as ^#}
+             (unBand band)
+             (fromEnumC GF_Write)
+             (fromIntegral xoff)
+             (fromIntegral yoff)
+             (fromIntegral sx)
+             (fromIntegral sy)
+             (castPtr ptr)
+             (fromIntegral bx)
+             (fromIntegral by)
+             (fromEnumC (dataType (Proxy :: Proxy a)))
+             0
+             0
 {-# INLINE writeBand #-}
 
 readBandBlock
   :: forall s t a. GDALType a
-  => Band s t -> BlockIx -> GDAL s (Vector (Value a))
+  => Band s a t -> BlockIx -> GDAL s (Vector (Value a))
 readBandBlock band blockIx = do
-  checkType band (Proxy :: Proxy a)
-  liftIO $ readMasked band $ \b -> do
+  checkType band
+  readMasked band $ \b -> do
     vec <- Stm.new (bandBlockLen band)
     Stm.unsafeWith vec $
       checkCPLError "ReadBlock" . {#call ReadBlock as ^#} b x y . castPtr
@@ -843,7 +867,7 @@ readBandBlock band blockIx = do
 {-# INLINE readBandBlock #-}
 
 copyBand
-  :: Band s t -> RWBand s -> OptionList
+  :: Band s a t -> RWBand s a -> OptionList
   -> Maybe ProgressFun -> GDAL s ()
 copyBand src dst options progressFun =
   liftIO $
@@ -855,35 +879,31 @@ copyBand src dst options progressFun =
 
 foldl'
   :: forall s t a b. GDALType a
-  => (b -> Value a -> b) -> b -> Band s t -> GDAL s b
+  => (b -> Value a -> b) -> b -> Band s a t -> GDAL s b
 foldl' f = foldlM' (\acc -> return . f acc)
 {-# INLINE foldl' #-}
 
 ifoldl'
   :: forall s t a b. GDALType a
-  => (b -> BlockIx -> Value a -> b) -> b -> Band s t -> GDAL s b
+  => (b -> BlockIx -> Value a -> b) -> b -> Band s a t -> GDAL s b
 ifoldl' f = ifoldlM' (\acc ix -> return . f acc ix)
 {-# INLINE ifoldl' #-}
 
 foldlM'
   :: forall s t a b. GDALType a
-  => (b -> Value a -> IO b) -> b -> Band s t -> GDAL s b
+  => (b -> Value a -> IO b) -> b -> Band s a t -> GDAL s b
 foldlM' f = ifoldlM' (\acc _ -> f acc)
 {-# INLINE foldlM' #-}
 
 ifoldlM'
   :: forall s t a b. GDALType a
-  => (b -> BlockIx -> Value a -> IO b) -> b -> Band s t -> GDAL s b
+  => (b -> BlockIx -> Value a -> IO b) -> b -> Band s a t -> GDAL s b
 ifoldlM' f initialAcc band = do
-  checkType band (Proxy :: Proxy a)
+  checkType band
+  toValue <- liftM mkToValue (bandNodataValue band)
   liftIO $ do
-    mNodata <- bandNodataValueIO (unBand band)
     allocaArray (sx*sy) $ \ptr -> do
-      let toValue = case mNodata of
-                      Nothing -> Value
-                      Just nd ->
-                        \v -> if toCDouble v == nd then NoData else Value v
-          goB !iB !jB !acc
+      let goB !iB !jB !acc
             | iB < nx   = do
                 checkCPLError "ReadBlock" $
                   {#call ReadBlock as ^#}
@@ -914,13 +934,13 @@ ifoldlM' f initialAcc band = do
 
 writeBandBlock
   :: forall s a. GDALType a
-  => RWBand s -> BlockIx  -> Vector (Value a) -> GDAL s ()
+  => RWBand s a -> BlockIx  -> Vector (Value a) -> GDAL s ()
 writeBandBlock band blockIx uvec = do
-  checkType band (Proxy :: Proxy a)
+  checkType band
+  fromVal <- liftM mkFromValue (bandNodataValue band)
   liftIO $ do
-    bNodata <- fmap (maybe nodata fromCDouble) (bandNodataValueIO pBand)
     let (fp, len) = St.unsafeToForeignPtr0 vec
-        vec       = St.map (fromValue bNodata) (uToStValue uvec)
+        vec       = St.map fromVal (uToStValue uvec)
         nElems    = bandBlockLen band
     if nElems /= len
       then throwBindingException (InvalidBlockSize len)
@@ -1000,6 +1020,9 @@ instance GDALType Word8 where
   nodata = maxBound
   toCDouble = fromIntegral
   fromCDouble = truncate
+  mkToValue Nothing   = Value
+  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1008,6 +1031,9 @@ instance GDALType Word16 where
   nodata = maxBound
   toCDouble = fromIntegral
   fromCDouble = truncate
+  mkToValue Nothing   = Value
+  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1016,6 +1042,9 @@ instance GDALType Word32 where
   nodata = maxBound
   toCDouble = fromIntegral
   fromCDouble = truncate
+  mkToValue Nothing   = Value
+  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1024,6 +1053,9 @@ instance GDALType Int16 where
   nodata = minBound
   toCDouble = fromIntegral
   fromCDouble = truncate
+  mkToValue Nothing   = Value
+  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1032,6 +1064,9 @@ instance GDALType Int32 where
   nodata = minBound
   toCDouble = fromIntegral
   fromCDouble = truncate
+  mkToValue Nothing   = Value
+  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1040,6 +1075,11 @@ instance GDALType Float where
   nodata = 0/0
   toCDouble = realToFrac
   fromCDouble = realToFrac
+  mkToValue Nothing  = Value
+  mkToValue (Just n)
+    | isNaN n   = \v -> if isNaN v then NoData else Value v
+    | otherwise = \v -> if v==n then NoData else Value v
+  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1048,6 +1088,24 @@ instance GDALType Double where
   nodata = 0/0
   toCDouble = realToFrac
   fromCDouble = realToFrac
+  mkToValue Nothing  = Value
+  mkToValue (Just n)
+    | isNaN n   = \v -> if isNaN v then NoData else Value v
+    | otherwise = \v -> if v==n then NoData else Value v
+  {-# INLINE mkToValue #-}
+  {-# INLINE toCDouble #-}
+  {-# INLINE fromCDouble #-}
+
+instance GDALType CDouble where
+  dataType _ = GDT_Float64
+  nodata = 0/0
+  toCDouble = id
+  fromCDouble = id
+  mkToValue Nothing  = Value
+  mkToValue (Just n)
+    | isNaN n   = \v -> if isNaN v then NoData else Value v
+    | otherwise = \v -> if v==n then NoData else Value v
+  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 

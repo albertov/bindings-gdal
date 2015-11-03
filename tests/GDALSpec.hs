@@ -4,7 +4,7 @@
 {-# LANGUAGE LambdaCase #-}
 module GDALSpec (main, spec) where
 
-import Control.Monad (void, forM_)
+import Control.Monad (void, liftM, forM_)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Maybe (isNothing)
@@ -13,7 +13,7 @@ import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Int (Int16, Int32)
 import Data.Proxy (Proxy(Proxy))
 import Data.String (fromString)
-import Data.Typeable (typeOf, cast)
+import Data.Typeable (typeOf)
 import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
 
@@ -122,7 +122,7 @@ spec = setupAndTeardown $ do
   it "can add raster band" $ do
     ds <- createMem (XY 10 10) 1 GDT_Int16 []
     datasetBandCount ds >>= (`shouldBe` 1)
-    void (addBand ds GDT_Float64 [])
+    void $ liftM (`bandTypedAs` (undefined::Double)) (addBand ds [])
     datasetBandCount ds >>= (`shouldBe` 2)
 
   describe "datasetGeotransform" $ do
@@ -210,7 +210,8 @@ spec = setupAndTeardown $ do
           vec = U.generate len (Value . fromIntegral)
           bs  = bandBlockSize band
       writeBandBlock band 0 vec
-      vec2 <- readBand band (Envelope 0 bs) bs
+      vec2 <- readBand (band `bandCoercedTo` (undefined::Double))
+                       (Envelope 0 bs) bs
       vec `shouldBe` U.map (fmap round) (vec2 :: U.Vector (Value Double))
 
     it "can write band and read band with automatic conversion" $ do

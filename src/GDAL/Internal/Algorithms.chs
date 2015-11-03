@@ -605,8 +605,8 @@ instance Storable GridDataMetrics where
 -- ############################################################################
 
 computeProximity
-  :: Band s t
-  -> RWBand s
+  :: Band s a t
+  -> RWBand s a
   -> OptionList
   -> Maybe ProgressFun
   -> GDAL s ()

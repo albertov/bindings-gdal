@@ -25,7 +25,6 @@ import Control.Exception (Exception(..), bracket)
 import Data.Maybe (isJust, fromMaybe)
 import Data.Typeable (Typeable)
 import Data.Default (Default(..))
-import Data.Proxy (Proxy)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (
     Ptr
@@ -61,13 +60,13 @@ instance Exception GDALWarpException where
 {# enum GDALResampleAlg as ResampleAlg {upcaseFirstLetter} with prefix = "GRA_"
      deriving (Eq,Read,Show,Bounded) #}
 
-data BandOptions = forall a b. (GDALType a, GDALType b)
-  => BandOptions {
-       biSrc       :: !Int
-     , biDst       :: !Int
-     , biSrcNoData :: !(Maybe a)
-     , biDstNoData :: !(Maybe b)
-     }
+data BandOptions =
+  BandOptions {
+    biSrc       :: !Int
+  , biDst       :: !Int
+  , biSrcNoData :: !(Maybe CDouble)
+  , biDstNoData :: !(Maybe CDouble)
+  }
 
 deriving instance Show BandOptions
 
@@ -107,15 +106,13 @@ setOptionDefaults ds moDs wo@WarpOptions{..} = do
               nBands <- datasetBandCount ds
               forM [1..nBands] $ \i -> do
                 b <- getBand i ds
-                reifyBandDataType b $ \(_ :: Proxy a) -> do
-                  srcNd <- bandNodataValue b :: GDAL s (Maybe a)
-                  case moDs of
-                    Just oDs -> do
-                      b' <- getBand i oDs
-                      reifyBandDataType b' $ \(_ :: Proxy a') -> do
-                        dstNd <- bandNodataValue b' :: GDAL s (Maybe a')
-                        return (BandOptions i i srcNd dstNd)
-                    Nothing  -> return (BandOptions i i srcNd srcNd)
+                srcNd <- liftIO $ bandNodataValueIO (unBand b)
+                case moDs of
+                  Just oDs -> do
+                    b' <- getBand i oDs
+                    dstNd <- liftIO $ bandNodataValueIO (unBand b')
+                    return (BandOptions i i srcNd dstNd)
+                  Nothing  -> return (BandOptions i i srcNd srcNd)
             else return woBands
   let warpOptions
         | anyBandHasDstNoData wo' = ("INIT_DEST","NO_DATA") : woWarpOptions
@@ -166,13 +163,13 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
         (realToFrac woCutlineBlendDist)
       when (anyBandHasNoData wo) $ do
         {#set GDALWarpOptions->padfSrcNoDataReal #} p =<<
-          cplNewArray (map (\BandOptions{..} ->
-                              toCDouble (fromMaybe nodata biSrcNoData)) woBands)
+          cplNewArray (map (\BandOptions{..} -> fromMaybe nodata biSrcNoData)
+                           woBands)
         {#set GDALWarpOptions->padfDstNoDataImag #} p =<<
           cplNewArray (replicate (length woBands) 0)
         {#set GDALWarpOptions->padfDstNoDataReal #} p =<<
-          cplNewArray (map (\BandOptions{..} ->
-                              toCDouble (fromMaybe nodata biDstNoData)) woBands)
+          cplNewArray (map (\BandOptions{..} -> fromMaybe nodata biDstNoData)
+                           woBands)
         {#set GDALWarpOptions->padfSrcNoDataImag #} p =<<
           cplNewArray (replicate (length woBands) 0)
       return p
