@@ -436,9 +436,9 @@ spec = setupAndTeardown $ do
         desc <- description ds
         desc `shouldBe` (fromString path)
 
-      withDir "GTIFF driver dataset (can set)" $ \tmpDir -> do
+      withDir "GTIFF driver dataset (can set unicode)" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
-        let someDesc = "hjgjhghjgjh,gjhl"
+        let someDesc = "ñamñamñamççççö"
         setDescription someDesc ds
         desc <- description ds
         desc `shouldBe` someDesc

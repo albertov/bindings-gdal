@@ -4,19 +4,9 @@ module GDAL.Internal.Util (
     fromEnumC
   , toEnumC
   , createEnum
-  , useAsEncodedCString
-  , peekEncodedCString
 ) where
 
-import Data.ByteString.Char8 (useAsCString)
-import Data.ByteString.Unsafe (unsafePackCStringLen)
-import Data.Text (Text)
-import Data.Text.Encoding (encodeUtf8, decodeUtf8With)
-import Data.Text.Encoding.Error (lenientDecode)
-
 import Foreign.C.Types (CInt)
-import Foreign.C.String (CString)
-import Foreign.Marshal.Array (lengthArray0)
 import Language.Haskell.TH
 
 fromEnumC :: Enum a => a -> CInt
@@ -37,12 +27,3 @@ createEnum name getNames = do
   names <- runIO getNames
   let ctors = map (\n -> NormalC (mkName n) []) names
   return $ [DataD [] (mkName name) [] ctors [''Show, ''Enum, ''Eq, ''Read]]
-
-useAsEncodedCString :: Text -> (CString -> IO a) -> IO a
-useAsEncodedCString = useAsCString . encodeUtf8
-
-peekEncodedCString :: CString -> IO Text
-peekEncodedCString p = do
-  nChars <- lengthArray0 0 p
-  bs <- unsafePackCStringLen (p, nChars)
-  return $! decodeUtf8With lenientDecode bs

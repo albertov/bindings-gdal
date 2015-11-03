@@ -52,7 +52,8 @@ import Foreign.Storable (peekByteOff)
 -- work around  https://github.com/haskell/c2hs/issues/151
 import qualified Foreign.C.Types as C2HSImp
 
-import GDAL.Internal.Util (toEnumC, peekEncodedCString)
+import GDAL.Internal.Util (toEnumC)
+import GDAL.Internal.CPLString (peekEncodedCString)
 
 #include "cpl_error.h"
 #include "errorhandler.h"

@@ -1,69 +1,60 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DeriveDataTypeable #-}
 
 module GDAL.Internal.CPLConv (
-    cplMalloc
-  , cplMallocArray
-  , cplNew
-  , cplFree
-  , c_cplFree
-  , listToArray
+    cplFree
+  , cplMalloc
+  , cplNewArray
+  , cplFinalizerFree
   ) where
 
-import Control.DeepSeq (NFData(rnf))
-import Control.Exception (Exception(..), bracketOnError)
-import Control.Monad (liftM, when)
+import Control.Exception (bracketOnError)
+import Control.Monad (liftM)
 
-import Data.Typeable (Typeable)
-
-import Foreign.Storable (Storable(..))
-import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.C.Types (CULong(..))
+import Foreign.ForeignPtr (FinalizerPtr)
+import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
+import Foreign.Storable (Storable(..))
 
-import GDAL.Internal.CPLError
-
+#include "cpl_conv.h"
 #include "cpl_vsi.h"
 
-data MallocFailed = MallocFailed
-  deriving (Typeable, Show, Eq)
-
-instance NFData MallocFailed where
-  rnf a = a `seq` ()
-
-instance Exception MallocFailed where
-  toException   = bindingExceptionToException
-  fromException = bindingExceptionFromException
-
-cplMalloc :: forall a. Storable a => IO (Ptr a)
+-- | Like 'Foreign.Marshal.Alloc.malloc' but uses GDAL's allocator
+--   (which might not be the same as ours).
+--   Must be freed with 'cplFree' or let GDAL take care of it.
+cplMalloc :: Storable a => IO (Ptr a)
 cplMalloc = cplMallocArray 1
 {-# INLINE cplMalloc #-}
 
+-- | Like 'Foreign.Marshal.Array.mallocArray' but uses GDAL's allocator
+--   (which might not be the same as ours).
+--   Must be freed with 'cplFree' or let GDAL take care of it.
 cplMallocArray :: forall a. Storable a => Int -> IO (Ptr a)
-cplMallocArray nElems = do
-  ptr <- liftM castPtr ({#call unsafe VSIMalloc as ^#} len)
-  when (ptr == nullPtr) (throwBindingException MallocFailed)
-  return ptr
+cplMallocArray nElems =
+  liftM castPtr ({#call unsafe CPLMalloc as ^#} len)
   where len = fromIntegral (sizeOf (undefined :: a) * nElems)
 {-# INLINE cplMallocArray #-}
 
-cplNew :: forall a. Storable a => a -> IO (Ptr a)
-cplNew v = bracketOnError cplMalloc cplFree (\p -> poke p v >> return p)
-{-# INLINE cplNew #-}
-
+-- | Like 'Foreign.Marshal.Alloc.free' but uses GDAL's de-allocator
+--   (which might not be the same as ours).
 cplFree :: Ptr a -> IO ()
 cplFree p
   | p /= nullPtr = {#call unsafe VSIFree as ^#} (castPtr p)
   | otherwise    = return ()
 {-# INLINE cplFree #-}
 
-foreign import ccall unsafe "cpl_vsi.h &VSIFree"
-  c_cplFree :: FunPtr (Ptr a -> IO ())
-
-listToArray :: Storable a => [a] -> IO (Ptr a)
-listToArray [] = return nullPtr
-listToArray l = do
+-- | Like 'Foreign.Marshal.Array.newArray' but uses GDAL's allocator
+--   (which might not be the same as ours).
+--   Must be freed with 'cplFree' or let GDAL take care of it.
+cplNewArray :: Storable a => [a] -> IO (Ptr a)
+cplNewArray [] = return nullPtr
+cplNewArray l =
   bracketOnError (cplMallocArray (length l)) cplFree $ \ptr -> do
     mapM_ (\(i,v) -> pokeElemOff ptr i v) (zip [0..] l)
     return ptr
-{-# INLINE listToArray #-}
+{-# INLINE cplNewArray #-}
+
+-- | Like 'Foreign.Marshal.Alloc.finalizerFree' but for storage allocated
+--   with 'cplMalloc', 'cplNewArray' or 'cplMallocArray'
+foreign import ccall unsafe "cpl_conv.h &VSIFree"
+  cplFinalizerFree :: FinalizerPtr a

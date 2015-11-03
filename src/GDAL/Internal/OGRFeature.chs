@@ -98,12 +98,8 @@ import Foreign.Marshal.Utils (fromBool)
 #endif
 
 
-import GDAL.Internal.Util (
-    toEnumC
-  , fromEnumC
-  , peekEncodedCString
-  , useAsEncodedCString
-  )
+import GDAL.Internal.Util (toEnumC, fromEnumC)
+import GDAL.Internal.CPLString (peekEncodedCString, useAsEncodedCString)
 {#import GDAL.Internal.OSR #}
 {#import GDAL.Internal.CPLError #}
 {#import GDAL.Internal.OGRGeometry #}

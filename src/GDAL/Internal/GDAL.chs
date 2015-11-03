@@ -132,7 +132,7 @@ import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy(..))
 import Data.String (IsString)
 import Data.Text (Text)
-import Data.Text.Encoding (decodeUtf8)
+import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
@@ -409,7 +409,6 @@ datasetSize ds =
 datasetFileList :: Dataset s t -> GDAL s [Text]
 datasetFileList =
   liftIO .
-  liftM (map decodeUtf8) .
   fromCPLStringList .
   {#call unsafe GetFileList as ^#} .
   unDataset
@@ -943,7 +942,7 @@ openDatasetCount =
     {#call unsafe GetOpenDatasets as ^#} ppDs pCount
     liftM fromIntegral (peek pCount)
 
-metadataDomains :: MajorObject o t => o t -> GDAL s [ByteString]
+metadataDomains :: MajorObject o t => o t -> GDAL s [Text]
 #if SUPPORTS_METADATA_DOMAINS
 metadataDomains o =
   liftIO $
@@ -955,12 +954,17 @@ metadataDomains = const (return [])
 
 metadata
   :: MajorObject o t
-  => Maybe ByteString -> o t -> GDAL s [(ByteString,ByteString)]
+  => Maybe ByteString -> o t -> GDAL s [(Text,Text)]
 metadata domain o =
   liftIO $
   withMaybeByteString domain
   ({#call unsafe GetMetadata as ^#} (majorObject o)
-    >=> fromBorrowedCPLStringList)
+    >=> liftM (map breakIt) . fromBorrowedCPLStringList)
+  where
+    breakIt s =
+      case T.break (=='=') s of
+        (k,"") -> (k,"")
+        (k, v) -> (k, T.tail v)
 
 metadataItem
   :: MajorObject o t
@@ -982,15 +986,6 @@ setMetadataItem domain key val o =
   useAsCString val $ \pVal ->
   withMaybeByteString domain $
     {#call unsafe GDALSetMetadataItem as ^#} (majorObject o) pKey pVal
-
-withMaybeByteString :: Maybe ByteString -> (CString -> IO a) -> IO a
-withMaybeByteString Nothing  = ($ nullPtr)
-withMaybeByteString (Just s) = useAsCString s
-
-maybePackCString :: CString -> IO (Maybe ByteString)
-maybePackCString p
-  | p==nullPtr = return Nothing
-  | otherwise  = liftM Just (packCString p)
 
 description :: MajorObject o t => o t -> GDAL s ByteString
 description =

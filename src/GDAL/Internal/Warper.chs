@@ -160,9 +160,9 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
       {#set GDALWarpOptions->eWorkingDataType #} p (fromEnumC woWorkingDataType)
       {#set GDALWarpOptions->nBandCount #} p (fromIntegral (length woBands))
       {#set GDALWarpOptions->panSrcBands #} p =<<
-        listToArray (map (fromIntegral . biSrc) woBands)
+        cplNewArray (map (fromIntegral . biSrc) woBands)
       {#set GDALWarpOptions->panDstBands #} p =<<
-        listToArray (map (fromIntegral . biDst) woBands)
+        cplNewArray (map (fromIntegral . biDst) woBands)
       {#set GDALWarpOptions->pfnTransformer #} p t
       {#set GDALWarpOptions->pTransformerArg #} p tArg
       {#set GDALWarpOptions->hCutline #} p =<<
@@ -171,15 +171,15 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
         (realToFrac woCutlineBlendDist)
       when (anyBandHasNoData wo) $ do
         {#set GDALWarpOptions->padfSrcNoDataReal #} p =<<
-          listToArray (map (\BandOptions{..} ->
+          cplNewArray (map (\BandOptions{..} ->
                               toCDouble (fromMaybe nodata biSrcNoData)) woBands)
         {#set GDALWarpOptions->padfDstNoDataImag #} p =<<
-          listToArray (replicate (length woBands) 0)
+          cplNewArray (replicate (length woBands) 0)
         {#set GDALWarpOptions->padfDstNoDataReal #} p =<<
-          listToArray (map (\BandOptions{..} ->
+          cplNewArray (map (\BandOptions{..} ->
                               toCDouble (fromMaybe nodata biDstNoData)) woBands)
         {#set GDALWarpOptions->padfSrcNoDataImag #} p =<<
-          listToArray (replicate (length woBands) 0)
+          cplNewArray (replicate (length woBands) 0)
       return p
 
 reprojectImage
