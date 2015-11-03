@@ -388,7 +388,7 @@ spec = setupAndTeardown $ do
       withDir "GTIFF driver dataset" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
         doms <- metadataDomains ds
-        if version >= (1,11)
+        if version > (1,11)
            then doms `shouldBe` ["IMAGE_STRUCTURE"]
            else doms `shouldBe` []
 
@@ -403,7 +403,7 @@ spec = setupAndTeardown $ do
       withDir "GTIFF driver dataset" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
         meta <- metadata (Just "IMAGE_STRUCTURE") ds
-        if version >= (1,11)
+        if version > (1,11)
            then meta `shouldBe` [("INTERLEAVE","BAND")]
            else meta `shouldBe` []
 
@@ -412,7 +412,7 @@ spec = setupAndTeardown $ do
       withDir "GTIFF driver dataset (existing key)" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
         meta <- metadataItem (Just "IMAGE_STRUCTURE") "INTERLEAVE" ds
-        if version >= (1,11)
+        if version > (1,11)
            then meta `shouldBe` (Just "BAND")
            else meta `shouldBe` Nothing
 
