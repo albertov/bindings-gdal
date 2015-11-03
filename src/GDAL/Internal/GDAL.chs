@@ -16,6 +16,8 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ExistentialQuantification #-}
 
+#include "bindings.h"
+
 module GDAL.Internal.GDAL (
     GDALType (..)
   , GDALRasterException (..)
@@ -227,15 +229,12 @@ instance NFData DataType where
 {#enum RWFlag {} deriving (Eq, Show) #}
 
 {#pointer MajorObjectH newtype#}
-{#class MajorObjectHClass MajorObjectH#}
 
 class MajorObject o (t::AccessMode) where
   majorObject     :: o t -> MajorObjectH
-  --fromMajorObject :: MajorObject t -> o t
 
 
 {#pointer DatasetH newtype #}
-{#class MajorObjectHClass => DatasetHClass DatasetH#}
 
 
 nullDatasetH :: DatasetH
@@ -247,7 +246,9 @@ newtype Dataset s (t::AccessMode) =
   Dataset (ReleaseKey, DatasetH)
 
 instance MajorObject (Dataset s) t where
-  majorObject = majorObjectH  . unDataset
+  majorObject ds =
+    let DatasetH p = unDataset ds
+    in MajorObjectH (castPtr p)
 
 unDataset :: Dataset s t -> DatasetH
 unDataset (Dataset (_,s)) = s
@@ -259,7 +260,6 @@ type RODataset s = Dataset s ReadOnly
 type RWDataset s = Dataset s ReadWrite
 
 {#pointer RasterBandH newtype #}
-{#class MajorObjectHClass => RasterBandHClass RasterBandH#}
 
 nullBandH :: RasterBandH
 nullBandH = RasterBandH nullPtr
@@ -270,7 +270,9 @@ newtype Band s (t::AccessMode) =
   Band { unBand :: RasterBandH }
 
 instance MajorObject (Band s) t where
-  majorObject = majorObjectH  . unBand
+  majorObject b =
+    let RasterBandH p = unBand b
+    in MajorObjectH (castPtr p)
 
 reifyBandDataType
   :: Band s t -> (forall a. GDALType a => Proxy a -> b) -> b
@@ -942,7 +944,7 @@ openDatasetCount =
     liftM fromIntegral (peek pCount)
 
 metadataDomains :: MajorObject o t => o t -> GDAL s [ByteString]
-#if ((GDAL_VERSION_MAJOR >= 1) && (GDAL_VERSION_MINOR >= 11))
+#if SUPPORTS_METADATA_DOMAINS
 metadataDomains o =
   liftIO $
   fromCPLStringList $
