@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -90,6 +91,8 @@ module GDAL.Internal.GDAL (
   , writeBand
   , writeBandBlock
   , copyBand
+
+  , metadataDomains
 
   , foldl'
   , foldlM'
@@ -217,7 +220,25 @@ instance NFData DataType where
 
 {#enum RWFlag {} deriving (Eq, Show) #}
 
+{#pointer MajorObjectH newtype#}
+{#class MajorObjectHClass MajorObjectH#}
+
+newtype MajorObject (t::AccessMode) =
+  MajorObject {unMajorObject :: MajorObjectH}
+
+instance MajorObjectHClass (MajorObject t) where
+  majorObjectH (MajorObject h) = h
+  fromMajorObjectH = MajorObject
+
+
+class MajorObjectClass o (t::AccessMode) where
+  majorObject     :: o t -> MajorObject t
+  --fromMajorObject :: MajorObject t -> o t
+
+
 {#pointer DatasetH newtype #}
+{#class MajorObjectHClass => DatasetHClass DatasetH#}
+
 
 nullDatasetH :: DatasetH
 nullDatasetH = DatasetH nullPtr
@@ -226,6 +247,9 @@ deriving instance Eq DatasetH
 
 newtype Dataset s (t::AccessMode) =
   Dataset (ReleaseKey, DatasetH)
+
+instance MajorObjectClass (Dataset s) t where
+  majorObject = MajorObject . majorObjectH  . unDataset
 
 unDataset :: Dataset s t -> DatasetH
 unDataset (Dataset (_,s)) = s
@@ -915,6 +939,11 @@ openDatasetCount =
     {#call unsafe GetOpenDatasets as ^#} ppDs pCount
     liftM fromIntegral (peek pCount)
 
+metadataDomains :: MajorObjectClass o t => o t -> GDAL s [ByteString]
+metadataDomains o =
+  liftIO $ 
+  fromCPLStringList $
+  {#call unsafe GetMetadataDomainList as ^#} (unMajorObject (majorObject o))
 
 instance GDALType Word8 where
   dataType _ = GDT_Byte

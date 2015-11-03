@@ -84,6 +84,7 @@ module GDAL (
   , writeBand
   , writeBandBlock
   , copyBand
+  , metadataDomains
 
   , gcp
 

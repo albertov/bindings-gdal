@@ -59,6 +59,18 @@ spec = setupAndTeardown $ do
     fl <- datasetFileList ds
     fl `shouldSatisfy` null
 
+  describe "metadataDomains" $ do
+
+    it "mem driver" $ do
+      ds <- createMem 3000 1 GDT_Int16 []
+      doms <- metadataDomains ds
+      doms `shouldBe` []
+
+    withDir "GTIFF driver" $ \tmpDir -> do
+      ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+      doms <- metadataDomains ds
+      doms `shouldBe` ["IMAGE_STRUCTURE"]
+
   withDir "driver options are validated" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("zlevel", "bad level")]
