@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -93,6 +94,11 @@ module GDAL.Internal.GDAL (
   , copyBand
 
   , metadataDomains
+  , metadata
+  , metadataItem
+  , setMetadataItem
+  , description
+  , setDescription
 
   , foldl'
   , foldlM'
@@ -223,16 +229,8 @@ instance NFData DataType where
 {#pointer MajorObjectH newtype#}
 {#class MajorObjectHClass MajorObjectH#}
 
-newtype MajorObject (t::AccessMode) =
-  MajorObject {unMajorObject :: MajorObjectH}
-
-instance MajorObjectHClass (MajorObject t) where
-  majorObjectH (MajorObject h) = h
-  fromMajorObjectH = MajorObject
-
-
-class MajorObjectClass o (t::AccessMode) where
-  majorObject     :: o t -> MajorObject t
+class MajorObject o (t::AccessMode) where
+  majorObject     :: o t -> MajorObjectH
   --fromMajorObject :: MajorObject t -> o t
 
 
@@ -248,8 +246,8 @@ deriving instance Eq DatasetH
 newtype Dataset s (t::AccessMode) =
   Dataset (ReleaseKey, DatasetH)
 
-instance MajorObjectClass (Dataset s) t where
-  majorObject = MajorObject . majorObjectH  . unDataset
+instance MajorObject (Dataset s) t where
+  majorObject = majorObjectH  . unDataset
 
 unDataset :: Dataset s t -> DatasetH
 unDataset (Dataset (_,s)) = s
@@ -261,6 +259,7 @@ type RODataset s = Dataset s ReadOnly
 type RWDataset s = Dataset s ReadWrite
 
 {#pointer RasterBandH newtype #}
+{#class MajorObjectHClass => RasterBandHClass RasterBandH#}
 
 nullBandH :: RasterBandH
 nullBandH = RasterBandH nullPtr
@@ -269,6 +268,9 @@ deriving instance Eq RasterBandH
 
 newtype Band s (t::AccessMode) =
   Band { unBand :: RasterBandH }
+
+instance MajorObject (Band s) t where
+  majorObject = majorObjectH  . unBand
 
 reifyBandDataType
   :: Band s t -> (forall a. GDALType a => Proxy a -> b) -> b
@@ -939,11 +941,65 @@ openDatasetCount =
     {#call unsafe GetOpenDatasets as ^#} ppDs pCount
     liftM fromIntegral (peek pCount)
 
-metadataDomains :: MajorObjectClass o t => o t -> GDAL s [ByteString]
+metadataDomains :: MajorObject o t => o t -> GDAL s [ByteString]
+#if ((GDAL_VERSION_MAJOR >= 1) && (GDAL_VERSION_MINOR >= 11))
 metadataDomains o =
-  liftIO $ 
+  liftIO $
   fromCPLStringList $
-  {#call unsafe GetMetadataDomainList as ^#} (unMajorObject (majorObject o))
+  {#call unsafe GetMetadataDomainList as ^#} (majorObject o)
+#else
+metadataDomains = const (return [])
+#endif
+
+metadata
+  :: MajorObject o t
+  => Maybe ByteString -> o t -> GDAL s [(ByteString,ByteString)]
+metadata domain o =
+  liftIO $
+  withMaybeByteString domain
+  ({#call unsafe GetMetadata as ^#} (majorObject o)
+    >=> fromBorrowedCPLStringList)
+
+metadataItem
+  :: MajorObject o t
+  => Maybe ByteString -> ByteString -> o t -> GDAL s (Maybe ByteString)
+metadataItem domain key o =
+  liftIO $
+  useAsCString key $ \pKey ->
+  withMaybeByteString domain $
+    {#call unsafe GetMetadataItem as ^#} (majorObject o) pKey >=> 
+      maybePackCString
+
+setMetadataItem
+  :: (MajorObject o t, t ~ ReadWrite)
+  => Maybe ByteString -> ByteString -> ByteString -> o t -> GDAL s ()
+setMetadataItem domain key val o =
+  liftIO $
+  checkCPLError "setMetadataItem" $
+  useAsCString key $ \pKey ->
+  useAsCString val $ \pVal ->
+  withMaybeByteString domain $
+    {#call unsafe GDALSetMetadataItem as ^#} (majorObject o) pKey pVal
+
+withMaybeByteString :: Maybe ByteString -> (CString -> IO a) -> IO a
+withMaybeByteString Nothing  = ($ nullPtr)
+withMaybeByteString (Just s) = useAsCString s
+
+maybePackCString :: CString -> IO (Maybe ByteString)
+maybePackCString p
+  | p==nullPtr = return Nothing
+  | otherwise  = liftM Just (packCString p)
+
+description :: MajorObject o t => o t -> GDAL s ByteString
+description =
+  liftIO . ({#call unsafe GetDescription as ^#} . majorObject >=> packCString)
+
+setDescription
+  :: (MajorObject o t, t ~ ReadWrite)
+  => ByteString -> o t -> GDAL s ()
+setDescription val =
+  liftIO . checkGDALCall_ const .
+  useAsCString val . {#call unsafe GDALSetDescription as ^#} . majorObject
 
 instance GDALType Word8 where
   dataType _ = GDT_Byte

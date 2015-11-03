@@ -85,6 +85,11 @@ module GDAL (
   , writeBandBlock
   , copyBand
   , metadataDomains
+  , metadata
+  , metadataItem
+  , setMetadataItem
+  , description
+  , setDescription
 
   , gcp
 

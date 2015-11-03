@@ -59,18 +59,6 @@ spec = setupAndTeardown $ do
     fl <- datasetFileList ds
     fl `shouldSatisfy` null
 
-  describe "metadataDomains" $ do
-
-    it "mem driver" $ do
-      ds <- createMem 3000 1 GDT_Int16 []
-      doms <- metadataDomains ds
-      doms `shouldBe` []
-
-    withDir "GTIFF driver" $ \tmpDir -> do
-      ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
-      doms <- metadataDomains ds
-      doms `shouldBe` ["IMAGE_STRUCTURE"]
-
   withDir "driver options are validated" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("zlevel", "bad level")]
@@ -387,6 +375,83 @@ spec = setupAndTeardown $ do
             lr  = XY (px (envelopeMax env)) (py (envelopeMin env))
         in gt |$| (XY (px sz') (py sz')) ~== lr
 
+
+  describe "metadata stuff" $ do
+
+    describe "metadataDomains" $ do
+
+      it "mem driver dataset" $ do
+        ds <- createMem 3000 1 GDT_Int16 []
+        doms <- metadataDomains ds
+        doms `shouldBe` []
+
+      withDir "GTIFF driver dataset" $ \tmpDir -> do
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        doms <- metadataDomains ds
+        if version >= (1,11)
+           then doms `shouldBe` ["IMAGE_STRUCTURE"]
+           else doms `shouldBe` []
+
+      withDir "GTIFF driver band" $ \tmpDir -> do
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        b <- getBand 1 ds
+        doms <- metadataDomains b
+        doms `shouldBe` []
+
+    describe "metadata" $ do
+
+      withDir "GTIFF driver dataset" $ \tmpDir -> do
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        meta <- metadata (Just "IMAGE_STRUCTURE") ds
+        meta `shouldBe` [("INTERLEAVE","BAND")]
+
+    describe "metadataItem" $ do
+
+      withDir "GTIFF driver dataset (existing key)" $ \tmpDir -> do
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        meta <- metadataItem (Just "IMAGE_STRUCTURE") "INTERLEAVE" ds
+        meta `shouldBe` (Just "BAND")
+
+      withDir "GTIFF driver dataset (non-existing key)" $ \tmpDir -> do
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        meta <- metadataItem (Just "IMAGE_STRUCTURE") "FOO" ds
+        meta `shouldBe` Nothing
+
+      withDir "GTIFF driver dataset (can set)" $ \tmpDir -> do
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        setMetadataItem Nothing "foo" "bar" ds
+        meta <- metadataItem Nothing "foo" ds
+        meta `shouldBe` (Just "bar")
+
+
+    describe "description" $ do
+
+      withDir "GTIFF driver dataset" $ \tmpDir -> do
+        let path = (joinPath [tmpDir, "foo"])
+        ds <- create "GTIFF" path 3000 1 GDT_Int16 []
+        desc <- description ds
+        desc `shouldBe` (fromString path)
+
+      withDir "GTIFF driver dataset (can set)" $ \tmpDir -> do
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        let someDesc = "hjgjhghjgjh,gjhl"
+        setDescription someDesc ds
+        desc <- description ds
+        desc `shouldBe` someDesc
+
+      withDir "GTIFF driver band" $ \tmpDir -> do
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        b <- getBand 1 ds
+        desc <- description b
+        desc `shouldBe` ""
+
+      withDir "GTIFF driver band (can set)" $ \tmpDir -> do
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        b <- getBand 1 ds
+        let someDesc = "hjgjhghjgjh,gjhgjhgl"
+        setDescription someDesc b
+        desc <- description b
+        desc `shouldBe` someDesc
 
 it_can_write_and_read_band
   :: forall a. (Eq a , GDALType a)

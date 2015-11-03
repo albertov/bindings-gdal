@@ -1,4 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 module GDAL.Internal.CPLString (
     OptionList
@@ -6,19 +7,22 @@ module GDAL.Internal.CPLString (
   , toOptionListPtr
   , peekCPLString
   , fromCPLStringList
+  , fromBorrowedCPLStringList
 ) where
 
 import Control.Exception (bracket, mask_, finally)
-import Control.Monad (foldM, void)
+import Control.Monad (foldM, void, liftM, (>=>))
 
 import Data.ByteString.Internal (ByteString(..))
+import Data.ByteString.Char8 (packCString)
+import qualified Data.ByteString.Char8 as BS
 import Data.Monoid (mempty)
 import Data.Text (Text)
 
 import Foreign.C.String (CString)
-import Foreign.C.Types (CChar(..))
+import Foreign.C.Types (CChar(..), CInt(..))
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
-import Foreign.Storable (peek)
+import Foreign.Storable (peek, peekElemOff)
 import Foreign.ForeignPtr (newForeignPtr)
 import Foreign.Marshal.Utils (with)
 import Foreign.Marshal.Array (lengthArray0, advancePtr)
@@ -67,3 +71,12 @@ fromCPLStringList io =
     go !pp acc = do
       mS <- byteStringFromCPLString =<< peek pp
       maybe (return (reverse acc)) (\s -> go (pp `advancePtr` 1) (s:acc)) mS
+
+fromBorrowedCPLStringList :: Ptr CString -> IO [(ByteString,ByteString)]
+fromBorrowedCPLStringList ptr = do
+  n <- liftM fromIntegral ({#call unsafe CSLCount as ^#} ptr)
+  mapM (peekElemOff ptr >=> liftM splitIt . packCString) [0..n-1]
+  where
+    splitIt s = case BS.break (=='=') s of
+                  (k,"") -> (k,"")
+                  (k,v)  -> (k,BS.tail v)
