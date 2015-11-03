@@ -67,7 +67,7 @@ spec = setupAndTeardown $ do
       setDatasetGeotransform ds2 (Geotransform 0 10 0 0 0 (-10))
       let pfun = Just (\_ _ -> return Stop)
           a = reprojectImage ds Nothing ds2 Nothing 0 pfun def
-      a `shouldThrow` (==WarpStopped)
+      a `shouldThrow` isInterruptedException
 
     it "can receive warp options" $ do
       ds' <- createMem (XY 100 100) 1 GDT_Int16 []

@@ -13,7 +13,7 @@ import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Int (Int16, Int32)
 import Data.Proxy (Proxy(Proxy))
 import Data.String (fromString)
-import Data.Typeable (typeOf)
+import Data.Typeable (typeOf, cast)
 import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
 
@@ -83,14 +83,16 @@ spec = setupAndTeardown $ do
       let p  = joinPath [tmpDir, "test.tif"]
       ds <- createMem (XY 100 100) 1 GDT_Int16 []
       let stopIt = Just (\_ _ -> return Stop)
-      createCopy "GTIFF" p ds True [] stopIt `shouldThrow` (==CopyStopped)
+      createCopy "GTIFF" p ds True [] stopIt
+        `shouldThrow` isInterruptedException
 
     withDir "can throw exceptions" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
       ds <- createMem (XY 100 100) 1 GDT_Int16 []
       let crashIt = Just (error msg)
           msg     = "I crashed!"
-      createCopy "GTIFF" p ds True [] crashIt `shouldThrow` errorCall msg
+      createCopy "GTIFF" p ds True [] crashIt
+        `shouldThrow` (\e -> isBindingException e && isProgressFunException e)
 
     withDir "can report progress" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]

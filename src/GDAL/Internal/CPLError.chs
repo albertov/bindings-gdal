@@ -26,7 +26,6 @@ module GDAL.Internal.CPLError (
 {# context lib = "gdal" prefix = "CPL" #}
 
 import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
-import Control.DeepSeq (NFData(rnf))
 import Control.Monad (void, liftM)
 import Control.Monad.Catch (
     Exception (..)
@@ -62,7 +61,7 @@ import GDAL.Internal.CPLString (peekEncodedCString)
 
 
 data GDALException
-  = forall e. (Exception e, NFData e) =>
+  = forall e. Exception e =>
     GDALBindingException !e
   | GDALException        { gdalErrType :: !ErrorType
                          , gdalErrNum  :: !ErrorNum
@@ -73,22 +72,16 @@ deriving instance Show GDALException
 
 instance Exception GDALException
 
-bindingExceptionToException
-  :: (Exception e, NFData e) => e -> SomeException
+bindingExceptionToException :: Exception e=> e -> SomeException
 bindingExceptionToException = toException . GDALBindingException
 
-bindingExceptionFromException
-  :: (Exception e, NFData e) => SomeException -> Maybe e
+bindingExceptionFromException :: Exception e => SomeException -> Maybe e
 bindingExceptionFromException x = do
   GDALBindingException a <- fromException x
   cast a
 
 
-instance NFData GDALException where
-  rnf (GDALBindingException e) = rnf e
-  rnf (GDALException e n m) = rnf e `seq` rnf n `seq` rnf m `seq` ()
-
-throwBindingException :: (MonadThrow m, Exception e, NFData e) => e -> m a
+throwBindingException :: (MonadThrow m, Exception e) => e -> m a
 throwBindingException = throwM . bindingExceptionToException
 
 isGDALException :: SomeException -> Bool
@@ -113,12 +106,6 @@ isBindingException e
   , CPLE_UserInterrupt   as UserInterrupt
   , CPLE_ObjectNull      as ObjectNull
   } deriving (Eq, Bounded, Show) #}
-
-instance NFData ErrorType where
-  rnf a = a `seq` ()
-
-instance NFData ErrorNum where
-  rnf a = a `seq` ()
 
 
 checkGDALCall

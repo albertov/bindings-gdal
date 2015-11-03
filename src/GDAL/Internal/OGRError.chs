@@ -14,7 +14,6 @@ module GDAL.Internal.OGRError (
   , gdalToOgrException
 ) where
 
-import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), SomeException, fromException)
 import Control.Monad (liftM, when)
 
@@ -53,10 +52,6 @@ data OGRException
   | UnsupportedLayerCapability !LayerCapability
   deriving (Show, Eq, Typeable)
 
-instance NFData OGRException where
-  rnf (OGRException e n m) = rnf e `seq` rnf n `seq` rnf m `seq` ()
-  rnf e                    = e `seq` ()
-
 instance Exception OGRException where
   toException   = bindingExceptionToException
   fromException = bindingExceptionFromException
@@ -86,9 +81,6 @@ checkOGRError msg = checkGDALCall_ $ \mExc r ->
 
 gdalToOgrException :: OGRError -> GDALException -> OGRException
 gdalToOgrException e exc = OGRException e (gdalErrNum exc) (gdalErrMsg exc)
-
-instance NFData OGRError where
-  rnf e = e `seq`()
 
 data LayerCapability
   = RandomRead

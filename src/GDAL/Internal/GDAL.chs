@@ -14,7 +14,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE ExistentialQuantification #-}
 
 #include "bindings.h"
 
@@ -176,8 +175,6 @@ data GDALRasterException
   | InvalidBlockSize  !Int
   | InvalidDataType   !DataType
   | InvalidDriverOptions
-  | CopyStopped
-  | BuildOverviewsStopped
   | UnknownRasterDataType
   | UnsupportedRasterDataType !DataType
   | NullDataset
@@ -364,7 +361,7 @@ createCopy
   -> Maybe ProgressFun -> GDAL s (RWDataset s)
 createCopy driver path ds strict options progressFun =
   newDatasetHandle $
-  withProgressFun CopyStopped progressFun $ \pFunc -> do
+  withProgressFun "createCopy" progressFun $ \pFunc -> do
     d <- driverByName driver
     withOptionList options $ \o -> do
       validateCreationOptions d o
@@ -467,7 +464,7 @@ buildOverviews ds resampling overviews bands progressFun =
   withResampling resampling $ \pResampling ->
   withArrayLen (map fromIntegral overviews) $ \nOverviews pOverviews ->
   withArrayLen (map fromIntegral bands) $ \nBands pBands ->
-  withProgressFun BuildOverviewsStopped progressFun $ \pFunc ->
+  withProgressFun "buildOverviews" progressFun $ \pFunc ->
   checkCPLError "buildOverviews" $
     {#call GDALBuildOverviews as ^#}
       (unDataset ds)
@@ -850,7 +847,7 @@ copyBand
   -> Maybe ProgressFun -> GDAL s ()
 copyBand src dst options progressFun =
   liftIO $
-  withProgressFun CopyStopped progressFun $ \pFunc ->
+  withProgressFun "copyBand" progressFun $ \pFunc ->
   withOptionList options $ \o ->
   checkCPLError "copyBand" $
   {#call RasterBandCopyWholeRaster as ^#}

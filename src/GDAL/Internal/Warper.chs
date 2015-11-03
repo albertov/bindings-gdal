@@ -21,7 +21,6 @@ module GDAL.Internal.Warper (
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (when, forM_, forM, liftM)
 import Control.Monad.IO.Class (liftIO)
-import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..), bracket)
 import Data.Maybe (isJust, fromMaybe)
 import Data.Typeable (Typeable)
@@ -51,13 +50,9 @@ import GDAL.Internal.CPLConv
 #include "gdalwarper.h"
 
 data GDALWarpException
-  = WarpStopped
-  | CannotSetTransformer
+  = CannotSetTransformer
   | NonPolygonCutline
   deriving (Typeable, Show, Eq)
-
-instance NFData GDALWarpException where
-  rnf a = a `seq` ()
 
 instance Exception GDALWarpException where
   toException   = bindingExceptionToException
@@ -196,7 +191,7 @@ reprojectImage _ _ _ _ _ _ WarpOptions{woTransfomer=SomeTransformer _} =
 reprojectImage srcDs srcSrs dstDs dstSrs maxError progressFun options = do
   opts@WarpOptions{..} <- setOptionDefaults srcDs (Just dstDs) options
   liftIO $
-    withProgressFun WarpStopped progressFun $ \pFun ->
+    withProgressFun "reprojectImage" progressFun $ \pFun ->
     withMaybeSRAsCString srcSrs $ \srcSrs' ->
     withMaybeSRAsCString dstSrs $ \dstSrs' ->
     withWarpOptionsH srcDs Nothing opts $ \wopts ->

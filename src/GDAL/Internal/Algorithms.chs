@@ -38,7 +38,6 @@ module GDAL.Internal.Algorithms (
 {#context lib = "gdal" prefix = "GDAL" #}
 
 import Control.Applicative ((<$>), (<*>), pure)
-import Control.DeepSeq (NFData(rnf))
 import Control.Monad.Catch (
     Exception(..)
   , bracket
@@ -89,14 +88,8 @@ import GDAL.Internal.Types
 #include "contourwriter.h"
 
 data GDALAlgorithmException
-  = RasterizeStopped
-  | CreateGridStopped
-  | ComputeProximityStopped
-  | NullTransformer !Text
+  = NullTransformer !Text
   deriving (Typeable, Show, Eq)
-
-instance NFData GDALAlgorithmException where
-  rnf a = a `seq` ()
 
 instance Exception GDALAlgorithmException where
   toException   = bindingExceptionToException
@@ -298,7 +291,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
                    srs size geotransform =
   bracket (liftOGR getLayers) (mapM_ closeLayer) $ \layers ->
   liftIO $
-  withProgressFun RasterizeStopped progressFun $ \pFun ->
+  withProgressFun "rasterizeLayersBuf" progressFun $ \pFun ->
   withArrayLen (map unLayer layers) $ \len lPtrPtr ->
   withMaybeSRAsCString (Just srs) $ \srsPtr ->
   withOptionList options $ \opts ->
@@ -342,7 +335,7 @@ createGridIO
   -> Size
   -> IO (U.Vector (Value a))
 createGridIO options noDataVal progressFun points envelope size =
-  withProgressFun CreateGridStopped progressFun $ \pFun ->
+  withProgressFun "createGridIO" progressFun $ \pFun ->
   withErrorHandler $
   with options $ \opts -> do
     setNodata opts ndValue
@@ -620,7 +613,7 @@ computeProximity
 computeProximity srcBand prxBand options progressFun =
   liftIO $
   withOptionList options $ \opts ->
-  withProgressFun ComputeProximityStopped progressFun $ \pFun ->
+  withProgressFun "computeProximity" progressFun $ \pFun ->
   checkCPLError "computeProximity" $
   {#call GDALComputeProximity as ^#}
     (unBand srcBand)

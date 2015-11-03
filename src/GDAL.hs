@@ -9,10 +9,13 @@ module GDAL (
 
   , GDALException (..)
   , GDALRasterException (..)
+  , ProgressException (..)
   , ErrorType (..)
   , ErrorNum (..)
   , isGDALException
   , isBindingException
+  , isProgressFunException
+  , isInterruptedException
 
   , Geotransform (..)
   , GroundControlPoint (..)
