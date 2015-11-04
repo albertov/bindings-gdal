@@ -14,6 +14,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE LambdaCase #-}
 
 #include "bindings.h"
 
@@ -184,6 +185,7 @@ data GDALRasterException
   | NullDataset
   | NullBand
   | UnknownDriver !ByteString
+  | BandDoesNotAllowNoData
   deriving (Typeable, Show, Eq)
 
 instance Exception GDALRasterException where
@@ -213,10 +215,6 @@ class (Eq a, Storable a) => GDALType a where
       vd = toCDouble v
       ndd = toCDouble nd
   {-# INLINE mkToValue #-}
-
-  mkFromValue :: Maybe a -> (Value a -> a)
-  mkFromValue = fromValue . fromMaybe defaultNoData
-  {-# INLINE mkFromValue #-}
 
 {#enum DataType {} omit (GDT_TypeCount) deriving (Eq, Show, Bounded) #}
 
@@ -744,14 +742,14 @@ readBand band win (XY bx by) = readMasked band read_
   where
     XY sx sy     = envelopeSize win
     XY xoff yoff = envelopeMin win
-    read_ :: forall a'. GDALType a' => RasterBandH -> IO (St.Vector a')
-    read_ b = do
+    read_ :: forall a'. GDALType a' => Band s a' t -> GDAL s (St.Vector a')
+    read_ b = liftIO $ do
       vec <- Stm.new (bx*by)
       let dtype = fromEnumC (dataType (Proxy :: Proxy a'))
       Stm.unsafeWith vec $ \ptr -> do
         checkCPLError "RasterAdviseRead" $
           {#call unsafe RasterAdviseRead as ^#}
-            b
+            (unBand b)
             (fromIntegral xoff)
             (fromIntegral yoff)
             (fromIntegral sx)
@@ -762,7 +760,7 @@ readBand band win (XY bx by) = readMasked band read_
             (castPtr nullPtr)
         checkCPLError "RasterIO" $
           {#call RasterIO as ^#}
-            b
+            (unBand b)
             (fromEnumC GF_Read)
             (fromIntegral xoff)
             (fromIntegral yoff)
@@ -780,32 +778,47 @@ readBand band win (XY bx by) = readMasked band read_
 readMasked
   :: GDALType a
   => Band s a t
-  -> (forall a'. GDALType a' => RasterBandH -> IO (St.Vector a'))
+  -> (forall a'. GDALType a' => Band s a' t -> GDAL s (St.Vector a'))
   -> GDAL s (Vector (Value a))
-readMasked band reader = do
-  vec   <- liftIO (reader bPtr)
-  flags <- liftIO ({#call unsafe GetMaskFlags as ^#} bPtr)
-  mask flags vec
-  where
-    bPtr = unBand band
-    mask fs
-      | hasFlag fs MaskPerDataset = useMaskBand
-      | hasFlag fs MaskNoData     = useNoData
-      | hasFlag fs MaskAllValid   = useAsIs
-      | otherwise                 = useMaskBand
-    hasFlag fs f = fromEnumC f .&. fs == fromEnumC f
-    useAsIs  = return . mkAllValidValueUVector
-    useNoData vs   = do
-      mNodata <- bandNodataValue band
-      return $! case mNodata of
-        Just nd -> mkValueUVector nd vs
-        Nothing ->
-          error ("GDAL.readMasked: band has GMF_NODATA flag but did not " ++
-                 "return a nodata value")
-    useMaskBand vs = liftIO $ do
-      ms <- {#call GetMaskBand as ^#} bPtr >>= reader :: IO (St.Vector Word8)
-      return $ mkMaskedValueUVector ms vs
+readMasked band reader =
+  bandMaskFlags band >>= \case
+    f | MaskNoData `elem` f ->
+      liftM2 mkValueUVector (noDataOrFail band) (reader band)
+    f | MaskAllValid `elem` f -> liftM mkAllValidValueUVector (reader band)
+    _ -> liftM2 mkMaskedValueUVector (reader =<< bandMask band) (reader band)
 {-# INLINE readMasked #-}
+
+writeMasked
+  :: GDALType a
+  => RWBand s a
+  -> (forall a'. GDALType a' => RWBand s a' -> St.Vector a' -> GDAL s ())
+  -> Vector (Value a)
+  -> GDAL s ()
+writeMasked band writer uvec =
+  bandMaskFlags band >>= \case
+    f | MaskNoData `elem` f ->
+      noDataOrFail band >>= writer band . flip toStVecWithNodata uvec
+    f | MaskAllValid `elem` f ->
+      maybe (throwBindingException BandDoesNotAllowNoData)
+            (writer band)
+            (toStVec uvec)
+    _ -> let (mask, vec) = toStVecWithMask uvec
+         in writer band vec >> bandMask band >>= flip writer mask
+
+noDataOrFail :: GDALType a => Band s a t -> GDAL s a
+noDataOrFail = liftM (fromMaybe err) . bandNodataValue
+  where
+    err = error ("GDAL.readMasked: band has GMF_NODATA flag but did " ++
+                 "not  return a nodata value")
+
+bandMask :: Band s a t -> GDAL s (Band s Word8 t)
+bandMask = liftIO . liftM Band . {#call GetMaskBand as ^#} . unBand
+
+
+bandMaskFlags :: Band s a t -> GDAL s [MaskFlag]
+bandMaskFlags band = do
+  flags <- liftIO ({#call unsafe GetMaskFlags as ^#} (unBand band))
+  return (filter (\f -> (fromEnumC f .&. flags) /= 0) [minBound..maxBound])
 
 {#enum define MaskFlag { GMF_ALL_VALID   as MaskAllValid
                        , GMF_PER_DATASET as MaskPerDataset
@@ -814,38 +827,39 @@ readMasked band reader = do
                        } deriving (Eq,Bounded,Show) #}
 
 
-writeBand :: forall s a. GDALType a
+writeBand
+  :: forall s a. GDALType a
   => RWBand s a
   -> Envelope Int
   -> Size
   -> Vector (Value a)
   -> GDAL s ()
-writeBand band win sz@(XY bx by) uvec = do
-  nd <- liftM (fromMaybe defaultNoData) (bandNodataValue band)
-  let nElems    = bx * by
-      (Mask mask,v) = maskAndValueVectors uvec
-      vec      = St.zipWith (\m v -> if m==0 then nd else v) mask v
-      (fp, len) = St.unsafeToForeignPtr0 vec
-      XY sx sy     = envelopeSize win
-      XY xoff yoff = envelopeMin win
-  if nElems /= len
-    then throwBindingException (InvalidRasterSize sz)
-    else liftIO $
-         withForeignPtr fp $ \ptr ->
-         checkCPLError "RasterIO" $
-           {#call RasterIO as ^#}
-             (unBand band)
-             (fromEnumC GF_Write)
-             (fromIntegral xoff)
-             (fromIntegral yoff)
-             (fromIntegral sx)
-             (fromIntegral sy)
-             (castPtr ptr)
-             (fromIntegral bx)
-             (fromIntegral by)
-             (fromEnumC (dataType (Proxy :: Proxy a)))
-             0
-             0
+writeBand band win sz@(XY bx by) = writeMasked band write
+  where
+    write :: forall a'. GDALType a' => RWBand s a' -> St.Vector a' -> GDAL s ()
+    write band' vec = do
+      let (fp, len)    = St.unsafeToForeignPtr0 vec
+          nElems       = bx * by
+          XY sx sy     = envelopeSize win
+          XY xoff yoff = envelopeMin win
+      if nElems /= len
+        then throwBindingException (InvalidRasterSize sz)
+        else liftIO $
+             withForeignPtr fp $ \ptr ->
+             checkCPLError "RasterIO" $
+               {#call RasterIO as ^#}
+                 (unBand band')
+                 (fromEnumC GF_Write)
+                 (fromIntegral xoff)
+                 (fromIntegral yoff)
+                 (fromIntegral sx)
+                 (fromIntegral sy)
+                 (castPtr ptr)
+                 (fromIntegral bx)
+                 (fromIntegral by)
+                 (fromEnumC (dataType (Proxy :: Proxy a')))
+                 0
+                 0
 {-# INLINE writeBand #-}
 
 readBandBlock
@@ -853,10 +867,11 @@ readBandBlock
   => Band s a t -> BlockIx -> GDAL s (Vector (Value a))
 readBandBlock band blockIx = do
   checkType band
-  readMasked band $ \b -> do
-    vec <- Stm.new (bandBlockLen band)
-    Stm.unsafeWith vec $
-      checkCPLError "ReadBlock" . {#call ReadBlock as ^#} b x y . castPtr
+  readMasked band $ \band' -> liftIO $ do
+    vec <- Stm.new (bandBlockLen band')
+    Stm.unsafeWith vec $ \pVec ->
+      checkCPLError "ReadBlock" $
+      {#call ReadBlock as ^#} (unBand band') x y (castPtr pVec)
     St.unsafeFreeze vec
   where XY x y = fmap fromIntegral blockIx
 {-# INLINE readBandBlock #-}
@@ -930,22 +945,17 @@ ifoldlM' f initialAcc band = do
 writeBandBlock
   :: forall s a. GDALType a
   => RWBand s a -> BlockIx  -> Vector (Value a) -> GDAL s ()
-writeBandBlock band blockIx uvec = do
+writeBandBlock band blockIx = writeMasked band $ \band' vec -> do
   checkType band
-  nd <- liftM (fromMaybe defaultNoData) (bandNodataValue band)
-  liftIO $ do
-    let (fp, len) = St.unsafeToForeignPtr0 vec
-        (Mask mask, v) = maskAndValueVectors uvec
-        vec         = St.zipWith (\m v -> if m==0 then nd else v) mask v
-        nElems    = bandBlockLen band
-    if nElems /= len
-      then throwBindingException (InvalidBlockSize len)
-      else withForeignPtr fp $
-           checkCPLError "WriteBlock" .
-           {#call WriteBlock as ^#} pBand x y .
-           castPtr
-  where XY x y = fmap fromIntegral blockIx
-        pBand  = unBand band
+  let (fp, len) = St.unsafeToForeignPtr0 vec
+      nElems    = bandBlockLen band
+      XY x y = fmap fromIntegral blockIx
+  if nElems /= len
+    then throwBindingException (InvalidBlockSize len)
+    else liftIO $
+         withForeignPtr fp $
+         checkCPLError "WriteBlock" .
+           {#call WriteBlock as ^#} (unBand band') x y .  castPtr
 {-# INLINE writeBandBlock #-}
 
 openDatasetCount :: IO Int

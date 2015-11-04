@@ -34,7 +34,9 @@ module GDAL.Internal.Types (
   , mkValueUVector
   , mkMaskedValueUVector
   , mkAllValidValueUVector
-  , maskAndValueVectors
+  , toStVec
+  , toStVecWithNodata
+  , toStVecWithMask
 ) where
 
 import Control.Applicative (Applicative(..), (<$>), liftA2)
@@ -306,11 +308,38 @@ mkValueUVector nd values = V_Value (UseNoData nd, values)
 
 
 newtype instance U.Vector    (Value a) =
-    V_Value { maskAndValueVectors :: (Mask St.Vector a, St.Vector a) }
+    V_Value (Mask St.Vector a, St.Vector a)
 newtype instance U.MVector s (Value a) =
   MV_Value (Mask (St.MVector s) a, St.MVector s a)
 instance (Eq a, Storable a) => U.Unbox (Value a)
 
+toStVecWithNodata
+  :: (Storable a, Eq a)
+  => a -> U.Vector (Value a) -> St.Vector a
+toStVecWithNodata nd v =
+  G.generate (G.length v) (fromValue nd . G.unsafeIndex v)
+{-# INLINE toStVecWithNodata #-}
+
+toStVecWithMask
+  :: (Storable a, Eq a)
+  => U.Vector (Value a) -> (St.Vector Word8, St.Vector a)
+toStVecWithMask (V_Value (Mask m  , vs)) = (m, vs)
+toStVecWithMask (V_Value (AllValid, vs)) =
+  (St.replicate (St.length vs) maskValid, vs)
+toStVecWithMask (V_Value (UseNoData nd, vs)) =
+  (St.map (\v->if v==nd then maskNoData else maskValid) vs , vs)
+{-# INLINE toStVecWithMask #-}
+
+
+toStVec :: (Storable a, Eq a) => U.Vector (Value a) -> Maybe (St.Vector a)
+toStVec (V_Value (AllValid, v)) = Just v
+toStVec (V_Value (UseNoData nd, v))
+  | St.any (==nd) v = Nothing
+  | otherwise       = Just v
+toStVec (V_Value (Mask m, v))
+  | St.any (==maskNoData) m = Nothing
+  | otherwise               = Just v
+{-# INLINE toStVec #-}
 
 instance (Eq a, Storable a) => M.MVector U.MVector (Value a) where
   basicLength (MV_Value (_,v)) = M.basicLength v
