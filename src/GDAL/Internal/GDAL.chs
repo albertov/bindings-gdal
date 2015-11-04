@@ -138,6 +138,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
+import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import Foreign.C.String (withCString, CString)
@@ -190,7 +191,7 @@ instance Exception GDALRasterException where
   fromException = bindingExceptionFromException
 
 
-class Storable a => GDALType a where
+class (U.Unbox a, Storable a) => GDALType a where
   dataType :: Proxy a -> DataType
   -- | default nodata value when writing to bands with no datavalue set
   defaultNoData   :: a
@@ -782,9 +783,9 @@ readMasked
   -> (forall a'. GDALType a' => RasterBandH -> IO (St.Vector a'))
   -> GDAL s (Vector (Value a))
 readMasked band reader = do
-  vec   <- liftIO (reader (unBand band))
+  vec   <- liftIO (reader bPtr)
   flags <- liftIO ({#call unsafe GetMaskFlags as ^#} bPtr)
-  liftM stToUValue (mask flags vec)
+  liftM U.convert (mask flags vec)
   where
     bPtr = unBand band
     mask fs
@@ -793,13 +794,15 @@ readMasked band reader = do
       | hasFlag fs MaskAllValid   = useAsIs
       | otherwise                 = useMaskBand
     hasFlag fs f = fromEnumC f .&. fs == fromEnumC f
-    useAsIs        = return . St.map Value
+    useAsIs  = return . U.map Value . St.convert
     useNoData vs   = do
       toValue <- liftM mkToValue (bandNodataValue band)
-      return $! St.map toValue vs
+      return $! U.map toValue (St.convert vs)
     useMaskBand vs = liftIO $ do
       ms <- {#call GetMaskBand as ^#} bPtr >>= reader :: IO (St.Vector Word8)
-      return $! St.zipWith (\v m -> if m/=0 then Value v else NoData) vs ms
+      return $ U.zipWith (\v m -> if m/=0 then Value v else NoData)
+                         (U.convert vs)
+                         (U.convert ms)
 {-# INLINE readMasked #-}
 
 {#enum define MaskFlag { GMF_ALL_VALID   as MaskAllValid
@@ -819,7 +822,7 @@ writeBand band win sz@(XY bx by) uvec = do
   fromVal <- liftM mkFromValue (bandNodataValue band)
   let nElems    = bx * by
       (fp, len) = St.unsafeToForeignPtr0 vec
-      vec       = St.map fromVal (uToStValue uvec)
+      vec          = St.convert (U.map fromVal uvec)
       XY sx sy     = envelopeSize win
       XY xoff yoff = envelopeMin win
   if nElems /= len
@@ -929,7 +932,7 @@ writeBandBlock band blockIx uvec = do
   fromVal <- liftM mkFromValue (bandNodataValue band)
   liftIO $ do
     let (fp, len) = St.unsafeToForeignPtr0 vec
-        vec       = St.map fromVal (uToStValue uvec)
+        vec       = St.convert (U.map fromVal uvec)
         nElems    = bandBlockLen band
     if nElems /= len
       then throwBindingException (InvalidBlockSize len)
@@ -1069,16 +1072,6 @@ instance GDALType Double where
   defaultNoData = defaultFractionalNodata
   toCDouble = realToFrac
   fromCDouble = realToFrac
-  mkToValue = mkToValueEq
-  {-# INLINE mkToValue #-}
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType CDouble where
-  dataType _ = GDT_Float64
-  defaultNoData = defaultFractionalNodata
-  toCDouble = id
-  fromCDouble = id
   mkToValue = mkToValueEq
   {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}

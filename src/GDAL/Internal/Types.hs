@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -20,8 +21,6 @@ module GDAL.Internal.Types (
   , AccessMode
   , ReadWrite
   , ReadOnly
-  , uToStValue
-  , stToUValue
   , isNoData
   , fromValue
   , runGDAL
@@ -36,7 +35,7 @@ module GDAL.Internal.Types (
 import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.DeepSeq (NFData(rnf), force)
 import Control.Exception (evaluate)
-import Control.Monad (liftM)
+import Control.Monad (liftM, liftM2)
 import Control.Monad.Base (MonadBase)
 import Control.Monad.Trans.Resource (
     ResourceT
@@ -57,12 +56,12 @@ import Control.Monad.Catch (
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Typeable (Typeable)
-import Data.Coerce (coerce)
 import Data.Word (Word8)
 
-import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Generic.Mutable as M
 import qualified Data.Vector.Generic as G
+import qualified Data.Vector.Storable as St
+import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector.Unboxed.Base as U
 
 import Foreign.Ptr (Ptr, castPtr)
@@ -299,25 +298,37 @@ fromValue v NoData    = v
 fromValue _ (Value v) = v
 {-# INLINE fromValue #-}
 
-newtype instance U.Vector    (Value a) =  V_Value (St.Vector (Value a))
-newtype instance U.MVector s (Value a) = MV_Value (St.MVector s (Value a))
+newtype instance U.Vector    (Value a) =
+    V_Value (St.Vector Word8, St.Vector a)
+newtype instance U.MVector s (Value a) =
+  MV_Value (St.MVector s Word8, St.MVector s a)
 instance Storable a => U.Unbox (Value a)
 
-stToUValue :: Storable a => St.Vector (Value a) -> U.Vector (Value a)
-stToUValue = coerce
-{-# INLINE stToUValue #-}
-
-uToStValue :: Storable a => U.Vector (Value a) -> St.Vector (Value a)
-uToStValue = coerce
-{-# INLINE uToStValue #-}
 
 instance Storable a => M.MVector U.MVector (Value a) where
-  basicLength (MV_Value v ) = M.basicLength v
-  basicUnsafeSlice m n (MV_Value v) = MV_Value (M.basicUnsafeSlice m n v)
-  basicOverlaps (MV_Value v) (MV_Value u) = M.basicOverlaps v u
-  basicUnsafeNew = liftM MV_Value . M.basicUnsafeNew
-  basicUnsafeRead (MV_Value v) i = M.basicUnsafeRead v i
-  basicUnsafeWrite (MV_Value v) i x = M.basicUnsafeWrite v i x
+  basicLength (MV_Value (_,v)) =
+    M.basicLength v
+  basicUnsafeSlice m n (MV_Value (x,v)) =
+    MV_Value ( M.basicUnsafeSlice m n x
+             , M.basicUnsafeSlice m n v)
+  basicOverlaps (MV_Value (_,v)) (MV_Value (_,v')) =
+    M.basicOverlaps v v'
+  basicUnsafeNew i =
+    liftM2 (\x v -> MV_Value (x,v))
+           (M.basicUnsafeNew i)
+           (M.basicUnsafeNew i)
+  basicUnsafeRead (MV_Value (x,v)) i = do
+    m <- M.basicUnsafeRead x i
+    if m/=0
+       then liftM Value (M.basicUnsafeRead v i)
+       else return NoData
+  basicUnsafeWrite (MV_Value (x,v)) i a =
+    case a of
+      NoData ->
+        M.basicUnsafeWrite x i 0
+      Value a' -> do
+        M.basicUnsafeWrite x i 1
+        M.basicUnsafeWrite v i a'
   {-# INLINE basicLength #-}
   {-# INLINE basicUnsafeSlice #-}
   {-# INLINE basicOverlaps #-}
@@ -326,16 +337,31 @@ instance Storable a => M.MVector U.MVector (Value a) where
   {-# INLINE basicUnsafeWrite #-}
 
 #if MIN_VERSION_vector(0,11,0)
-  basicInitialize (MV_Value v) = M.basicInitialize v
+  basicInitialize (MV_Value (x,v)) = do
+    M.basicInitialize x
+    M.basicInitialize v
   {-# INLINE basicInitialize #-}
 #endif
 
 instance Storable a => G.Vector U.Vector (Value a) where
-  basicUnsafeFreeze (MV_Value v)   = liftM  V_Value (G.basicUnsafeFreeze v)
-  basicUnsafeThaw   ( V_Value v)   = liftM MV_Value (G.basicUnsafeThaw   v)
-  basicLength       ( V_Value v)   = G.basicLength v
-  basicUnsafeSlice m n (V_Value v) = V_Value (G.basicUnsafeSlice m n v)
-  basicUnsafeIndexM (V_Value v) i  = G.basicUnsafeIndexM v i
+  basicUnsafeFreeze (MV_Value (x,v)) =
+    liftM2 (\x' v' -> V_Value (x',v'))
+           (G.basicUnsafeFreeze x)
+           (G.basicUnsafeFreeze v)
+  basicUnsafeThaw (V_Value (x,v)) =
+    liftM2 (\x' v' -> MV_Value (x',v'))
+           (G.basicUnsafeThaw x)
+           (G.basicUnsafeThaw v)
+  basicLength  (V_Value (_,v)) =
+    G.basicLength v
+  basicUnsafeSlice m n (V_Value (x,v)) =
+    V_Value ( G.basicUnsafeSlice m n x
+            , G.basicUnsafeSlice m n v)
+  basicUnsafeIndexM (V_Value (x,v)) i = do
+    m <- G.basicUnsafeIndexM x i
+    if toBool m
+       then liftM Value (G.basicUnsafeIndexM v i)
+       else return NoData
   {-# INLINE basicUnsafeFreeze #-}
   {-# INLINE basicUnsafeThaw #-}
   {-# INLINE basicLength #-}

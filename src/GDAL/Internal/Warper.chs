@@ -64,8 +64,8 @@ data BandOptions =
   BandOptions {
     biSrc       :: !Int
   , biDst       :: !Int
-  , biSrcNoData :: !(Maybe CDouble)
-  , biDstNoData :: !(Maybe CDouble)
+  , biSrcNoData :: !(Maybe Double)
+  , biDstNoData :: !(Maybe Double)
   }
 
 deriving instance Show BandOptions
@@ -163,9 +163,11 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
         let sNds = map (\bo -> fromMaybe defaultNoData (biSrcNoData bo)) woBands
             dNds = map (\bo -> fromMaybe defaultNoData (biDstNoData bo)) woBands
             imgs = replicate (length woBands) 0
-        cplNewArray sNds >>= {#set GDALWarpOptions->padfSrcNoDataReal #} p
+        cplNewArray sNds >>=
+          {#set GDALWarpOptions->padfSrcNoDataReal #} p . castPtr
         cplNewArray imgs >>= {#set GDALWarpOptions->padfSrcNoDataImag #} p
-        cplNewArray dNds >>= {#set GDALWarpOptions->padfDstNoDataReal #} p
+        cplNewArray dNds >>=
+          {#set GDALWarpOptions->padfDstNoDataReal #} p . castPtr
         cplNewArray imgs >>= {#set GDALWarpOptions->padfDstNoDataImag #} p
       return p
 
