@@ -60,6 +60,7 @@ library
                    , deepseq
                    , data-default
                    , unordered-containers
+                   , ghc-prim
   ghc-options:       -funbox-strict-fields -Wall
   install-includes: bindings.h
   default-extensions: CPP

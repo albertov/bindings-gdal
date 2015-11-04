@@ -1,10 +1,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
+
 module Main (main) where
 import System.Environment (getArgs)
 import Data.Int (Int64, Int16)
-import qualified Data.Vector.Generic as G
 
 import GDAL
 

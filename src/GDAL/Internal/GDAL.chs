@@ -139,17 +139,22 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
-import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import Foreign.C.String (withCString, CString)
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr (withForeignPtr)
+import Foreign.ForeignPtr (
+    withForeignPtr
+  , mallocForeignPtrArray
+  , castForeignPtr
+  )
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (allocaArray, withArrayLen)
+import Foreign.Marshal.Array (withArrayLen)
 import Foreign.Marshal.Utils (toBool, fromBool, with)
+
+import GHC.Types (SPEC(..))
 
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -203,16 +208,6 @@ class (Eq a, Storable a) => GDALType a where
   fillBand :: a -> RWBand s a -> GDAL s ()
   fillBand v = fillRaster (toCDouble v) (toCDouble v)
   {-# INLINE fillBand #-}
-
-  mkToValue :: Maybe a -> (a -> Value a)
-  mkToValue Nothing   v = Value v
-  mkToValue (Just nd) v
-    | vd == ndd  = NoData
-    | otherwise  = Value v
-    where
-      vd = toCDouble v
-      ndd = toCDouble nd
-  {-# INLINE mkToValue #-}
 
 {#enum DataType {} omit (GDT_TypeCount) deriving (Eq, Show, Bounded) #}
 
@@ -779,11 +774,13 @@ readMasked
   -> (forall a'. GDALType a' => Band s a' t -> GDAL s (St.Vector a'))
   -> GDAL s (Vector (Value a))
 readMasked band reader =
-  bandMaskFlags band >>= \case
-    f | MaskNoData `elem` f ->
+  bandMaskType band >>= \case
+    MaskNoData ->
       liftM2 mkValueUVector (noDataOrFail band) (reader band)
-    f | MaskAllValid `elem` f -> liftM mkAllValidValueUVector (reader band)
-    _ -> liftM2 mkMaskedValueUVector (reader =<< bandMask band) (reader band)
+    MaskAllValid ->
+      liftM mkAllValidValueUVector (reader band)
+    MaskBand ->
+      liftM2 mkMaskedValueUVector (reader =<< bandMask band) (reader band)
 {-# INLINE readMasked #-}
 
 writeMasked
@@ -793,15 +790,16 @@ writeMasked
   -> Vector (Value a)
   -> GDAL s ()
 writeMasked band writer uvec =
-  bandMaskFlags band >>= \case
-    f | MaskNoData `elem` f ->
+  bandMaskType band >>= \case
+    MaskNoData ->
       noDataOrFail band >>= writer band . flip toStVecWithNodata uvec
-    f | MaskAllValid `elem` f ->
+    MaskAllValid ->
       maybe (throwBindingException BandDoesNotAllowNoData)
             (writer band)
             (toStVec uvec)
-    _ -> let (mask, vec) = toStVecWithMask uvec
-         in writer band vec >> bandMask band >>= flip writer mask
+    MaskBand ->
+      let (mask, vec) = toStVecWithMask uvec
+      in writer band vec >> bandMask band >>= flip writer mask
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
 noDataOrFail = liftM (fromMaybe err) . bandNodataValue
@@ -812,16 +810,21 @@ noDataOrFail = liftM (fromMaybe err) . bandNodataValue
 bandMask :: Band s a t -> GDAL s (Band s Word8 t)
 bandMask = liftIO . liftM Band . {#call GetMaskBand as ^#} . unBand
 
+data MaskType = MaskNoData | MaskAllValid | MaskBand
 
-bandMaskFlags :: Band s a t -> GDAL s [MaskFlag]
-bandMaskFlags band = do
+bandMaskType :: Band s a t -> GDAL s MaskType
+bandMaskType band = do
   flags <- liftIO ({#call unsafe GetMaskFlags as ^#} (unBand band))
-  return (filter (\f -> (fromEnumC f .&. flags) /= 0) [minBound..maxBound])
+  let testFlag f = (fromEnumC f .&. flags) /= 0
+  return $ case () of
+    () | testFlag GMF_NODATA    -> MaskNoData
+    () | testFlag GMF_ALL_VALID -> MaskAllValid
+    _                           -> MaskBand
 
-{#enum define MaskFlag { GMF_ALL_VALID   as MaskAllValid
-                       , GMF_PER_DATASET as MaskPerDataset
-                       , GMF_ALPHA       as MaskAlpha
-                       , GMF_NODATA      as MaskNoData
+{#enum define MaskFlag { GMF_ALL_VALID   as GMF_ALL_VALID
+                       , GMF_PER_DATASET as GMF_PER_DATASET
+                       , GMF_ALPHA       as GMF_ALPHA
+                       , GMF_NODATA      as GMF_NODATA
                        } deriving (Eq,Bounded,Show) #}
 
 
@@ -899,45 +902,78 @@ ifoldl' f = ifoldlM' (\acc ix -> return . f acc ix)
 
 foldlM'
   :: forall s t a b. GDALType a
-  => (b -> Value a -> IO b) -> b -> Band s a t -> GDAL s b
+  => (b -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
 foldlM' f = ifoldlM' (\acc _ -> f acc)
 {-# INLINE foldlM' #-}
 
 ifoldlM'
   :: forall s t a b. GDALType a
-  => (b -> BlockIx -> Value a -> IO b) -> b -> Band s a t -> GDAL s b
-ifoldlM' f initialAcc band = do
-  checkType band
-  toValue <- liftM mkToValue (bandNodataValue band)
-  liftIO $ do
-    allocaArray (sx*sy) $ \ptr -> do
-      let goB !iB !jB !acc
-            | iB < nx   = do
-                checkCPLError "ReadBlock" $
-                  {#call ReadBlock as ^#}
-                    pBand (fromIntegral iB) (fromIntegral jB) (castPtr ptr)
-                go 0 0 acc >>= goB (iB+1) jB
-            | jB+1 < ny = goB 0 (jB+1) acc
-            | otherwise = return acc
-            where
-              applyTo i j a = f a ix . toValue =<< peekElemOff ptr (j*sx+i)
-                where ix = XY (iB*sx+i) (jB*sy+j)
-              stopx
-                | mx /= 0 && iB==nx-1 = mx
-                | otherwise           = sx
-              stopy
-                | my /= 0 && jB==ny-1 = my
-                | otherwise           = sy
-              go !i !j !acc'
-                | i   < stopx = applyTo i j acc' >>= go (i+1) j
-                | j+1 < stopy = go 0 (j+1) acc'
-                | otherwise   = return acc'
-      goB 0 0 initialAcc
+  => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
+ifoldlM' f initialAcc band =
+  checkType band >> bandMaskType band >>= \case
+    MaskNoData -> do
+      fp <- liftIO $ mallocForeignPtrArray (sx*sy)
+      noData <- noDataOrFail band
+      let readValue i j = liftM toValue $ liftIO $ withForeignPtr fp $
+                          flip peekElemOff (j*sx+i)
+          toValue v
+            | v/=noData = Value v
+            | otherwise = NoData
+          loadBlock = blockLoader (unBand band) (castForeignPtr fp)
+      ifoldlM_loop loadBlock readValue
+    MaskAllValid -> do
+      fp <- liftIO $ mallocForeignPtrArray (sx*sy)
+      let readValue i j = liftM Value $ liftIO $ withForeignPtr fp $
+                          flip peekElemOff (j*sx+i)
+          loadBlock = blockLoader (unBand band) (castForeignPtr fp)
+      ifoldlM_loop loadBlock readValue
+    MaskBand -> do
+      fp <- liftIO $ mallocForeignPtrArray (sx*sy)
+      fpMask <- liftIO $ mallocForeignPtrArray (sx*sy)
+      mask <- bandMask band
+      let readValue i j =
+            liftIO $
+            withForeignPtr fp $ \buf ->
+            withForeignPtr fpMask $ \maskBuf -> do
+              let off = j*sx+i
+              m <- maskBuf `peekElemOff` off
+              if m/= (0 :: Word8)
+                then liftM Value (buf `peekElemOff` off)
+                else return NoData
+          loadBlock i j = do
+            blockLoader (unBand band) (castForeignPtr fp) i j
+            blockLoader (unBand mask) (castForeignPtr fpMask) i j
+      ifoldlM_loop loadBlock readValue
   where
-    pBand       = unBand band
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
+    blockLoader bPtr fpBuf i j =
+      liftIO $
+      checkCPLError "ReadBlock" $
+      withForeignPtr fpBuf $
+      {#call ReadBlock as ^#} bPtr (fromIntegral i) (fromIntegral j)
+    {-# INLINE ifoldlM_loop #-}
+    ifoldlM_loop loadBlock readValue = goB SPEC 0 0 initialAcc
+      where
+        goB !sPEC !iB !jB !acc
+          | iB < nx = do loadBlock iB jB
+                         go sPEC 0 0 acc >>= goB sPEC (iB+1) jB
+          | jB+1 < ny = goB sPEC 0 (jB+1) acc
+          | otherwise = return acc
+          where
+            go !sPEC2 !i !j !acc'
+              | i   < stopx = applyTo i j acc' >>= go sPEC2 (i+1) j
+              | j+1 < stopy = go sPEC2 0 (j+1) acc'
+              | otherwise   = return acc'
+            applyTo i j a = readValue i j >>= f a ix
+              where ix = XY (iB*sx+i) (jB*sy+j)
+            stopx
+              | mx /= 0 && iB==nx-1 = mx
+              | otherwise           = sx
+            stopy
+              | my /= 0 && jB==ny-1 = my
+              | otherwise           = sy
 {-# INLINE ifoldlM' #-}
 
 writeBandBlock
@@ -1023,8 +1059,6 @@ instance GDALType Word8 where
   dataType _ = GDT_Byte
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue = mkToValueEq
-  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1032,8 +1066,6 @@ instance GDALType Word16 where
   dataType _ = GDT_UInt16
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue = mkToValueEq
-  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1041,8 +1073,6 @@ instance GDALType Word32 where
   dataType _ = GDT_UInt32
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue = mkToValueEq
-  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1050,8 +1080,6 @@ instance GDALType Int16 where
   dataType _ = GDT_Int16
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue = mkToValueEq
-  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1059,8 +1087,6 @@ instance GDALType Int32 where
   dataType _ = GDT_Int32
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue = mkToValueEq
-  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1068,8 +1094,6 @@ instance GDALType Float where
   dataType _ = GDT_Float32
   fromCDouble = realToFrac
   toCDouble = realToFrac
-  mkToValue = mkToValueEq
-  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1077,8 +1101,6 @@ instance GDALType Double where
   dataType _ = GDT_Float64
   toCDouble = realToFrac
   fromCDouble = realToFrac
-  mkToValue = mkToValueEq
-  {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
@@ -1119,14 +1141,3 @@ instance GDALType (Complex Double) where
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 #endif
-
-mkToValueEq :: Eq a => Maybe a -> (a -> Value a)
-mkToValueEq Nothing   v = Value v
-mkToValueEq (Just nd) v
-  | v == nd   = NoData
-  | otherwise = Value v
-{-# INLINE mkToValueEq #-}
-
-defaultFractionalNodata :: Fractional a => a
-defaultFractionalNodata = (-1)/0
-{-# INLINE defaultFractionalNodata #-}
