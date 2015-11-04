@@ -89,7 +89,6 @@ module GDAL.Internal.GDAL (
   , bandHasOverviews
   , allBand
   , bandNodataValue
-  , bandNodataValueIO
   , setBandNodataValue
   , getBand
   , addBand
@@ -121,7 +120,6 @@ module GDAL.Internal.GDAL (
 {#context lib = "gdal" prefix = "GDAL" #}
 
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
-import Control.DeepSeq (NFData(rnf))
 import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when, (>=>))
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -187,18 +185,15 @@ data GDALRasterException
   | UnknownDriver !ByteString
   deriving (Typeable, Show, Eq)
 
-instance NFData GDALRasterException where
-  rnf a = a `seq` () -- All fields are already strict so no need to rnf them
-
 instance Exception GDALRasterException where
   toException   = bindingExceptionToException
   fromException = bindingExceptionFromException
 
 
-class (Storable a, Show a, Typeable a) => GDALType a where
+class Storable a => GDALType a where
   dataType :: Proxy a -> DataType
   -- | default nodata value when writing to bands with no datavalue set
-  nodata   :: a
+  defaultNoData   :: a
   -- | how to convert to double for use in setBandNodataValue
   toCDouble :: a -> CDouble
   -- | how to convert from double for use with bandNodataValue
@@ -211,21 +206,18 @@ class (Storable a, Show a, Typeable a) => GDALType a where
   mkToValue :: Maybe a -> (a -> Value a)
   mkToValue Nothing   v = Value v
   mkToValue (Just nd) v
-    | vd == ndd || isNaN vd = NoData
-    | otherwise             = Value v
+    | vd == ndd  = NoData
+    | otherwise  = Value v
     where
       vd = toCDouble v
       ndd = toCDouble nd
   {-# INLINE mkToValue #-}
 
   mkFromValue :: Maybe a -> (Value a -> a)
-  mkFromValue = fromValue . fromMaybe nodata
+  mkFromValue = fromValue . fromMaybe defaultNoData
   {-# INLINE mkFromValue #-}
 
 {#enum DataType {} omit (GDT_TypeCount) deriving (Eq, Show, Bounded) #}
-
-instance NFData DataType where
-  rnf a = a `seq`()
 
 {#fun pure unsafe GetDataTypeSize as dataTypeSize
     { fromEnumC `DataType' } -> `Int' #}
@@ -721,22 +713,19 @@ checkType b
 
 bandNodataValue :: GDALType a => Band s a t -> GDAL s (Maybe a)
 bandNodataValue b =
-  liftM (fmap fromCDouble) (liftIO (bandNodataValueIO (unBand b)))
+  liftIO $
+  alloca $ \p -> do
+    value <- {#call unsafe GetRasterNoDataValue as ^#} (unBand b) p
+    hasNodata <- liftM toBool $ peek p
+    return (if hasNodata then Just (fromCDouble value) else Nothing)
 {-# INLINE bandNodataValue #-}
-
-bandNodataValueIO :: RasterBandH -> IO (Maybe CDouble)
-bandNodataValueIO b = alloca $ \p -> do
-   value <- {#call unsafe GetRasterNoDataValue as ^#} b p
-   hasNodata <- liftM toBool $ peek p
-   return (if hasNodata then Just value else Nothing)
-{-# INLINE bandNodataValueIO #-}
 
 
 setBandNodataValue :: GDALType a => RWBand s a -> a -> GDAL s ()
 setBandNodataValue b v =
   liftIO $
-    checkCPLError "SetRasterNoDataValue" $
-      {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
+  checkCPLError "SetRasterNoDataValue" $
+  {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
 
 fillRaster :: CDouble -> CDouble  -> RWBand s a -> GDAL s ()
 fillRaster r i b =
@@ -1017,94 +1006,80 @@ setDescription val =
 
 instance GDALType Word8 where
   dataType _ = GDT_Byte
-  nodata = maxBound
+  defaultNoData = maxBound
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue Nothing   = Value
-  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  mkToValue = mkToValueEq
   {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word16 where
   dataType _ = GDT_UInt16
-  nodata = maxBound
+  defaultNoData = maxBound
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue Nothing   = Value
-  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  mkToValue = mkToValueEq
   {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word32 where
   dataType _ = GDT_UInt32
-  nodata = maxBound
+  defaultNoData = maxBound
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue Nothing   = Value
-  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  mkToValue = mkToValueEq
   {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int16 where
   dataType _ = GDT_Int16
-  nodata = minBound
+  defaultNoData = minBound
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue Nothing   = Value
-  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  mkToValue = mkToValueEq
   {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int32 where
   dataType _ = GDT_Int32
-  nodata = minBound
+  defaultNoData = minBound
   toCDouble = fromIntegral
   fromCDouble = truncate
-  mkToValue Nothing   = Value
-  mkToValue (Just nd) = \v -> if v==nd then NoData else Value v
+  mkToValue = mkToValueEq
   {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Float where
   dataType _ = GDT_Float32
-  nodata = 0/0
-  toCDouble = realToFrac
+  defaultNoData = defaultFractionalNodata
   fromCDouble = realToFrac
-  mkToValue Nothing  = Value
-  mkToValue (Just n)
-    | isNaN n   = \v -> if isNaN v then NoData else Value v
-    | otherwise = \v -> if v==n then NoData else Value v
+  toCDouble = realToFrac
+  mkToValue = mkToValueEq
   {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Double where
   dataType _ = GDT_Float64
-  nodata = 0/0
+  defaultNoData = defaultFractionalNodata
   toCDouble = realToFrac
   fromCDouble = realToFrac
-  mkToValue Nothing  = Value
-  mkToValue (Just n)
-    | isNaN n   = \v -> if isNaN v then NoData else Value v
-    | otherwise = \v -> if v==n then NoData else Value v
+  mkToValue = mkToValueEq
   {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType CDouble where
   dataType _ = GDT_Float64
-  nodata = 0/0
+  defaultNoData = defaultFractionalNodata
   toCDouble = id
   fromCDouble = id
-  mkToValue Nothing  = Value
-  mkToValue (Just n)
-    | isNaN n   = \v -> if isNaN v then NoData else Value v
-    | otherwise = \v -> if v==n then NoData else Value v
+  mkToValue = mkToValueEq
   {-# INLINE mkToValue #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
@@ -1112,7 +1087,7 @@ instance GDALType CDouble where
 #ifdef STORABLE_COMPLEX
 instance GDALType (Complex Int16) where
   dataType _ = GDT_CInt16
-  nodata = nodata :+ nodata
+  defaultNoData = defaultNoData :+ 0
   toCDouble = fromIntegral . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1122,7 +1097,7 @@ instance GDALType (Complex Int16) where
 
 instance GDALType (Complex Int32) where
   dataType _ = GDT_CInt32
-  nodata = nodata :+ nodata
+  defaultNoData = defaultNoData :+ 0
   toCDouble = fromIntegral . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1132,7 +1107,7 @@ instance GDALType (Complex Int32) where
 
 instance GDALType (Complex Float) where
   dataType _ = GDT_CFloat32
-  nodata = nodata :+ nodata
+  defaultNoData = defaultNoData :+ 0
   toCDouble = realToFrac . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1142,7 +1117,7 @@ instance GDALType (Complex Float) where
 
 instance GDALType (Complex Double) where
   dataType _ = GDT_CFloat64
-  nodata = nodata :+ nodata
+  defaultNoData = defaultNoData :+ 0
   toCDouble = realToFrac . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1150,3 +1125,14 @@ instance GDALType (Complex Double) where
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 #endif
+
+mkToValueEq :: Eq a => Maybe a -> (a -> Value a)
+mkToValueEq Nothing   v = Value v
+mkToValueEq (Just nd) v
+  | v == nd   = NoData
+  | otherwise = Value v
+{-# INLINE mkToValueEq #-}
+
+defaultFractionalNodata :: Fractional a => a
+defaultFractionalNodata = (-1)/0
+{-# INLINE defaultFractionalNodata #-}

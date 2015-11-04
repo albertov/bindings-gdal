@@ -367,13 +367,12 @@ createGridIO options noDataVal progressFun points envelope size =
         nullPtr
     liftM (stToUValue . St.map toValue) (St.unsafeFreeze out)
   where
-    toValue v
-      | toCDouble v == ndValue     = NoData
-      | otherwise                  = Value v
+    toValue                        = mkToValue (Just noDataVal)
     ndValue                        = toCDouble noDataVal
     XY nx ny                       = fmap fromIntegral size
     Envelope (XY x0 y0) (XY x1 y1) = fmap realToFrac envelope
     gtype                          = fromEnumC (dataType (Proxy :: Proxy a))
+{-# INLINE createGridIO #-}
 
 
 createGrid
@@ -388,6 +387,7 @@ createGrid options noDataVal points envelope =
   unsafePerformIO .
   try .
   createGridIO options noDataVal Nothing points envelope
+{-# INLINE createGrid #-}
 
 
 data GridPoint a =

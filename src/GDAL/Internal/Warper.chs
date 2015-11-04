@@ -105,12 +105,10 @@ setOptionDefaults ds moDs wo@WarpOptions{..} = do
             then do
               nBands <- datasetBandCount ds
               forM [1..nBands] $ \i -> do
-                b <- getBand i ds
-                srcNd <- liftIO $ bandNodataValueIO (unBand b)
+                srcNd <- bandNodataValue =<< getBand i ds
                 case moDs of
                   Just oDs -> do
-                    b' <- getBand i oDs
-                    dstNd <- liftIO $ bandNodataValueIO (unBand b')
+                    dstNd <- bandNodataValue =<< getBand i oDs
                     return (BandOptions i i srcNd dstNd)
                   Nothing  -> return (BandOptions i i srcNd srcNd)
             else return woBands
@@ -162,16 +160,13 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
       {#set GDALWarpOptions->dfCutlineBlendDist#} p
         (realToFrac woCutlineBlendDist)
       when (anyBandHasNoData wo) $ do
-        {#set GDALWarpOptions->padfSrcNoDataReal #} p =<<
-          cplNewArray (map (\BandOptions{..} -> fromMaybe nodata biSrcNoData)
-                           woBands)
-        {#set GDALWarpOptions->padfDstNoDataImag #} p =<<
-          cplNewArray (replicate (length woBands) 0)
-        {#set GDALWarpOptions->padfDstNoDataReal #} p =<<
-          cplNewArray (map (\BandOptions{..} -> fromMaybe nodata biDstNoData)
-                           woBands)
-        {#set GDALWarpOptions->padfSrcNoDataImag #} p =<<
-          cplNewArray (replicate (length woBands) 0)
+        let sNds = map (\bo -> fromMaybe defaultNoData (biSrcNoData bo)) woBands
+            dNds = map (\bo -> fromMaybe defaultNoData (biDstNoData bo)) woBands
+            imgs = replicate (length woBands) 0
+        cplNewArray sNds >>= {#set GDALWarpOptions->padfSrcNoDataReal #} p
+        cplNewArray imgs >>= {#set GDALWarpOptions->padfSrcNoDataImag #} p
+        cplNewArray dNds >>= {#set GDALWarpOptions->padfDstNoDataReal #} p
+        cplNewArray imgs >>= {#set GDALWarpOptions->padfDstNoDataImag #} p
       return p
 
 reprojectImage

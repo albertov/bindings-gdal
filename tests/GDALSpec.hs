@@ -13,7 +13,7 @@ import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Int (Int16, Int32)
 import Data.Proxy (Proxy(Proxy))
 import Data.String (fromString)
-import Data.Typeable (typeOf)
+import Data.Typeable (Typeable, typeOf)
 import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
 
@@ -461,7 +461,7 @@ spec = setupAndTeardown $ do
         desc `shouldBe` someDesc
 
 it_can_write_and_read_band
-  :: forall a. (Eq a , GDALType a)
+  :: forall a. (Eq a , GDALType a, Show a, Typeable a)
   => (Int -> Value a) -> SpecWith (Arg (IO ()))
 it_can_write_and_read_band f = it ("can write and read band " ++ typeName) $ do
   ds <- createMem (XY 100 100) 1 (dataType (Proxy :: Proxy a)) []
@@ -476,7 +476,7 @@ it_can_write_and_read_band f = it ("can write and read band " ++ typeName) $ do
 
 
 it_can_write_and_read_block
-  :: forall a. (Eq a , GDALType a)
+  :: forall a. (Eq a , GDALType a, Show a, Typeable a)
   => (Int -> Value a) -> SpecWith (Arg (IO ()))
 it_can_write_and_read_block f = it ("can write and read block "++typeName) $ do
   ds <- createMem (XY (U.length vec) 1) 1 (dataType (Proxy :: Proxy a)) []
@@ -489,7 +489,7 @@ it_can_write_and_read_block f = it ("can write and read block "++typeName) $ do
     typeName = show (typeOf (undefined :: a))
 
 it_can_foldl
-  :: forall a. (Eq a, GDALType a)
+  :: forall a. (Eq a, GDALType a, Show a, Typeable a)
   => (Int -> Value a) -> (Value a -> Value a -> Value a) -> Value a
   -> OptionList -> SpecWith (Arg (IO ()))
 it_can_foldl f f2 z options = withDir name $ \tmpDir -> do
