@@ -191,7 +191,7 @@ instance Exception GDALRasterException where
   fromException = bindingExceptionFromException
 
 
-class (U.Unbox a, Storable a) => GDALType a where
+class Storable a => GDALType a where
   dataType :: Proxy a -> DataType
   -- | default nodata value when writing to bands with no datavalue set
   defaultNoData   :: a
@@ -785,7 +785,7 @@ readMasked
 readMasked band reader = do
   vec   <- liftIO (reader bPtr)
   flags <- liftIO ({#call unsafe GetMaskFlags as ^#} bPtr)
-  liftM U.convert (mask flags vec)
+  mask flags vec
   where
     bPtr = unBand band
     mask fs
@@ -794,15 +794,13 @@ readMasked band reader = do
       | hasFlag fs MaskAllValid   = useAsIs
       | otherwise                 = useMaskBand
     hasFlag fs f = fromEnumC f .&. fs == fromEnumC f
-    useAsIs  = return . U.map Value . St.convert
+    useAsIs  = return . mkAllValidValueUVector
     useNoData vs   = do
       toValue <- liftM mkToValue (bandNodataValue band)
-      return $! U.map toValue (St.convert vs)
+      return $! mkValueUVector toValue vs
     useMaskBand vs = liftIO $ do
       ms <- {#call GetMaskBand as ^#} bPtr >>= reader :: IO (St.Vector Word8)
-      return $ U.zipWith (\v m -> if m/=0 then Value v else NoData)
-                         (U.convert vs)
-                         (U.convert ms)
+      return $ mkMaskedValueUVector ms vs
 {-# INLINE readMasked #-}
 
 {#enum define MaskFlag { GMF_ALL_VALID   as MaskAllValid
@@ -819,10 +817,11 @@ writeBand :: forall s a. GDALType a
   -> Vector (Value a)
   -> GDAL s ()
 writeBand band win sz@(XY bx by) uvec = do
-  fromVal <- liftM mkFromValue (bandNodataValue band)
+  nd <- liftM (fromMaybe defaultNoData) (bandNodataValue band)
   let nElems    = bx * by
+      (mask,v) = maskAndValueVectors uvec
+      vec      = St.zipWith (\m v -> if m==0 then nd else v) mask v
       (fp, len) = St.unsafeToForeignPtr0 vec
-      vec          = St.convert (U.map fromVal uvec)
       XY sx sy     = envelopeSize win
       XY xoff yoff = envelopeMin win
   if nElems /= len
@@ -929,10 +928,11 @@ writeBandBlock
   => RWBand s a -> BlockIx  -> Vector (Value a) -> GDAL s ()
 writeBandBlock band blockIx uvec = do
   checkType band
-  fromVal <- liftM mkFromValue (bandNodataValue band)
+  nd <- liftM (fromMaybe defaultNoData) (bandNodataValue band)
   liftIO $ do
     let (fp, len) = St.unsafeToForeignPtr0 vec
-        vec       = St.convert (U.map fromVal uvec)
+        (mask, v) = maskAndValueVectors uvec
+        vec         = St.zipWith (\m v -> if m==0 then nd else v) mask v
         nElems    = bandBlockLen band
     if nElems /= len
       then throwBindingException (InvalidBlockSize len)

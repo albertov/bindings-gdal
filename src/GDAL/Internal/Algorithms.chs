@@ -304,12 +304,11 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
         (castPtr vecPtr) nx ny dt 0 0 (fromIntegral len)
         lPtrPtr srsPtr (castPtr gt) trans
         tArg bValue opts pFun nullPtr
-    liftM (U.map toValue . St.convert) (St.unsafeFreeze vec)
+    liftM (mkValueUVector toValue) (St.unsafeFreeze vec)
   where
-    toValue v = if toCDouble v == ndValue then NoData else Value v
+    toValue   = mkToValue (Just nodataValue)
     dt        = fromEnumC (dataType (Proxy :: Proxy a))
     bValue    = toCDouble burnValue
-    ndValue   = toCDouble nodataValue
     XY nx ny  = fmap fromIntegral size
 
 
@@ -365,7 +364,7 @@ createGridIO options noDataVal progressFun points envelope size =
         (castPtr pOut)
         pFun
         nullPtr
-    liftM (U.map toValue . St.convert) (St.unsafeFreeze out)
+    liftM (mkValueUVector toValue) (St.unsafeFreeze out)
   where
     toValue                        = mkToValue (Just noDataVal)
     ndValue                        = toCDouble noDataVal

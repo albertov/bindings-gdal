@@ -30,6 +30,10 @@ module GDAL.Internal.Types (
   , release
   , sizeLen
   , unsafeGDALToIO
+  , mkValueUVector
+  , mkMaskedValueUVector
+  , mkAllValidValueUVector
+  , maskAndValueVectors
 ) where
 
 import Control.Applicative (Applicative(..), (<$>), liftA2)
@@ -61,11 +65,9 @@ import Data.Word (Word8)
 import qualified Data.Vector.Generic.Mutable as M
 import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Storable as St
-import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector.Unboxed.Base as U
 
-import Foreign.Ptr (Ptr, castPtr)
-import Foreign.Marshal.Array (advancePtr)
+import Foreign.Ptr (castPtr)
 import Foreign.Storable (Storable(..))
 
 import GDAL.Internal.CPLError
@@ -267,27 +269,6 @@ instance Fractional a => Fractional (Value a) where
   fromRational = Value . fromRational
   {-# INLINE fromRational #-}
 
-type FlagType = Word8
-
-instance Storable a => Storable (Value a) where
-  sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: FlagType)
-  alignment _ = alignment (undefined :: a)
-  peek p = let pm = castPtr p :: Ptr FlagType
-               pv = pm `advancePtr` 1
-           in do t <- peek pm
-                 if t/=0
-                   then fmap Value (peek (castPtr pv))
-                   else return NoData
-  poke p x = let pm = castPtr p :: Ptr FlagType
-                 pv = pm `advancePtr` 1
-             in case x of
-                  NoData  -> poke pm 0
-                  Value a -> poke pm 1 >> poke (castPtr pv) a
-  {-# INLINE sizeOf #-}
-  {-# INLINE alignment #-}
-  {-# INLINE peek #-}
-  {-# INLINE poke #-}
-
 isNoData :: Value a -> Bool
 isNoData NoData = True
 isNoData _      = False
@@ -298,8 +279,30 @@ fromValue v NoData    = v
 fromValue _ (Value v) = v
 {-# INLINE fromValue #-}
 
+maskValid, maskNoData :: Word8
+maskValid  = 255
+maskNoData = 0
+
+mkMaskedValueUVector
+  :: Storable a => St.Vector Word8 -> St.Vector a -> U.Vector (Value a)
+mkMaskedValueUVector mask values = V_Value (mask, values)
+{-# INLINE mkMaskedValueUVector #-}
+
+mkAllValidValueUVector
+  :: Storable a => St.Vector a -> U.Vector (Value a)
+mkAllValidValueUVector values =
+  V_Value (St.replicate (St.length values) maskValid, values)
+{-# INLINE mkAllValidValueUVector #-}
+
+mkValueUVector
+  :: Storable a => (a -> Value a) -> St.Vector a -> U.Vector (Value a)
+mkValueUVector fun values = V_Value (St.map mkMask values, values)
+  where mkMask v = if isNoData (fun v) then maskNoData else maskValid
+{-# INLINE mkValueUVector #-}
+
+
 newtype instance U.Vector    (Value a) =
-    V_Value (St.Vector Word8, St.Vector a)
+    V_Value { maskAndValueVectors :: (St.Vector Word8, St.Vector a) }
 newtype instance U.MVector s (Value a) =
   MV_Value (St.MVector s Word8, St.MVector s a)
 instance Storable a => U.Unbox (Value a)
@@ -319,15 +322,15 @@ instance Storable a => M.MVector U.MVector (Value a) where
            (M.basicUnsafeNew i)
   basicUnsafeRead (MV_Value (x,v)) i = do
     m <- M.basicUnsafeRead x i
-    if m/=0
+    if m/=maskNoData
        then liftM Value (M.basicUnsafeRead v i)
        else return NoData
   basicUnsafeWrite (MV_Value (x,v)) i a =
     case a of
       NoData ->
-        M.basicUnsafeWrite x i 0
+        M.basicUnsafeWrite x i maskNoData
       Value a' -> do
-        M.basicUnsafeWrite x i 1
+        M.basicUnsafeWrite x i maskValid
         M.basicUnsafeWrite v i a'
   {-# INLINE basicLength #-}
   {-# INLINE basicUnsafeSlice #-}
@@ -359,7 +362,7 @@ instance Storable a => G.Vector U.Vector (Value a) where
             , G.basicUnsafeSlice m n v)
   basicUnsafeIndexM (V_Value (x,v)) i = do
     m <- G.basicUnsafeIndexM x i
-    if toBool m
+    if m/=maskNoData
        then liftM Value (G.basicUnsafeIndexM v i)
        else return NoData
   {-# INLINE basicUnsafeFreeze #-}
