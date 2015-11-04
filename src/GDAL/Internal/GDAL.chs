@@ -191,7 +191,7 @@ instance Exception GDALRasterException where
   fromException = bindingExceptionFromException
 
 
-class Storable a => GDALType a where
+class (Eq a, Storable a) => GDALType a where
   dataType :: Proxy a -> DataType
   -- | default nodata value when writing to bands with no datavalue set
   defaultNoData   :: a
@@ -796,8 +796,12 @@ readMasked band reader = do
     hasFlag fs f = fromEnumC f .&. fs == fromEnumC f
     useAsIs  = return . mkAllValidValueUVector
     useNoData vs   = do
-      toValue <- liftM mkToValue (bandNodataValue band)
-      return $! mkValueUVector toValue vs
+      mNodata <- bandNodataValue band
+      return $! case mNodata of
+        Just nd -> mkValueUVector nd vs
+        Nothing ->
+          error ("GDAL.readMasked: band has GMF_NODATA flag but did not " ++
+                 "return a nodata value")
     useMaskBand vs = liftIO $ do
       ms <- {#call GetMaskBand as ^#} bPtr >>= reader :: IO (St.Vector Word8)
       return $ mkMaskedValueUVector ms vs
@@ -819,7 +823,7 @@ writeBand :: forall s a. GDALType a
 writeBand band win sz@(XY bx by) uvec = do
   nd <- liftM (fromMaybe defaultNoData) (bandNodataValue band)
   let nElems    = bx * by
-      (mask,v) = maskAndValueVectors uvec
+      (Mask mask,v) = maskAndValueVectors uvec
       vec      = St.zipWith (\m v -> if m==0 then nd else v) mask v
       (fp, len) = St.unsafeToForeignPtr0 vec
       XY sx sy     = envelopeSize win
@@ -931,7 +935,7 @@ writeBandBlock band blockIx uvec = do
   nd <- liftM (fromMaybe defaultNoData) (bandNodataValue band)
   liftIO $ do
     let (fp, len) = St.unsafeToForeignPtr0 vec
-        (mask, v) = maskAndValueVectors uvec
+        (Mask mask, v) = maskAndValueVectors uvec
         vec         = St.zipWith (\m v -> if m==0 then nd else v) mask v
         nElems    = bandBlockLen band
     if nElems /= len

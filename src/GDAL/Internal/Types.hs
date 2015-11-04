@@ -21,6 +21,7 @@ module GDAL.Internal.Types (
   , AccessMode
   , ReadWrite
   , ReadOnly
+  , Mask (..)
   , isNoData
   , fromValue
   , runGDAL
@@ -279,59 +280,86 @@ fromValue v NoData    = v
 fromValue _ (Value v) = v
 {-# INLINE fromValue #-}
 
+data Mask v a
+  = AllValid
+  | Mask    (v Word8)
+  | UseNoData a
+
 maskValid, maskNoData :: Word8
 maskValid  = 255
 maskNoData = 0
 
 mkMaskedValueUVector
-  :: Storable a => St.Vector Word8 -> St.Vector a -> U.Vector (Value a)
-mkMaskedValueUVector mask values = V_Value (mask, values)
+  :: St.Vector Word8 -> St.Vector a -> U.Vector (Value a)
+mkMaskedValueUVector mask values = V_Value (Mask mask, values)
 {-# INLINE mkMaskedValueUVector #-}
 
 mkAllValidValueUVector
-  :: Storable a => St.Vector a -> U.Vector (Value a)
-mkAllValidValueUVector values =
-  V_Value (St.replicate (St.length values) maskValid, values)
+  :: St.Vector a -> U.Vector (Value a)
+mkAllValidValueUVector values = V_Value (AllValid, values)
 {-# INLINE mkAllValidValueUVector #-}
 
 mkValueUVector
-  :: Storable a => (a -> Value a) -> St.Vector a -> U.Vector (Value a)
-mkValueUVector fun values = V_Value (St.map mkMask values, values)
-  where mkMask v = if isNoData (fun v) then maskNoData else maskValid
+  :: a -> St.Vector a -> U.Vector (Value a)
+mkValueUVector nd values = V_Value (UseNoData nd, values)
 {-# INLINE mkValueUVector #-}
 
 
 newtype instance U.Vector    (Value a) =
-    V_Value { maskAndValueVectors :: (St.Vector Word8, St.Vector a) }
+    V_Value { maskAndValueVectors :: (Mask St.Vector a, St.Vector a) }
 newtype instance U.MVector s (Value a) =
-  MV_Value (St.MVector s Word8, St.MVector s a)
-instance Storable a => U.Unbox (Value a)
+  MV_Value (Mask (St.MVector s) a, St.MVector s a)
+instance (Eq a, Storable a) => U.Unbox (Value a)
 
 
-instance Storable a => M.MVector U.MVector (Value a) where
-  basicLength (MV_Value (_,v)) =
-    M.basicLength v
-  basicUnsafeSlice m n (MV_Value (x,v)) =
-    MV_Value ( M.basicUnsafeSlice m n x
+instance (Eq a, Storable a) => M.MVector U.MVector (Value a) where
+  basicLength (MV_Value (_,v)) = M.basicLength v
+
+  basicUnsafeSlice m n (MV_Value (Mask x,v)) =
+    MV_Value ( Mask (M.basicUnsafeSlice m n x)
              , M.basicUnsafeSlice m n v)
-  basicOverlaps (MV_Value (_,v)) (MV_Value (_,v')) =
-    M.basicOverlaps v v'
+  basicUnsafeSlice m n (MV_Value (x,v)) =
+    MV_Value (x, M.basicUnsafeSlice m n v)
+
+  basicOverlaps (MV_Value (_,v)) (MV_Value (_,v')) = M.basicOverlaps v v'
+
   basicUnsafeNew i =
-    liftM2 (\x v -> MV_Value (x,v))
+    liftM2 (\x v -> MV_Value (Mask x,v))
            (M.basicUnsafeNew i)
            (M.basicUnsafeNew i)
-  basicUnsafeRead (MV_Value (x,v)) i = do
+
+  basicUnsafeRead (MV_Value (Mask x,v)) i = do
     m <- M.basicUnsafeRead x i
     if m/=maskNoData
        then liftM Value (M.basicUnsafeRead v i)
        else return NoData
-  basicUnsafeWrite (MV_Value (x,v)) i a =
+
+  basicUnsafeRead (MV_Value (AllValid,v)) i =
+    liftM Value (M.basicUnsafeRead v i)
+
+  basicUnsafeRead (MV_Value (UseNoData nd,v)) i = do
+    val <- M.basicUnsafeRead v i
+    return (if val==nd then NoData else Value val)
+
+  basicUnsafeWrite (MV_Value (Mask x,v)) i a =
     case a of
       NoData ->
         M.basicUnsafeWrite x i maskNoData
       Value a' -> do
         M.basicUnsafeWrite x i maskValid
         M.basicUnsafeWrite v i a'
+
+  basicUnsafeWrite (MV_Value (AllValid,v)) i a =
+    case a of
+      --TODO log the error or throw an exception in debug mode
+      NoData   -> return ()
+      Value a' -> M.basicUnsafeWrite v i a'
+
+  basicUnsafeWrite (MV_Value (UseNoData nd,v)) i a =
+    case a of
+      NoData   -> M.basicUnsafeWrite v i nd
+      Value a' -> M.basicUnsafeWrite v i a'
+
   {-# INLINE basicLength #-}
   {-# INLINE basicUnsafeSlice #-}
   {-# INLINE basicOverlaps #-}
@@ -340,31 +368,50 @@ instance Storable a => M.MVector U.MVector (Value a) where
   {-# INLINE basicUnsafeWrite #-}
 
 #if MIN_VERSION_vector(0,11,0)
-  basicInitialize (MV_Value (x,v)) = do
+  basicInitialize (MV_Value (Mask x,v)) = do
     M.basicInitialize x
     M.basicInitialize v
+  basicInitialize (MV_Value (_,v)) = M.basicInitialize v
   {-# INLINE basicInitialize #-}
 #endif
 
-instance Storable a => G.Vector U.Vector (Value a) where
-  basicUnsafeFreeze (MV_Value (x,v)) =
-    liftM2 (\x' v' -> V_Value (x',v'))
+instance (Eq a, Storable a) => G.Vector U.Vector (Value a) where
+  basicUnsafeFreeze (MV_Value (Mask x,v)) =
+    liftM2 (\x' v' -> V_Value (Mask x',v'))
            (G.basicUnsafeFreeze x)
            (G.basicUnsafeFreeze v)
-  basicUnsafeThaw (V_Value (x,v)) =
-    liftM2 (\x' v' -> MV_Value (x',v'))
+  basicUnsafeFreeze (MV_Value (AllValid,v)) =
+    liftM (\v' -> V_Value (AllValid,v')) (G.basicUnsafeFreeze v)
+  basicUnsafeFreeze (MV_Value (UseNoData nd,v)) =
+    liftM (\v' -> V_Value (UseNoData nd,v')) (G.basicUnsafeFreeze v)
+
+  basicUnsafeThaw (V_Value (Mask x,v)) =
+    liftM2 (\x' v' -> MV_Value (Mask x',v'))
            (G.basicUnsafeThaw x)
            (G.basicUnsafeThaw v)
-  basicLength  (V_Value (_,v)) =
-    G.basicLength v
+  basicUnsafeThaw (V_Value (AllValid,v)) =
+    liftM (\v' -> MV_Value (AllValid,v')) (G.basicUnsafeThaw v)
+  basicUnsafeThaw (V_Value (UseNoData nd,v)) =
+    liftM (\v' -> MV_Value (UseNoData nd,v')) (G.basicUnsafeThaw v)
+
+  basicLength  (V_Value (_,v)) = G.basicLength v
+
+  basicUnsafeSlice m n (V_Value (Mask x,v)) =
+    V_Value (Mask (G.basicUnsafeSlice m n x), G.basicUnsafeSlice m n v)
   basicUnsafeSlice m n (V_Value (x,v)) =
-    V_Value ( G.basicUnsafeSlice m n x
-            , G.basicUnsafeSlice m n v)
-  basicUnsafeIndexM (V_Value (x,v)) i = do
+    V_Value (x, G.basicUnsafeSlice m n v)
+
+  basicUnsafeIndexM (V_Value (Mask x,v)) i = do
     m <- G.basicUnsafeIndexM x i
     if m/=maskNoData
        then liftM Value (G.basicUnsafeIndexM v i)
        else return NoData
+  basicUnsafeIndexM (V_Value (AllValid,v)) i =
+     liftM Value (G.basicUnsafeIndexM v i)
+  basicUnsafeIndexM (V_Value (UseNoData nd,v)) i = do
+    val <- G.basicUnsafeIndexM v i
+    return (if val==nd then NoData else Value val)
+
   {-# INLINE basicUnsafeFreeze #-}
   {-# INLINE basicUnsafeThaw #-}
   {-# INLINE basicLength #-}

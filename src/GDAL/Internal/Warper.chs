@@ -160,8 +160,8 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
       {#set GDALWarpOptions->dfCutlineBlendDist#} p
         (realToFrac woCutlineBlendDist)
       when (anyBandHasNoData wo) $ do
-        let sNds = map (\bo -> fromMaybe defaultNoData (biSrcNoData bo)) woBands
-            dNds = map (\bo -> fromMaybe defaultNoData (biDstNoData bo)) woBands
+        let sNds = map (\bo -> fromMaybe (0/0) (biSrcNoData bo)) woBands
+            dNds = map (\bo -> fromMaybe (0/0) (biDstNoData bo)) woBands
             imgs = replicate (length woBands) 0
         cplNewArray sNds >>=
           {#set GDALWarpOptions->padfSrcNoDataReal #} p . castPtr

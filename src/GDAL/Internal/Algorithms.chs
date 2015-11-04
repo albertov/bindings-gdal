@@ -304,9 +304,8 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
         (castPtr vecPtr) nx ny dt 0 0 (fromIntegral len)
         lPtrPtr srsPtr (castPtr gt) trans
         tArg bValue opts pFun nullPtr
-    liftM (mkValueUVector toValue) (St.unsafeFreeze vec)
+    liftM (mkValueUVector nodataValue) (St.unsafeFreeze vec)
   where
-    toValue   = mkToValue (Just nodataValue)
     dt        = fromEnumC (dataType (Proxy :: Proxy a))
     bValue    = toCDouble burnValue
     XY nx ny  = fmap fromIntegral size
@@ -364,9 +363,8 @@ createGridIO options noDataVal progressFun points envelope size =
         (castPtr pOut)
         pFun
         nullPtr
-    liftM (mkValueUVector toValue) (St.unsafeFreeze out)
+    liftM (mkValueUVector noDataVal) (St.unsafeFreeze out)
   where
-    toValue                        = mkToValue (Just noDataVal)
     ndValue                        = toCDouble noDataVal
     XY nx ny                       = fmap fromIntegral size
     Envelope (XY x0 y0) (XY x1 y1) = fmap realToFrac envelope
