@@ -2,5 +2,4 @@ resolver: lts-3.12
 packages:
 - '.'
 extra-deps:
-- bitvec-0.1.0.1
 flags: {}
