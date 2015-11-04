@@ -195,8 +195,6 @@ instance Exception GDALRasterException where
 
 class (Eq a, Storable a) => GDALType a where
   dataType :: Proxy a -> DataType
-  -- | default nodata value when writing to bands with no datavalue set
-  defaultNoData   :: a
   -- | how to convert to double for use in setBandNodataValue
   toCDouble :: a -> CDouble
   -- | how to convert from double for use with bandNodataValue
@@ -1023,7 +1021,6 @@ setDescription val =
 
 instance GDALType Word8 where
   dataType _ = GDT_Byte
-  defaultNoData = maxBound
   toCDouble = fromIntegral
   fromCDouble = truncate
   mkToValue = mkToValueEq
@@ -1033,7 +1030,6 @@ instance GDALType Word8 where
 
 instance GDALType Word16 where
   dataType _ = GDT_UInt16
-  defaultNoData = maxBound
   toCDouble = fromIntegral
   fromCDouble = truncate
   mkToValue = mkToValueEq
@@ -1043,7 +1039,6 @@ instance GDALType Word16 where
 
 instance GDALType Word32 where
   dataType _ = GDT_UInt32
-  defaultNoData = maxBound
   toCDouble = fromIntegral
   fromCDouble = truncate
   mkToValue = mkToValueEq
@@ -1053,7 +1048,6 @@ instance GDALType Word32 where
 
 instance GDALType Int16 where
   dataType _ = GDT_Int16
-  defaultNoData = minBound
   toCDouble = fromIntegral
   fromCDouble = truncate
   mkToValue = mkToValueEq
@@ -1063,7 +1057,6 @@ instance GDALType Int16 where
 
 instance GDALType Int32 where
   dataType _ = GDT_Int32
-  defaultNoData = minBound
   toCDouble = fromIntegral
   fromCDouble = truncate
   mkToValue = mkToValueEq
@@ -1073,7 +1066,6 @@ instance GDALType Int32 where
 
 instance GDALType Float where
   dataType _ = GDT_Float32
-  defaultNoData = defaultFractionalNodata
   fromCDouble = realToFrac
   toCDouble = realToFrac
   mkToValue = mkToValueEq
@@ -1083,7 +1075,6 @@ instance GDALType Float where
 
 instance GDALType Double where
   dataType _ = GDT_Float64
-  defaultNoData = defaultFractionalNodata
   toCDouble = realToFrac
   fromCDouble = realToFrac
   mkToValue = mkToValueEq
@@ -1094,7 +1085,6 @@ instance GDALType Double where
 #ifdef STORABLE_COMPLEX
 instance GDALType (Complex Int16) where
   dataType _ = GDT_CInt16
-  defaultNoData = defaultNoData :+ 0
   toCDouble = fromIntegral . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1104,7 +1094,6 @@ instance GDALType (Complex Int16) where
 
 instance GDALType (Complex Int32) where
   dataType _ = GDT_CInt32
-  defaultNoData = defaultNoData :+ 0
   toCDouble = fromIntegral . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1114,7 +1103,6 @@ instance GDALType (Complex Int32) where
 
 instance GDALType (Complex Float) where
   dataType _ = GDT_CFloat32
-  defaultNoData = defaultNoData :+ 0
   toCDouble = realToFrac . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1124,7 +1112,6 @@ instance GDALType (Complex Float) where
 
 instance GDALType (Complex Double) where
   dataType _ = GDT_CFloat64
-  defaultNoData = defaultNoData :+ 0
   toCDouble = realToFrac . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)

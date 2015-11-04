@@ -21,7 +21,6 @@ module GDAL.Internal.Types (
   , AccessMode
   , ReadWrite
   , ReadOnly
-  , Mask (..)
   , isNoData
   , fromValue
   , runGDAL
