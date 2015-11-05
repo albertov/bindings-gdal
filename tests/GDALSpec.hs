@@ -482,17 +482,16 @@ spec = setupAndTeardown $ do
 it_can_write_and_read_band
   :: forall a. (Eq a , GDALType a, Show a, Typeable a)
   => (Int -> Value a) -> SpecWith (Arg (IO ()))
-it_can_write_and_read_band f = forM_ [[], [("TILED","YES")]] $ \options -> do
+it_can_write_and_read_band f = do
   let typeName = show (typeOf (undefined :: a))
-      name = "can write and read band "++typeName++" (" ++ show options ++")"
+      name = "can write and read band " ++ typeName
       sz = XY 300 307
       len = sizeLen sz
 
   describe name $ do
 
-    withDir "all valid values" $ \d -> do
-      let path = joinPath [d, "test.tif"]
-      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
+    it "all valid values" $ do
+      ds <- createMem sz 1 (dataType (Proxy :: Proxy a)) []
       band <- getBand 1 ds
       let vec = U.generate len f
       writeBand band (allBand band) (bandSize band) vec
@@ -501,12 +500,11 @@ it_can_write_and_read_band f = forM_ [[], [("TILED","YES")]] $ \options -> do
       U.length vec `shouldBe` U.length vec2
       vec `shouldBe` vec2
 
-    withDir "with nodata value" $ \d -> do
-      let path = joinPath [d, "test.tif"]
-      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
+    it "with nodata value" $ do
+      ds <- createMem sz 1 (dataType (Proxy :: Proxy a)) []
       band <- getBand 1 ds
       let vec = U.generate len (\i ->
-                  if i < len`div`2 && f i /= nd
+                  if i > len`div`2 && f i /= nd
                      then f i
                      else NoData)
           nd@(Value noData) = f (-1)
@@ -519,7 +517,7 @@ it_can_write_and_read_band f = forM_ [[], [("TILED","YES")]] $ \options -> do
 
     withDir "with mask" $ \d -> do
       let path = joinPath [d, "test.tif"]
-      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
+      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) []
       band <- getBand 1 ds
       let vec = U.generate len (\i -> if i < len`div`2 then f i else NoData)
       createBandMask band MaskPerBand
@@ -556,7 +554,7 @@ it_can_write_and_read_block f = forM_ [[], [("TILED","YES")]] $ \options -> do
       ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
       band <- getBand 1 ds
       let vec = U.generate len (\i ->
-                  if i < len`div`2 && f i /= nd
+                  if i > len`div`2 && f i /= nd
                      then f i
                      else NoData)
           nd@(Value noData) = f (-1)
@@ -572,7 +570,7 @@ it_can_write_and_read_block f = forM_ [[], [("TILED","YES")]] $ \options -> do
       let path = joinPath [d, "test.tif"]
       ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
       band <- getBand 1 ds
-      let vec = U.generate len (\i -> if i < len`div`2 then f i else NoData)
+      let vec = U.generate len (\i -> if i > len`div`2 then f i else NoData)
           len = bandBlockLen band
       createBandMask band MaskPerBand
       writeBandBlock band 0 vec
@@ -608,7 +606,7 @@ it_can_foldl f f2 z = forM_ [[], [("TILED","YES")]] $ \options -> do
           sz = XY 200 205
           Value nodata = z
       ds <- create "GTIFF" p sz 1 (dataType (Proxy :: Proxy a)) options
-      let vec = U.imap (\i v -> if i<(sizeLen sz`div`2) then v else NoData)
+      let vec = U.imap (\i v -> if i>(sizeLen sz`div`2) then v else NoData)
                        (U.generate (sizeLen sz) f)
       band <- getBand 1 ds
       setBandNodataValue band nodata
@@ -621,7 +619,7 @@ it_can_foldl f f2 z = forM_ [[], [("TILED","YES")]] $ \options -> do
       let p = joinPath [tmpDir, "test.tif"]
           sz = XY 200 205
       ds <- create "GTIFF" p sz 1 (dataType (Proxy :: Proxy a)) options
-      let vec = U.imap (\i v -> if i<(sizeLen sz`div`2) then v else NoData)
+      let vec = U.imap (\i v -> if i>(sizeLen sz`div`2) then v else NoData)
                        (U.generate (sizeLen sz) f)
       band <- getBand 1 ds
       createBandMask band MaskPerBand
