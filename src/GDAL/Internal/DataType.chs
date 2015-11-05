@@ -30,7 +30,7 @@ module GDAL.Internal.DataType (
 
 import Data.Int (Int8, Int16, Int32)
 import Data.Complex (Complex(..), realPart)
-import Data.Coerce (Coercible, coerce)
+import Data.Coerce (coerce)
 import Data.Proxy (Proxy(..))
 import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Storable as St
