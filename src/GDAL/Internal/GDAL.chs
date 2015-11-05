@@ -60,6 +60,7 @@ module GDAL.Internal.GDAL (
   , buildOverviews
   , driverCreationOptionList
 
+  , dataType
   , dataTypeSize
   , dataTypeByName
   , dataTypeUnion
@@ -130,7 +131,7 @@ import Data.Bits ((.&.))
 import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Complex (Complex(..), realPart)
-import Data.Coerce (coerce)
+import Data.Coerce (Coercible, coerce)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy(..))
 import Data.String (IsString)
@@ -142,7 +143,7 @@ import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import Foreign.C.String (withCString, CString)
-import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
+import Foreign.C.Types
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (
@@ -196,18 +197,6 @@ data GDALRasterException
 instance Exception GDALRasterException where
   toException   = bindingExceptionToException
   fromException = bindingExceptionFromException
-
-
-class (Eq a, Storable a) => GDALType a where
-  dataType :: Proxy a -> DataType
-  -- | how to convert to double for use in setBandNodataValue
-  toCDouble :: a -> CDouble
-  -- | how to convert from double for use with bandNodataValue
-  fromCDouble :: CDouble -> a
-
-  fillBand :: a -> RWBand s a -> GDAL s ()
-  fillBand v = fillRaster (toCDouble v) (toCDouble v)
-  {-# INLINE fillBand #-}
 
 {#enum DataType {} omit (GDT_TypeCount) deriving (Eq, Show, Bounded) #}
 
@@ -874,7 +863,7 @@ readBandBlock band blockIx = do
       checkCPLError "ReadBlock" $
       {#call ReadBlock as ^#} (unBand band') x y (castPtr pVec)
     St.unsafeFreeze vec
-  where XY x y = fmap fromIntegral blockIx
+  where XY x y = fmap fromIntegral blockIx :: XY CInt
 {-# INLINE readBandBlock #-}
 
 copyBand
@@ -1055,50 +1044,108 @@ setDescription val =
   liftIO . checkGDALCall_ const .
   useAsCString val . {#call unsafe GDALSetDescription as ^#} . majorObject
 
+
+
+------------------------------------------------------------------------------
+-- GDALType
+------------------------------------------------------------------------------
+
+class (
+    Eq a
+  , Storable a
+    -- Make sure we can safely castPtr in RasterIO, etc..
+  , Coercible a (GType (DataTypeT a))
+  , KnownDataType (DataTypeT a)
+  ) => GDALType a where
+  type DataTypeT a :: DataType
+  toCDouble :: a -> CDouble
+  fromCDouble :: CDouble -> a
+
+  fillBand :: a -> RWBand s a -> GDAL s ()
+  fillBand v = fillRaster (toCDouble v) (toCDouble v)
+  {-# INLINE fillBand #-}
+
+type family GType (k :: DataType) where
+  GType 'GDT_Byte     = CUChar
+  GType 'GDT_UInt16   = CUShort
+  GType 'GDT_UInt32   = CUInt
+  GType 'GDT_Int16    = CShort
+  GType 'GDT_Int32    = CInt
+  GType 'GDT_Float32  = CFloat
+  GType 'GDT_Float64  = CDouble
+  GType 'GDT_CInt16   = CComplex CShort
+  GType 'GDT_CInt32   = CComplex CInt
+  GType 'GDT_CFloat32 = CComplex CFloat
+  GType 'GDT_CFloat64 = CComplex CDouble
+
+newtype CComplex a = CComplex (Complex a)
+  deriving (Eq, Storable, Show)
+
+class KnownDataType (k :: DataType) where
+  dataTypeVal :: Proxy (k :: DataType) -> DataType
+
+dataType :: forall a. GDALType a => Proxy a -> DataType
+dataType _ = dataTypeVal (Proxy :: Proxy (DataTypeT a))
+{-# INLINE dataType #-}
+
+instance KnownDataType 'GDT_Byte      where dataTypeVal _ = GDT_Byte
+instance KnownDataType 'GDT_UInt16    where dataTypeVal _ = GDT_UInt16
+instance KnownDataType 'GDT_UInt32    where dataTypeVal _ = GDT_UInt32
+instance KnownDataType 'GDT_Int16     where dataTypeVal _ = GDT_Int16
+instance KnownDataType 'GDT_Int32     where dataTypeVal _ = GDT_Int32
+instance KnownDataType 'GDT_Float32   where dataTypeVal _ = GDT_Float32
+instance KnownDataType 'GDT_Float64   where dataTypeVal _ = GDT_Float64
+instance KnownDataType 'GDT_CInt16    where dataTypeVal _ = GDT_CInt16
+instance KnownDataType 'GDT_CInt32    where dataTypeVal _ = GDT_CInt32
+instance KnownDataType 'GDT_CFloat32  where dataTypeVal _ = GDT_CFloat32
+instance KnownDataType 'GDT_CFloat64  where dataTypeVal _ = GDT_CFloat64
+
+
+
 instance GDALType Word8 where
-  dataType _ = GDT_Byte
+  type DataTypeT Word8 = 'GDT_Byte
   toCDouble = fromIntegral
   fromCDouble = truncate
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word16 where
-  dataType _ = GDT_UInt16
+  type DataTypeT Word16 = 'GDT_UInt16
   toCDouble = fromIntegral
   fromCDouble = truncate
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word32 where
-  dataType _ = GDT_UInt32
+  type DataTypeT Word32 = 'GDT_UInt32
   toCDouble = fromIntegral
   fromCDouble = truncate
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int16 where
-  dataType _ = GDT_Int16
+  type DataTypeT Int16 = 'GDT_Int16
   toCDouble = fromIntegral
   fromCDouble = truncate
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int32 where
-  dataType _ = GDT_Int32
+  type DataTypeT Int32 = 'GDT_Int32
   toCDouble = fromIntegral
   fromCDouble = truncate
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Float where
-  dataType _ = GDT_Float32
+  type DataTypeT Float = 'GDT_Float32
   fromCDouble = realToFrac
   toCDouble = realToFrac
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Double where
-  dataType _ = GDT_Float64
+  type DataTypeT Double = 'GDT_Float64
   toCDouble = realToFrac
   fromCDouble = realToFrac
   {-# INLINE toCDouble #-}
@@ -1106,7 +1153,7 @@ instance GDALType Double where
 
 #ifdef STORABLE_COMPLEX
 instance GDALType (Complex Int16) where
-  dataType _ = GDT_CInt16
+  type DataTypeT (Complex Int16) = 'GDT_CInt16
   toCDouble = fromIntegral . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1115,7 +1162,7 @@ instance GDALType (Complex Int16) where
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Complex Int32) where
-  dataType _ = GDT_CInt32
+  type DataTypeT (Complex Int32) = 'GDT_CInt32
   toCDouble = fromIntegral . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1124,7 +1171,7 @@ instance GDALType (Complex Int32) where
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Complex Float) where
-  dataType _ = GDT_CFloat32
+  type DataTypeT (Complex Float) = 'GDT_CFloat32
   toCDouble = realToFrac . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
@@ -1133,7 +1180,7 @@ instance GDALType (Complex Float) where
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Complex Double) where
-  dataType _ = GDT_CFloat64
+  type DataTypeT (Complex Double) = 'GDT_CFloat64
   toCDouble = realToFrac . realPart
   fromCDouble d = fromCDouble d :+ fromCDouble d
   fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)

@@ -34,6 +34,7 @@ module GDAL (
   , ProgressFun
   , ContinueOrStop (..)
 
+  , dataType
   , runGDAL
   , execGDAL
   , withGDAL
