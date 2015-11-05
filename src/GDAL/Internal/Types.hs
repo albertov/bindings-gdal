@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -76,6 +77,7 @@ import Foreign.Ptr (castPtr)
 import Foreign.Storable (Storable(..))
 
 import GDAL.Internal.CPLError
+import GDAL.Internal.DataType
 
 
 
@@ -294,33 +296,43 @@ maskValid  = 255
 maskNoData = 0
 
 mkMaskedValueUVector
-  :: St.Vector Word8 -> St.Vector a -> U.Vector (Value a)
-mkMaskedValueUVector mask values = V_Value (Mask mask, values)
+  :: GDALType a
+  => St.Vector (CDataTypeT Word8) -> St.Vector (CDataTypeT a)
+  -> U.Vector (Value a)
+mkMaskedValueUVector mask values =
+    V_Value (Mask (fromGType mask), fromGType values)
 {-# INLINE mkMaskedValueUVector #-}
 
 mkAllValidValueUVector
-  :: St.Vector a -> U.Vector (Value a)
-mkAllValidValueUVector values = V_Value (AllValid, values)
+  :: GDALType a
+  => St.Vector (CDataTypeT a) -> U.Vector (Value a)
+mkAllValidValueUVector values = V_Value (AllValid, fromGType values)
 {-# INLINE mkAllValidValueUVector #-}
 
 mkValueUVector
-  :: a -> St.Vector a -> U.Vector (Value a)
-mkValueUVector nd values = V_Value (UseNoData nd, values)
+  :: GDALType a
+  => a -> St.Vector (CDataTypeT a) -> U.Vector (Value a)
+mkValueUVector nd values = V_Value (UseNoData nd, fromGType values)
 {-# INLINE mkValueUVector #-}
 
 mkMaskedValueUMVector
-  :: St.MVector s Word8 -> St.MVector s a -> U.MVector s (Value a)
-mkMaskedValueUMVector mask values = MV_Value (Mask mask, values)
+  :: GDALType a
+  => St.MVector s (CDataTypeT Word8) -> St.MVector s (CDataTypeT a)
+  -> U.MVector s (Value a)
+mkMaskedValueUMVector mask values =
+  MV_Value (Mask (fromGTypeM mask), fromGTypeM values)
 {-# INLINE mkMaskedValueUMVector #-}
 
 mkAllValidValueUMVector
-  :: St.MVector s a -> U.MVector s (Value a)
-mkAllValidValueUMVector values = MV_Value (AllValid, values)
+  :: GDALType a
+  => St.MVector s (CDataTypeT a) -> U.MVector s (Value a)
+mkAllValidValueUMVector values = MV_Value (AllValid, fromGTypeM values)
 {-# INLINE mkAllValidValueUMVector #-}
 
 mkValueUMVector
-  :: a -> St.MVector s a -> U.MVector s (Value a)
-mkValueUMVector nd values = MV_Value (UseNoData nd, values)
+  :: GDALType a
+  => a -> St.MVector s (CDataTypeT a) -> U.MVector s (Value a)
+mkValueUMVector nd values = MV_Value (UseNoData nd, fromGTypeM values)
 {-# INLINE mkValueUMVector #-}
 
 
@@ -328,37 +340,39 @@ newtype instance U.Vector    (Value a) =
     V_Value (Mask St.Vector a, St.Vector a)
 newtype instance U.MVector s (Value a) =
   MV_Value (Mask (St.MVector s) a, St.MVector s a)
-instance (Eq a, Storable a) => U.Unbox (Value a)
+instance GDALType a => U.Unbox (Value a)
 
 toStVecWithNodata
-  :: (Storable a, Eq a)
-  => a -> U.Vector (Value a) -> St.Vector a
+  :: GDALType a
+  => a -> U.Vector (Value a) -> St.Vector (CDataTypeT a)
 toStVecWithNodata nd v =
-  G.generate (G.length v) (fromValue nd . G.unsafeIndex v)
+  toGType (G.generate (G.length v) (fromValue nd . G.unsafeIndex v))
 {-# INLINE toStVecWithNodata #-}
 
 toStVecWithMask
-  :: (Storable a, Eq a)
-  => U.Vector (Value a) -> (St.Vector Word8, St.Vector a)
-toStVecWithMask (V_Value (Mask m  , vs)) = (m, vs)
+  :: GDALType a
+  => U.Vector (Value a)
+  -> (St.Vector (CDataTypeT Word8), St.Vector (CDataTypeT a))
+toStVecWithMask (V_Value (Mask m  , vs)) = (toGType m, toGType vs)
 toStVecWithMask (V_Value (AllValid, vs)) =
-  (St.replicate (St.length vs) maskValid, vs)
+  (toGType (St.replicate (St.length vs) maskValid), toGType vs)
 toStVecWithMask (V_Value (UseNoData nd, vs)) =
-  (St.map (\v->if v==nd then maskNoData else maskValid) vs , vs)
+  ( toGType (St.map (\v->if v==nd then maskNoData else maskValid) vs)
+  , toGType vs)
 {-# INLINE toStVecWithMask #-}
 
 
-toStVec :: (Storable a, Eq a) => U.Vector (Value a) -> Maybe (St.Vector a)
-toStVec (V_Value (AllValid, v)) = Just v
+toStVec :: GDALType a => U.Vector (Value a) -> Maybe (St.Vector (CDataTypeT a))
+toStVec (V_Value (AllValid, v)) = Just (toGType v)
 toStVec (V_Value (UseNoData nd, v))
   | St.any (==nd) v = Nothing
-  | otherwise       = Just v
+  | otherwise       = Just (toGType v)
 toStVec (V_Value (Mask m, v))
   | St.any (==maskNoData) m = Nothing
-  | otherwise               = Just v
+  | otherwise               = Just (toGType v)
 {-# INLINE toStVec #-}
 
-instance (Eq a, Storable a) => M.MVector U.MVector (Value a) where
+instance GDALType a => M.MVector U.MVector (Value a) where
   basicLength (MV_Value (_,v)) = M.basicLength v
 
   basicUnsafeSlice m n (MV_Value (Mask x,v)) =
@@ -421,7 +435,7 @@ instance (Eq a, Storable a) => M.MVector U.MVector (Value a) where
   {-# INLINE basicInitialize #-}
 #endif
 
-instance (Eq a, Storable a) => G.Vector U.Vector (Value a) where
+instance GDALType a => G.Vector U.Vector (Value a) where
   basicUnsafeFreeze (MV_Value (Mask x,v)) =
     liftM2 (\x' v' -> V_Value (Mask x',v'))
            (G.basicUnsafeFreeze x)

@@ -10,7 +10,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Data.Maybe (isNothing)
 import Data.Complex (Complex(..))
 import Data.IORef (newIORef, readIORef, modifyIORef')
-import Data.Int (Int16, Int32)
+import Data.Int (Int8, Int16, Int32)
 import Data.Proxy (Proxy(Proxy))
 import Data.String (fromString)
 import Data.Typeable (Typeable, typeOf)
@@ -295,6 +295,11 @@ spec = setupAndTeardown $ do
     it_can_write_and_read_band  fWord32
     it_can_write_and_read_block fWord32
     it_can_foldl                fWord32 (+) 0
+
+    let fInt8 = (Value . fromIntegral) :: Int -> Value Int8
+    it_can_write_and_read_band  fInt8
+    it_can_write_and_read_block fInt8
+    it_can_foldl                fInt8 (+) 0
 
     let fInt16 = (Value . fromIntegral) :: Int -> Value Int16
     it_can_write_and_read_band  fInt16

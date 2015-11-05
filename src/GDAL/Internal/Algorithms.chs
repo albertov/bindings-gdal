@@ -297,7 +297,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
   withOptionList options $ \opts ->
   withTransformerAndArg mTransformer (Just geotransform) $ \trans tArg ->
   with geotransform $ \gt -> do
-    vec <- Stm.replicate (sizeLen size) nodataValue
+    vec <- liftM toGTypeM (Stm.replicate (sizeLen size) nodataValue)
     Stm.unsafeWith vec $ \vecPtr ->
       checkCPLError "RasterizeLayersBuf" $
       {#call GDALRasterizeLayersBuf as ^#}

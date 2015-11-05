@@ -705,7 +705,8 @@ readBand band win (XY bx by) = readMasked band read_ read_
   where
     XY sx sy     = envelopeSize win
     XY xoff yoff = envelopeMin win
-    read_ :: forall a'. GDALType a' => Band s a' t -> GDAL s (St.Vector a')
+    read_ :: forall a'. GDALType a'
+          => Band s a' t -> GDAL s (St.Vector (CDataTypeT a'))
     read_ b = liftIO $ do
       vec <- Stm.new (bx*by)
       let dtype = fromEnumC (dataType (Proxy :: Proxy a'))
@@ -741,8 +742,8 @@ readBand band win (XY bx by) = readMasked band read_ read_
 readMasked
   :: GDALType a
   => Band s a t
-  -> (Band s a t -> GDAL s (St.Vector a))
-  -> (Band s Word8 t -> GDAL s (St.Vector Word8))
+  -> (Band s a t -> GDAL s (St.Vector (CDataTypeT a)))
+  -> (Band s Word8 t -> GDAL s (St.Vector (CDataTypeT Word8)))
   -> GDAL s (Vector (Value a))
 readMasked band reader maskReader =
   bandMaskType band >>= \case
@@ -757,8 +758,8 @@ readMasked band reader maskReader =
 writeMasked
   :: GDALType a
   => RWBand s a
-  -> (RWBand s a -> St.Vector a -> GDAL s ())
-  -> (RWBand s Word8 -> St.Vector Word8 -> GDAL s ())
+  -> (RWBand s a -> St.Vector (CDataTypeT a) -> GDAL s ())
+  -> (RWBand s Word8 -> St.Vector (CDataTypeT Word8) -> GDAL s ())
   -> Vector (Value a)
   -> GDAL s ()
 writeMasked band writer maskWriter uvec =
@@ -820,7 +821,8 @@ writeBand
   -> GDAL s ()
 writeBand band win sz@(XY bx by) = writeMasked band write write
   where
-    write :: forall a'. GDALType a' => RWBand s a' -> St.Vector a' -> GDAL s ()
+    write :: forall a'. GDALType a'
+         => RWBand s a' -> St.Vector (CDataTypeT a') -> GDAL s ()
     write band' vec = do
       let (fp, len)    = St.unsafeToForeignPtr0 vec
           nElems       = bx * by
@@ -974,8 +976,8 @@ readBandBlock band blockIx = do
 
 unsafeLoadBandBlock
   :: forall s t a. GDALType a
-  => Stm.IOVector a
-  -> Stm.IOVector Word8
+  => Stm.IOVector (CDataTypeT a)
+  -> Stm.IOVector (CDataTypeT Word8)
   -> Band s a t
   -> BlockIx
   -> GDAL s (Vector (Value a))

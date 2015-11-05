@@ -13,6 +13,7 @@ module GDAL.Internal.DataType (
     GDALType (..)
   , KnownDataType
   , DataType (..)
+  , CDataTypeT
   , GType
 
   , dataType
@@ -32,6 +33,8 @@ import Data.Complex (Complex(..), realPart)
 import Data.Coerce (Coercible, coerce)
 import Data.Proxy (Proxy(..))
 import Data.Word (Word8, Word16, Word32)
+import qualified Data.Vector.Storable as St
+import qualified Data.Vector.Storable.Mutable as Stm
 
 import Foreign.C.Types
 import Foreign.C.String (withCString)
@@ -64,17 +67,14 @@ import GDAL.Internal.Util (toEnumC, fromEnumC)
 ------------------------------------------------------------------------------
 -- GDALType
 ------------------------------------------------------------------------------
+type CDataTypeT a = GType (DataTypeT a)
 
-class (
-    Eq a
-  , Storable a
-    -- Make sure we can safely castPtr in RasterIO, etc..
-  , Coercible a (GType (DataTypeT a))
-  , KnownDataType (DataTypeT a)
-  ) => GDALType a where
+class (Eq a , Storable a , KnownDataType (DataTypeT a)) => GDALType a where
   type DataTypeT a :: DataType
-  toGType   :: a -> GType (DataTypeT a)
-  fromGType :: GType (DataTypeT a) -> a
+  toGType    :: St.Vector    a              -> St.Vector    (CDataTypeT a)
+  fromGType  :: St.Vector    (CDataTypeT a) -> St.Vector    a
+  toGTypeM   :: St.MVector s a              -> St.MVector s (CDataTypeT a)
+  fromGTypeM :: St.MVector s (CDataTypeT a) -> St.MVector s a
 
   toCDouble :: a -> CDouble
   fromCDouble :: CDouble -> a
@@ -95,7 +95,7 @@ type family GType (k :: DataType) where
 newtype CComplex a = CComplex (Complex a)
   deriving (Eq, Show)
 
-class KnownDataType (k :: DataType) where
+class (Storable (GType k), Eq (GType k)) => KnownDataType (k :: DataType) where
   dataTypeVal :: Proxy (k :: DataType) -> DataType
 
 dataType :: forall a. GDALType a => Proxy a -> DataType
@@ -121,6 +121,10 @@ instance GDALType Word8 where
   fromCDouble = truncate
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -132,6 +136,10 @@ instance GDALType Word16 where
   fromCDouble = truncate
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -143,6 +151,25 @@ instance GDALType Word32 where
   fromCDouble = truncate
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
+  {-# INLINE toGType #-}
+  {-# INLINE fromGType #-}
+  {-# INLINE toCDouble #-}
+  {-# INLINE fromCDouble #-}
+
+instance GDALType Int8 where
+  type DataTypeT Int8 = 'GDT_Byte
+  toCDouble = fromIntegral
+  fromCDouble = truncate
+  toGType    = St.unsafeCast
+  fromGType  = St.unsafeCast
+  toGTypeM   = Stm.unsafeCast
+  fromGTypeM = Stm.unsafeCast
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -154,6 +181,10 @@ instance GDALType Int16 where
   fromCDouble = truncate
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -165,6 +196,10 @@ instance GDALType Int32 where
   fromCDouble = truncate
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -176,6 +211,10 @@ instance GDALType Float where
   toCDouble = realToFrac
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -187,6 +226,10 @@ instance GDALType Double where
   fromCDouble = realToFrac
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -202,6 +245,10 @@ instance GDALType (Complex Int16) where
   fromCDouble d = fromCDouble d :+ fromCDouble d
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -213,6 +260,10 @@ instance GDALType (Complex Int32) where
   fromCDouble d = fromCDouble d :+ fromCDouble d
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -224,6 +275,10 @@ instance GDALType (Complex Float) where
   fromCDouble d = fromCDouble d :+ fromCDouble d
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
@@ -235,6 +290,10 @@ instance GDALType (Complex Double) where
   fromCDouble d = fromCDouble d :+ fromCDouble d
   toGType    = coerce
   fromGType  = coerce
+  toGTypeM   = coerce
+  fromGTypeM = coerce
+  {-# INLINE toGTypeM #-}
+  {-# INLINE fromGTypeM #-}
   {-# INLINE toGType #-}
   {-# INLINE fromGType #-}
   {-# INLINE toCDouble #-}
