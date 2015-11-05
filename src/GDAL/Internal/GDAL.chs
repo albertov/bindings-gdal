@@ -880,45 +880,29 @@ ifoldlM'
   => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
 ifoldlM' f initialAcc band = do
   v <- liftIO $ Stm.new (bandBlockLen band)
-  checkType band >> bandMaskType band >>= \case
-    MaskAllValid ->
-      ifoldlM_loop (blockLoader (unBand band) v) (mkAllValidValueUMVector v)
-    MaskNoData -> do
-      noData <- noDataOrFail band
-      ifoldlM_loop (blockLoader (unBand band) v) (mkValueUMVector noData v)
-    _ -> do
-      vmask <- liftIO $ Stm.new (bandBlockLen band)
-      mask  <- bandMask band
-      let loadBlock i j = do blockLoader (unBand band) v i j
-                             blockLoader (unBand mask) vmask i j
-      ifoldlM_loop loadBlock (mkMaskedValueUMVector vmask v)
+  vm <- liftIO $ Stm.new (bandBlockLen band)
+  let blockLoader i j = unsafeLoadBandBlock v vm band (XY i j)
+  ifoldlM_loop blockLoader
   where
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
-    blockLoader
-      :: forall c. Storable c
-      => RasterBandH -> Stm.IOVector c -> Int -> Int -> GDAL s ()
-    blockLoader bPtr vec i j =
-      liftIO $
-      checkCPLError "ReadBlock" $
-      Stm.unsafeWith vec $
-      {#call ReadBlock as ^#} bPtr (fromIntegral i) (fromIntegral j) . castPtr
     {-# INLINE ifoldlM_loop #-}
-    ifoldlM_loop loadBlock vec = goB SPEC 0 0 initialAcc
+    ifoldlM_loop loadBlock = goB SPEC 0 0 initialAcc
       where
         goB !sPEC !iB !jB !acc
-          | iB < nx = do loadBlock iB jB
-                         go sPEC 0 0 acc >>= goB sPEC (iB+1) jB
+          | iB < nx = do vec <- loadBlock iB jB
+                         go sPEC vec 0 0 acc >>= goB sPEC (iB+1) jB
           | jB+1 < ny = goB sPEC 0 (jB+1) acc
           | otherwise = return acc
           where
-            go !sPEC2 !i !j !acc'
-              | i   < stopx = applyTo i j acc' >>= go sPEC2 (i+1) j
-              | j+1 < stopy = go sPEC2 0 (j+1) acc'
+            go !sPEC2 vec !i !j !acc'
+              | i   < stopx = do
+                  let ix = XY (iB*sx+i) (jB*sy+j)
+                  v <- vec `G.unsafeIndexM` (j*sx+i)
+                  f acc' ix v >>= go sPEC2 vec (i+1) j
+              | j+1 < stopy = go sPEC2 vec 0 (j+1) acc'
               | otherwise   = return acc'
-            applyTo i j a = liftIO (unsafeRead vec (j*sx+i)) >>= f a ix
-              where ix = XY (iB*sx+i) (jB*sy+j)
             stopx
               | mx /= 0 && iB==nx-1 = mx
               | otherwise           = sx
@@ -975,17 +959,29 @@ readBandBlock
   => Band s a t -> BlockIx -> GDAL s (Vector (Value a))
 readBandBlock band blockIx = do
   checkType band
+  let len = bandBlockLen band
+  buf <- liftIO $ Stm.new len
+  maskBuf <- liftIO $ Stm.replicate len 0
+  unsafeLoadBandBlock buf maskBuf band blockIx
+{-# INLINE readBandBlock #-}
+
+unsafeLoadBandBlock
+  :: forall s t a. GDALType a
+  => Stm.IOVector a
+  -> Stm.IOVector Word8
+  -> Band s a t
+  -> BlockIx
+  -> GDAL s (Vector (Value a))
+unsafeLoadBandBlock buf maskBuf band blockIx =
   readMasked band reader maskReader
   where
-    len = bandBlockLen band
     bi  = fmap fromIntegral blockIx
 
     reader band' = liftIO $ do
-      vec <- Stm.new len
-      Stm.unsafeWith vec $ \pVec ->
+      Stm.unsafeWith buf $ \pVec ->
         checkCPLError "ReadBlock" $
         {#call ReadBlock as ^#} (unBand band') (px bi) (py bi) (castPtr pVec)
-      St.unsafeFreeze vec
+      St.unsafeFreeze buf
 
     bs  = fmap fromIntegral (bandBlockSize band)
     rs  = fmap fromIntegral (bandSize band)
@@ -994,8 +990,7 @@ readBandBlock band blockIx = do
     lineSpace = px bs * fromIntegral (sizeOf (undefined :: Word8))
 
     maskReader band' = liftIO $ do
-      vec <- Stm.replicate len 0
-      Stm.unsafeWith vec $ \pVec ->
+      Stm.unsafeWith maskBuf $ \pVec ->
         checkCPLError "RasterIO" $
         {#call RasterIO as ^#}
           (unBand band')
@@ -1010,8 +1005,9 @@ readBandBlock band blockIx = do
           (fromEnumC GDT_Byte)
           0
           (fromIntegral lineSpace)
-      St.unsafeFreeze vec
-{-# INLINE readBandBlock #-}
+      St.unsafeFreeze maskBuf
+{-# INLINE unsafeLoadBandBlock #-}
+
 
 
 openDatasetCount :: IO Int

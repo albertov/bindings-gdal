@@ -613,7 +613,6 @@ it_can_foldl f f2 z = forM_ [[], [("TILED","YES")]] $ \options -> do
       value `shouldBe` U.foldl' f2 z vec
 
     withDir "with mask" $ \tmpDir -> do
-      pendingWith "need to fix mask band block reading"
       let p = joinPath [tmpDir, "test.tif"]
           sz = XY 200 205
       ds <- create "GTIFF" p sz 1 (dataType (Proxy :: Proxy a)) options
