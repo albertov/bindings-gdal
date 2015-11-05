@@ -244,7 +244,6 @@ spec = setupAndTeardown $ do
         v `shouldSatisfy` (U.all isNoData)
 
       withDir "can fill with NoData if createBandMask" $ \d -> do
-        pendingWith "need to fix block io with mask bands"
         ds <- create "GTIFF" (joinPath [d, "test.tif"]) 100 1 GDT_Int16 []
         band <- getBand 1 ds
         createBandMask band MaskPerDataset
@@ -565,7 +564,6 @@ it_can_write_and_read_block f = forM_ [[], [("TILED","YES")]] $ \options -> do
       vec `shouldBe` vec2
 
     withDir "with mask" $ \d -> do
-      pendingWith "need to fix mask band block reading"
       let path = joinPath [d, "test.tif"]
       ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
       band <- getBand 1 ds

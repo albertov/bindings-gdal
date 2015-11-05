@@ -701,7 +701,7 @@ readBand :: forall s t a. GDALType a
   -> Envelope Int
   -> Size
   -> GDAL s (Vector (Value a))
-readBand band win (XY bx by) = readMasked band read_
+readBand band win (XY bx by) = readMasked band read_ read_
   where
     XY sx sy     = envelopeSize win
     XY xoff yoff = envelopeMin win
@@ -741,25 +741,27 @@ readBand band win (XY bx by) = readMasked band read_
 readMasked
   :: GDALType a
   => Band s a t
-  -> (forall a'. GDALType a' => Band s a' t -> GDAL s (St.Vector a'))
+  -> (Band s a t -> GDAL s (St.Vector a))
+  -> (Band s Word8 t -> GDAL s (St.Vector Word8))
   -> GDAL s (Vector (Value a))
-readMasked band reader =
+readMasked band reader maskReader =
   bandMaskType band >>= \case
     MaskNoData ->
       liftM2 mkValueUVector (noDataOrFail band) (reader band)
     MaskAllValid ->
       liftM mkAllValidValueUVector (reader band)
     _ ->
-      liftM2 mkMaskedValueUVector (reader =<< bandMask band) (reader band)
+      liftM2 mkMaskedValueUVector (maskReader =<< bandMask band) (reader band)
 {-# INLINE readMasked #-}
 
 writeMasked
   :: GDALType a
   => RWBand s a
-  -> (forall a'. GDALType a' => RWBand s a' -> St.Vector a' -> GDAL s ())
+  -> (RWBand s a -> St.Vector a -> GDAL s ())
+  -> (RWBand s Word8 -> St.Vector Word8 -> GDAL s ())
   -> Vector (Value a)
   -> GDAL s ()
-writeMasked band writer uvec =
+writeMasked band writer maskWriter uvec =
   bandMaskType band >>= \case
     MaskNoData ->
       noDataOrFail band >>= writer band . flip toStVecWithNodata uvec
@@ -769,7 +771,7 @@ writeMasked band writer uvec =
             (toStVec uvec)
     _ ->
       let (mask, vec) = toStVecWithMask uvec
-      in writer band vec >> bandMask band >>= flip writer mask
+      in writer band vec >> bandMask band >>= flip maskWriter mask
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
 noDataOrFail = liftM (fromMaybe err) . bandNodataValue
@@ -816,7 +818,7 @@ writeBand
   -> Size
   -> Vector (Value a)
   -> GDAL s ()
-writeBand band win sz@(XY bx by) = writeMasked band write
+writeBand band win sz@(XY bx by) = writeMasked band write write
   where
     write :: forall a'. GDALType a' => RWBand s a' -> St.Vector a' -> GDAL s ()
     write band' vec = do
@@ -843,20 +845,6 @@ writeBand band win sz@(XY bx by) = writeMasked band write
                  0
                  0
 {-# INLINE writeBand #-}
-
-readBandBlock
-  :: forall s t a. GDALType a
-  => Band s a t -> BlockIx -> GDAL s (Vector (Value a))
-readBandBlock band blockIx = do
-  checkType band
-  readMasked band $ \band' -> liftIO $ do
-    vec <- Stm.new (bandBlockLen band')
-    Stm.unsafeWith vec $ \pVec ->
-      checkCPLError "ReadBlock" $
-      {#call ReadBlock as ^#} (unBand band') x y (castPtr pVec)
-    St.unsafeFreeze vec
-  where XY x y = fmap fromIntegral blockIx :: XY CInt
-{-# INLINE readBandBlock #-}
 
 copyBand
   :: Band s a t -> RWBand s a -> OptionList
@@ -942,18 +930,89 @@ ifoldlM' f initialAcc band = do
 writeBandBlock
   :: forall s a. GDALType a
   => RWBand s a -> BlockIx  -> Vector (Value a) -> GDAL s ()
-writeBandBlock band blockIx = writeMasked band $ \band' vec -> do
+writeBandBlock band blockIx uvec = do
   checkType band
-  let (fp, len) = St.unsafeToForeignPtr0 vec
-      nElems    = bandBlockLen band'
-      XY x y = fmap fromIntegral blockIx
-  if nElems /= len
-    then throwBindingException (InvalidBlockSize len)
-    else liftIO $
-         withForeignPtr fp $
-         checkCPLError "WriteBlock" .
-           {#call WriteBlock as ^#} (unBand band') x y .  castPtr
+  when (bandBlockLen band /= len) $
+    throwBindingException (InvalidBlockSize len)
+  writeMasked band write writeMask uvec
+  where
+    len = G.length uvec
+    bi  = fmap fromIntegral blockIx
+
+    write band' vec =
+      liftIO $
+      checkCPLError "WriteBlock" $
+      St.unsafeWith vec $ \pVec ->
+        {#call WriteBlock as ^#} (unBand band') (px bi) (py bi) (castPtr pVec)
+
+    bs  = fmap fromIntegral (bandBlockSize band)
+    rs  = fmap fromIntegral (bandSize band)
+    off = bi * bs
+    win = liftA2 min bs (rs - off)
+    lineSpace = px bs * fromIntegral (sizeOf (undefined :: Word8))
+
+    writeMask band' vec =
+      liftIO $
+      checkCPLError "WriteBlock" $
+      St.unsafeWith vec $ \pVec ->
+        {#call RasterIO as ^#}
+          (unBand band')
+          (fromEnumC GF_Write)
+          (px off)
+          (py off)
+          (px win)
+          (py win)
+          (castPtr pVec)
+          (px win)
+          (py win)
+          (fromEnumC GDT_Byte)
+          0
+          (fromIntegral lineSpace)
 {-# INLINE writeBandBlock #-}
+
+readBandBlock
+  :: forall s t a. GDALType a
+  => Band s a t -> BlockIx -> GDAL s (Vector (Value a))
+readBandBlock band blockIx = do
+  checkType band
+  readMasked band reader maskReader
+  where
+    len = bandBlockLen band
+    bi  = fmap fromIntegral blockIx
+
+    reader band' = liftIO $ do
+      vec <- Stm.new len
+      Stm.unsafeWith vec $ \pVec ->
+        checkCPLError "ReadBlock" $
+        {#call ReadBlock as ^#} (unBand band') (px bi) (py bi) (castPtr pVec)
+      St.unsafeFreeze vec
+
+    bs  = fmap fromIntegral (bandBlockSize band)
+    rs  = fmap fromIntegral (bandSize band)
+    off = bi * bs
+    win = liftA2 min bs (rs  - off)
+    lineSpace = px bs * fromIntegral (sizeOf (undefined :: Word8))
+
+    maskReader band' = liftIO $ do
+      vec <- Stm.replicate len 0
+      Stm.unsafeWith vec $ \pVec ->
+        checkCPLError "RasterIO" $
+        {#call RasterIO as ^#}
+          (unBand band')
+          (fromEnumC GF_Read)
+          (px off)
+          (py off)
+          (px win)
+          (py win)
+          (castPtr pVec)
+          (px win)
+          (py win)
+          (fromEnumC GDT_Byte)
+          0
+          (fromIntegral lineSpace)
+      St.unsafeFreeze vec
+{-# INLINE readBandBlock #-}
+
 
 openDatasetCount :: IO Int
 openDatasetCount =
