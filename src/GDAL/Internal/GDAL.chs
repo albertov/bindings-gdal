@@ -19,9 +19,7 @@
 #include "bindings.h"
 
 module GDAL.Internal.GDAL (
-    GDALType (..)
-  , GDALRasterException (..)
-  , DataType (..)
+    GDALRasterException (..)
   , Geotransform (..)
   , OverviewResampling (..)
   , Driver (..)
@@ -33,6 +31,7 @@ module GDAL.Internal.GDAL (
   , ROBand
   , Band
   , RasterBandH (..)
+  , MaskType (..)
 
   , northUpGeotransform
   , gcpGeotransform
@@ -60,11 +59,6 @@ module GDAL.Internal.GDAL (
   , buildOverviews
   , driverCreationOptionList
 
-  , dataType
-  , dataTypeSize
-  , dataTypeByName
-  , dataTypeUnion
-  , dataTypeIsComplex
   , bandTypedAs
   , bandCoercedTo
   {-
@@ -94,7 +88,9 @@ module GDAL.Internal.GDAL (
   , setBandNodataValue
   , getBand
   , addBand
+  , fillBand
   , readBand
+  , createBandMask
   , readBandBlock
   , writeBand
   , writeBandBlock
@@ -117,6 +113,8 @@ module GDAL.Internal.GDAL (
   , version
   , newDatasetHandle
   , openDatasetCount
+
+  , module GDAL.Internal.DataType
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
@@ -126,23 +124,23 @@ import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when, (>=>))
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
-import Data.Int (Int16, Int32)
 import Data.Bits ((.&.))
 import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
-import Data.Complex (Complex(..), realPart)
-import Data.Coerce (Coercible, coerce)
+import Data.Coerce (coerce)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy(..))
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
-import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
+import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import Data.Vector.Unboxed.Mutable (unsafeRead)
+import Data.Word (Word8)
+
 import Foreign.C.String (withCString, CString)
 import Foreign.C.Types
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
@@ -157,6 +155,7 @@ import GHC.Types (SPEC(..))
 import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
+import GDAL.Internal.DataType
 import GDAL.Internal.Common
 import GDAL.Internal.Util
 {#import GDAL.Internal.GCP#}
@@ -194,20 +193,6 @@ data GDALRasterException
 instance Exception GDALRasterException where
   toException   = bindingExceptionToException
   fromException = bindingExceptionFromException
-
-{#enum DataType {} omit (GDT_TypeCount) deriving (Eq, Show, Bounded) #}
-
-{#fun pure unsafe GetDataTypeSize as dataTypeSize
-    { fromEnumC `DataType' } -> `Int' #}
-
-{#fun pure unsafe DataTypeIsComplex as ^
-    { fromEnumC `DataType' } -> `Bool' #}
-
-{#fun pure unsafe GetDataTypeByName as dataTypeByName
-    { `String' } -> `DataType' toEnumC #}
-
-{#fun pure unsafe DataTypeUnion as ^
-    { fromEnumC `DataType', fromEnumC `DataType' } -> `DataType' toEnumC #}
 
 
 {#enum GDALAccess {} deriving (Eq, Show) #}
@@ -705,12 +690,11 @@ setBandNodataValue b v =
   checkCPLError "SetRasterNoDataValue" $
   {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
 
-fillRaster :: CDouble -> CDouble  -> RWBand s a -> GDAL s ()
-fillRaster r i b =
-  liftIO $
-    checkCPLError "FillRaster" $
-      {#call GDALFillRaster as ^#} (unBand b) r i
-
+createBandMask :: RWBand s a -> MaskType -> GDAL s ()
+createBandMask band maskType = liftIO $
+  checkCPLError "createBandMask" $
+  {#call CreateMaskBand as ^#} (unBand band) cflags
+  where cflags = maskFlagsForType maskType
 
 readBand :: forall s t a. GDALType a
   => (Band s a t)
@@ -765,7 +749,7 @@ readMasked band reader =
       liftM2 mkValueUVector (noDataOrFail band) (reader band)
     MaskAllValid ->
       liftM mkAllValidValueUVector (reader band)
-    MaskBand ->
+    _ ->
       liftM2 mkMaskedValueUVector (reader =<< bandMask band) (reader band)
 {-# INLINE readMasked #-}
 
@@ -783,7 +767,7 @@ writeMasked band writer uvec =
       maybe (throwBindingException BandDoesNotAllowNoData)
             (writer band)
             (toStVec uvec)
-    MaskBand ->
+    _ ->
       let (mask, vec) = toStVecWithMask uvec
       in writer band vec >> bandMask band >>= flip writer mask
 
@@ -796,16 +780,27 @@ noDataOrFail = liftM (fromMaybe err) . bandNodataValue
 bandMask :: Band s a t -> GDAL s (Band s Word8 t)
 bandMask = liftIO . liftM Band . {#call GetMaskBand as ^#} . unBand
 
-data MaskType = MaskNoData | MaskAllValid | MaskBand
+data MaskType
+  = MaskNoData
+  | MaskAllValid
+  | MaskPerBand
+  | MaskPerDataset
 
 bandMaskType :: Band s a t -> GDAL s MaskType
 bandMaskType band = do
   flags <- liftIO ({#call unsafe GetMaskFlags as ^#} (unBand band))
   let testFlag f = (fromEnumC f .&. flags) /= 0
   return $ case () of
-    () | testFlag GMF_NODATA    -> MaskNoData
-    () | testFlag GMF_ALL_VALID -> MaskAllValid
-    _                           -> MaskBand
+    () | testFlag GMF_NODATA      -> MaskNoData
+    () | testFlag GMF_ALL_VALID   -> MaskAllValid
+    () | testFlag GMF_PER_DATASET -> MaskPerDataset
+    _                             -> MaskPerBand
+
+maskFlagsForType :: MaskType -> CInt
+maskFlagsForType MaskNoData      = fromEnumC GMF_NODATA
+maskFlagsForType MaskAllValid    = fromEnumC GMF_ALL_VALID
+maskFlagsForType MaskPerBand     = 0
+maskFlagsForType MaskPerDataset  = fromEnumC GMF_PER_DATASET
 
 {#enum define MaskFlag { GMF_ALL_VALID   as GMF_ALL_VALID
                        , GMF_PER_DATASET as GMF_PER_DATASET
@@ -895,19 +890,17 @@ foldlM' f = ifoldlM' (\acc _ -> f acc)
 ifoldlM'
   :: forall s t a b. GDALType a
   => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
-ifoldlM' f initialAcc band =
+ifoldlM' f initialAcc band = do
+  v <- liftIO $ Stm.new (bandBlockLen band)
   checkType band >> bandMaskType band >>= \case
+    MaskAllValid ->
+      ifoldlM_loop (blockLoader (unBand band) v) (mkAllValidValueUMVector v)
     MaskNoData -> do
-      v <- liftIO $ Stm.new (bandBlockLen band)
       noData <- noDataOrFail band
       ifoldlM_loop (blockLoader (unBand band) v) (mkValueUMVector noData v)
-    MaskAllValid -> do
-      v <- liftIO $ Stm.new (bandBlockLen band)
-      ifoldlM_loop (blockLoader (unBand band) v) (mkAllValidValueUMVector v)
-    MaskBand -> do
-      v <- liftIO $ Stm.new (bandBlockLen band)
+    _ -> do
       vmask <- liftIO $ Stm.new (bandBlockLen band)
-      mask <- bandMask band
+      mask  <- bandMask band
       let loadBlock i j = do blockLoader (unBand band) v i j
                              blockLoader (unBand mask) vmask i j
       ifoldlM_loop loadBlock (mkMaskedValueUMVector vmask v)
@@ -952,7 +945,7 @@ writeBandBlock
 writeBandBlock band blockIx = writeMasked band $ \band' vec -> do
   checkType band
   let (fp, len) = St.unsafeToForeignPtr0 vec
-      nElems    = bandBlockLen band
+      nElems    = bandBlockLen band'
       XY x y = fmap fromIntegral blockIx
   if nElems /= len
     then throwBindingException (InvalidBlockSize len)
@@ -1026,146 +1019,9 @@ setDescription val =
   useAsCString val . {#call unsafe GDALSetDescription as ^#} . majorObject
 
 
-
-------------------------------------------------------------------------------
--- GDALType
-------------------------------------------------------------------------------
-
-class (
-    Eq a
-  , Storable a
-    -- Make sure we can safely castPtr in RasterIO, etc..
-  , Coercible a (GType (DataTypeT a))
-  , KnownDataType (DataTypeT a)
-  ) => GDALType a where
-  type DataTypeT a :: DataType
-  toCDouble :: a -> CDouble
-  fromCDouble :: CDouble -> a
-
-  fillBand :: a -> RWBand s a -> GDAL s ()
-  fillBand v = fillRaster (toCDouble v) (toCDouble v)
-  {-# INLINE fillBand #-}
-
-type family GType (k :: DataType) where
-  GType 'GDT_Byte     = CUChar
-  GType 'GDT_UInt16   = CUShort
-  GType 'GDT_UInt32   = CUInt
-  GType 'GDT_Int16    = CShort
-  GType 'GDT_Int32    = CInt
-  GType 'GDT_Float32  = CFloat
-  GType 'GDT_Float64  = CDouble
-  GType 'GDT_CInt16   = CComplex CShort
-  GType 'GDT_CInt32   = CComplex CInt
-  GType 'GDT_CFloat32 = CComplex CFloat
-  GType 'GDT_CFloat64 = CComplex CDouble
-
-newtype CComplex a = CComplex (Complex a)
-  deriving (Eq, Storable, Show)
-
-class KnownDataType (k :: DataType) where
-  dataTypeVal :: Proxy (k :: DataType) -> DataType
-
-dataType :: forall a. GDALType a => Proxy a -> DataType
-dataType _ = dataTypeVal (Proxy :: Proxy (DataTypeT a))
-{-# INLINE dataType #-}
-
-instance KnownDataType 'GDT_Byte      where dataTypeVal _ = GDT_Byte
-instance KnownDataType 'GDT_UInt16    where dataTypeVal _ = GDT_UInt16
-instance KnownDataType 'GDT_UInt32    where dataTypeVal _ = GDT_UInt32
-instance KnownDataType 'GDT_Int16     where dataTypeVal _ = GDT_Int16
-instance KnownDataType 'GDT_Int32     where dataTypeVal _ = GDT_Int32
-instance KnownDataType 'GDT_Float32   where dataTypeVal _ = GDT_Float32
-instance KnownDataType 'GDT_Float64   where dataTypeVal _ = GDT_Float64
-instance KnownDataType 'GDT_CInt16    where dataTypeVal _ = GDT_CInt16
-instance KnownDataType 'GDT_CInt32    where dataTypeVal _ = GDT_CInt32
-instance KnownDataType 'GDT_CFloat32  where dataTypeVal _ = GDT_CFloat32
-instance KnownDataType 'GDT_CFloat64  where dataTypeVal _ = GDT_CFloat64
-
-
-
-instance GDALType Word8 where
-  type DataTypeT Word8 = 'GDT_Byte
-  toCDouble = fromIntegral
-  fromCDouble = truncate
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType Word16 where
-  type DataTypeT Word16 = 'GDT_UInt16
-  toCDouble = fromIntegral
-  fromCDouble = truncate
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType Word32 where
-  type DataTypeT Word32 = 'GDT_UInt32
-  toCDouble = fromIntegral
-  fromCDouble = truncate
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType Int16 where
-  type DataTypeT Int16 = 'GDT_Int16
-  toCDouble = fromIntegral
-  fromCDouble = truncate
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType Int32 where
-  type DataTypeT Int32 = 'GDT_Int32
-  toCDouble = fromIntegral
-  fromCDouble = truncate
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType Float where
-  type DataTypeT Float = 'GDT_Float32
-  fromCDouble = realToFrac
-  toCDouble = realToFrac
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType Double where
-  type DataTypeT Double = 'GDT_Float64
-  toCDouble = realToFrac
-  fromCDouble = realToFrac
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-#ifdef STORABLE_COMPLEX
-instance GDALType (Complex Int16) where
-  type DataTypeT (Complex Int16) = 'GDT_CInt16
-  toCDouble = fromIntegral . realPart
-  fromCDouble d = fromCDouble d :+ fromCDouble d
-  fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
-  {-# INLINE fillBand #-}
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType (Complex Int32) where
-  type DataTypeT (Complex Int32) = 'GDT_CInt32
-  toCDouble = fromIntegral . realPart
-  fromCDouble d = fromCDouble d :+ fromCDouble d
-  fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
-  {-# INLINE fillBand #-}
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType (Complex Float) where
-  type DataTypeT (Complex Float) = 'GDT_CFloat32
-  toCDouble = realToFrac . realPart
-  fromCDouble d = fromCDouble d :+ fromCDouble d
-  fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
-  {-# INLINE fillBand #-}
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-
-instance GDALType (Complex Double) where
-  type DataTypeT (Complex Double) = 'GDT_CFloat64
-  toCDouble = realToFrac . realPart
-  fromCDouble d = fromCDouble d :+ fromCDouble d
-  fillBand (r :+ i) = fillRaster (toCDouble r) (toCDouble i)
-  {-# INLINE fillBand #-}
-  {-# INLINE toCDouble #-}
-  {-# INLINE fromCDouble #-}
-#endif
+fillBand :: GDALType a => Value a -> RWBand s a -> GDAL s ()
+fillBand v band =
+  mapM_ (flip (writeBandBlock band) vec) [XY i j | j<-[0..ny-1], i<-[0..nx-1]]
+  where
+    XY nx ny = bandBlockCount band
+    vec      = G.replicate (bandBlockLen band) v

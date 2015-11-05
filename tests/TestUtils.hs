@@ -16,6 +16,7 @@ module TestUtils (
   , describe
   , hspec
   , warn
+  , pendingWith
   , withDir
   , after_
   , errorCall
@@ -37,7 +38,6 @@ import Test.Hspec (
   , SpecWith
   , Arg
   , Selector
-  , pendingWith
   , after_
   , errorCall
   )
@@ -115,8 +115,9 @@ shouldNotBe a  = liftIO . flip Hspec.shouldSatisfy (/=a)
 expectationFailure :: MonadIO m => String -> m ()
 expectationFailure = liftIO . Hspec.expectationFailure
 
-warn :: MonadIO m => String -> m ()
-warn = liftIO . pendingWith
+pendingWith, warn :: MonadIO m => String -> m ()
+pendingWith = liftIO . Hspec.pendingWith
+warn = pendingWith
 
 setupAndTeardown :: SpecWith a -> SpecWith a
 setupAndTeardown = id

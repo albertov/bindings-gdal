@@ -223,16 +223,39 @@ spec = setupAndTeardown $ do
       vec2 <- readBand band (allBand band) (bandSize band)
       vec `shouldBe` vec2
 
-    it "can fill and read band" $ do
-      forM_ ([-10..10] :: [Int16]) $ \value -> do
+    describe "fillBand" $ do
+
+      it "can fill and read band" $ do
+        forM_ ([-10..10] :: [Int16]) $ \value -> do
+          band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
+          fillBand (Value value)  band
+          v <- readBand band (allBand band) (bandSize band)
+          U.length v `shouldBe` 10000
+          let allEqual = U.foldl' f True v
+              f True (Value a) = a == value
+              f _ _            = False
+          allEqual `shouldBe` True
+
+      it "can fill with NoData if setBandNodataValue" $ do
         band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
-        fillBand value  band
+        setBandNodataValue band (-999 :: Int16)
+        fillBand NoData band
         v <- readBand band (allBand band) (bandSize band)
-        U.length v `shouldBe` 10000
-        let allEqual = U.foldl' f True v
-            f True (Value a) = a == value
-            f _ _            = False
-        allEqual `shouldBe` True
+        v `shouldSatisfy` (U.all isNoData)
+
+      withDir "can fill with NoData if createBandMask" $ \d -> do
+        pendingWith "need to fix block io with mask bands"
+        ds <- create "GTIFF" (joinPath [d, "test.tif"]) 100 1 GDT_Int16 []
+        band <- getBand 1 ds
+        createBandMask band MaskPerDataset
+        fillBand (NoData :: Value Int16) band
+        v <- readBand band (allBand band) (bandSize band)
+        v `shouldSatisfy` (U.all isNoData)
+
+      it "cannot fill with NoData if no nodata value or mask has been set" $ do
+        band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
+        fillBand (NoData :: Value Int16) band
+          `shouldThrow` (==BandDoesNotAllowNoData)
 
     withDir "throws GDALException when reading block with wrong type" $ \d -> do
       let p = joinPath [d, "test.tif"]
@@ -262,44 +285,37 @@ spec = setupAndTeardown $ do
     let fWord8 = (Value . fromIntegral) :: Int -> Value Word8
     it_can_write_and_read_band  fWord8
     it_can_write_and_read_block fWord8
-    it_can_foldl                fWord8 (+) 0 []
-    it_can_foldl                fWord8 (+) 0 [("TILED", "YES")]
+    it_can_foldl                fWord8 (+) 0
 
     let fWord16 = (Value . fromIntegral) :: Int -> Value Word16
     it_can_write_and_read_band  fWord16
     it_can_write_and_read_block fWord16
-    it_can_foldl                fWord16 (+) 0 []
-    it_can_foldl                fWord16 (+) 0 [("TILED", "YES")]
+    it_can_foldl                fWord16 (+) 0
 
     let fWord32 = (Value . fromIntegral) :: Int -> Value Word32
     it_can_write_and_read_band  fWord32
     it_can_write_and_read_block fWord32
-    it_can_foldl                fWord32 (+) 0 []
-    it_can_foldl                fWord32 (+) 0 [("TILED", "YES")]
+    it_can_foldl                fWord32 (+) 0
 
     let fInt16 = (Value . fromIntegral) :: Int -> Value Int16
     it_can_write_and_read_band  fInt16
     it_can_write_and_read_block fInt16
-    it_can_foldl                fInt16 (+) 0 []
-    it_can_foldl                fInt16 (+) 0 [("TILED", "YES")]
+    it_can_foldl                fInt16 (+) 0
 
     let fInt32 = (Value . fromIntegral) :: Int -> Value Int32
     it_can_write_and_read_band  fInt32
     it_can_write_and_read_block fInt32
-    it_can_foldl                fInt32 (+) 0 []
-    it_can_foldl                fInt32 (+) 0 [("TILED", "YES")]
+    it_can_foldl                fInt32 (+) 0
 
     let fFloat = (Value . (*1.1) . fromIntegral) :: Int -> Value Float
     it_can_write_and_read_band  fFloat
     it_can_write_and_read_block fFloat
-    it_can_foldl                fFloat (+) 0 []
-    it_can_foldl                fFloat (+) 0 [("TILED", "YES")]
+    it_can_foldl                fFloat (+) 0
 
     let fDouble = (Value . (*1.1) . fromIntegral) :: Int -> Value Double
     it_can_write_and_read_band  fDouble
     it_can_write_and_read_block fDouble
-    it_can_foldl                fDouble (+) 0 []
-    it_can_foldl                fDouble (+) 0 [("TILED", "YES")]
+    it_can_foldl                fDouble (+) 0
 
 
 #ifdef STORABLE_COMPLEX
@@ -308,33 +324,32 @@ spec = setupAndTeardown $ do
         f2C :: Num a
             => Value (Complex a) -> Value (Complex a) -> Value (Complex a)
         f2C (Value (ra :+ ia)) (Value (rb :+ ib)) = Value ((ra+rb) :+ (ia+ib))
+        f2C NoData             (Value a)          = Value a
+        f2C (Value a)          NoData             = Value a
+        f2C NoData             NoData             = NoData
         zC :: Num a => Value (Complex a)
         zC = Value (0 :+ 0)
     it_can_write_and_read_block fCInt16
     it_can_write_and_read_band  fCInt16
-    it_can_foldl                fCInt16 f2C zC []
-    it_can_foldl                fCInt16 f2C zC [("TILED", "YES")]
+    it_can_foldl                fCInt16 f2C zC
 
     let fCInt32 i = Value ((fromIntegral i  :+ fromIntegral (i + i)))
         fCInt32 :: Int -> Value (Complex Int32)
     it_can_write_and_read_block fCInt32
     it_can_write_and_read_band  fCInt32
-    it_can_foldl                fCInt32 f2C zC []
-    it_can_foldl                fCInt32 f2C zC [("TILED", "YES")]
+    it_can_foldl                fCInt32 f2C zC
 
     let fCFloat i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
         fCFloat :: Int -> Value (Complex Float)
     it_can_write_and_read_block fCFloat
     it_can_write_and_read_band  fCFloat
-    it_can_foldl                fCFloat f2C zC []
-    it_can_foldl                fCFloat f2C zC [("TILED", "YES")]
+    it_can_foldl                fCFloat f2C zC
 
     let fCDouble i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
         fCDouble :: Int -> Value (Complex Double)
     it_can_write_and_read_block fCDouble
     it_can_write_and_read_band  fCDouble
-    it_can_foldl                fCDouble f2C zC []
-    it_can_foldl                fCDouble f2C zC [("TILED", "YES")]
+    it_can_foldl                fCDouble f2C zC
 #endif
 
 
@@ -463,47 +478,155 @@ spec = setupAndTeardown $ do
 it_can_write_and_read_band
   :: forall a. (Eq a , GDALType a, Show a, Typeable a)
   => (Int -> Value a) -> SpecWith (Arg (IO ()))
-it_can_write_and_read_band f = it ("can write and read band " ++ typeName) $ do
-  ds <- createMem (XY 100 100) 1 (dataType (Proxy :: Proxy a)) []
-  band <- getBand 1 ds
-  writeBand band (allBand band) (bandSize band) vec
-  vec2 <- readBand band (allBand band) (bandSize band)
-  vec `shouldBe` vec2
-  where
-    vec      = U.generate 10000 f
-    typeName = show (typeOf (undefined :: a))
+it_can_write_and_read_band f = forM_ [[], [("TILED","YES")]] $ \options -> do
+  let typeName = show (typeOf (undefined :: a))
+      name = "can write and read band "++typeName++" (" ++ show options ++")"
+      sz = XY 300 307
+      len = sizeLen sz
 
+  describe name $ do
+
+    withDir "all valid values" $ \d -> do
+      let path = joinPath [d, "test.tif"]
+      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
+      band <- getBand 1 ds
+      let vec = U.generate len f
+      writeBand band (allBand band) (bandSize band) vec
+      flushCache ds
+      vec2 <- readBand band (allBand band) (bandSize band)
+      U.length vec `shouldBe` U.length vec2
+      vec `shouldBe` vec2
+
+    withDir "with nodata value" $ \d -> do
+      let path = joinPath [d, "test.tif"]
+      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
+      band <- getBand 1 ds
+      let vec = U.generate len (\i ->
+                  if i < len`div`2 && f i /= nd
+                     then f i
+                     else NoData)
+          nd@(Value noData) = f (-1)
+      setBandNodataValue band noData
+      writeBand band (allBand band) (bandSize band) vec
+      flushCache ds
+      vec2 <- readBand band (allBand band) (bandSize band)
+      U.length vec `shouldBe` U.length vec2
+      vec `shouldBe` vec2
+
+    withDir "with mask" $ \d -> do
+      let path = joinPath [d, "test.tif"]
+      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
+      band <- getBand 1 ds
+      let vec = U.generate len (\i -> if i < len`div`2 then f i else NoData)
+      createBandMask band MaskPerBand
+      writeBand band (allBand band) (bandSize band) vec
+      flushCache ds
+      vec2 <- readBand band (allBand band) (bandSize band)
+      U.length vec `shouldBe` U.length vec2
+      vec `shouldBe` vec2
 
 
 it_can_write_and_read_block
   :: forall a. (Eq a , GDALType a, Show a, Typeable a)
   => (Int -> Value a) -> SpecWith (Arg (IO ()))
-it_can_write_and_read_block f = it ("can write and read block "++typeName) $ do
-  ds <- createMem (XY (U.length vec) 1) 1 (dataType (Proxy :: Proxy a)) []
-  band <- getBand 1 ds
-  writeBandBlock band 0 vec
-  vec2 <- readBandBlock band 0
-  vec `shouldBe` vec2
-  where
-    vec      = U.generate 10000 f
-    typeName = show (typeOf (undefined :: a))
+it_can_write_and_read_block f = forM_ [[], [("TILED","YES")]] $ \options -> do
+  let typeName = show (typeOf (undefined :: a))
+      name = "can write and read block "++typeName++" (" ++ show options ++")"
+      sz = XY 300 307
+
+  describe name $ do
+
+    withDir "all valid values" $ \d -> do
+      let path = joinPath [d, "test.tif"]
+      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
+      band <- getBand 1 ds
+      let vec = U.generate (bandBlockLen band) f
+      writeBandBlock band 0 vec
+      flushCache ds
+      vec2 <- readBandBlock band 0
+      U.length vec `shouldBe` U.length vec2
+      vec `shouldBe` vec2
+
+    withDir "with nodata value" $ \d -> do
+      let path = joinPath [d, "test.tif"]
+      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
+      band <- getBand 1 ds
+      let vec = U.generate len (\i ->
+                  if i < len`div`2 && f i /= nd
+                     then f i
+                     else NoData)
+          nd@(Value noData) = f (-1)
+          len = bandBlockLen band
+      setBandNodataValue band noData
+      writeBandBlock band 0 vec
+      flushCache ds
+      vec2 <- readBandBlock band 0
+      U.length vec `shouldBe` U.length vec2
+      vec `shouldBe` vec2
+
+    withDir "with mask" $ \d -> do
+      pendingWith "need to fix mask band block reading"
+      let path = joinPath [d, "test.tif"]
+      ds <- create "GTIFF" path sz 1 (dataType (Proxy :: Proxy a)) options
+      band <- getBand 1 ds
+      let vec = U.generate len (\i -> if i < len`div`2 then f i else NoData)
+          len = bandBlockLen band
+      createBandMask band MaskPerBand
+      writeBandBlock band 0 vec
+      flushCache ds
+      vec2 <- readBandBlock band 0
+      U.length vec `shouldBe` U.length vec2
+      vec `shouldBe` vec2
 
 it_can_foldl
   :: forall a. (Eq a, GDALType a, Show a, Typeable a)
   => (Int -> Value a) -> (Value a -> Value a -> Value a) -> Value a
-  -> OptionList -> SpecWith (Arg (IO ()))
-it_can_foldl f f2 z options = withDir name $ \tmpDir -> do
-  let p = joinPath [tmpDir, "test.tif"]
-      sz = XY 200 205
-  ds <- create "GTIFF" p sz 1 (dataType (Proxy :: Proxy a)) options
-  let vec = U.generate (sizeLen sz) f
-  band <- getBand 1 ds
-  writeBand band (allBand band) sz vec
-  flushCache ds
-  value <- GDAL.foldl' f2 z band
-  value `shouldBe` U.foldl' f2 z vec
-  where name = "can foldl with options " ++ show options ++ " " ++ typeName
-        typeName = show (typeOf (undefined :: a))
+  -> SpecWith (Arg (IO ()))
+it_can_foldl f f2 z = forM_ [[], [("TILED","YES")]] $ \options -> do
+
+  let name = "can foldl with options " ++ show options ++ " " ++ typeName
+      typeName = show (typeOf (undefined :: a))
+
+  describe name $ do
+
+    withDir "all valid values" $ \tmpDir -> do
+      let p = joinPath [tmpDir, "test.tif"]
+          sz = XY 200 205
+      ds <- create "GTIFF" p sz 1 (dataType (Proxy :: Proxy a)) options
+      let vec = U.generate (sizeLen sz) f
+      band <- getBand 1 ds
+      writeBand band (allBand band) sz vec
+      flushCache ds
+      value <- GDAL.foldl' f2 z band
+      value `shouldBe` U.foldl' f2 z vec
+
+    withDir "with nodata value" $ \tmpDir -> do
+      let p = joinPath [tmpDir, "test.tif"]
+          sz = XY 200 205
+          Value nodata = z
+      ds <- create "GTIFF" p sz 1 (dataType (Proxy :: Proxy a)) options
+      let vec = U.imap (\i v -> if i<(sizeLen sz`div`2) then v else NoData)
+                       (U.generate (sizeLen sz) f)
+      band <- getBand 1 ds
+      setBandNodataValue band nodata
+      writeBand band (allBand band) sz vec
+      flushCache ds
+      value <- GDAL.foldl' f2 z band
+      value `shouldBe` U.foldl' f2 z vec
+
+    withDir "with mask" $ \tmpDir -> do
+      pendingWith "need to fix mask band block reading"
+      let p = joinPath [tmpDir, "test.tif"]
+          sz = XY 200 205
+      ds <- create "GTIFF" p sz 1 (dataType (Proxy :: Proxy a)) options
+      let vec = U.imap (\i v -> if i<(sizeLen sz`div`2) then v else NoData)
+                       (U.generate (sizeLen sz) f)
+      band <- getBand 1 ds
+      createBandMask band MaskPerBand
+      writeBand band (allBand band) sz vec
+      flushCache ds
+      value <- GDAL.foldl' f2 z band
+      value `shouldBe` U.foldl' f2 z vec
 
 infix 4 ~==
 (~==) :: (Fractional a, Ord a) => a -> a -> Bool

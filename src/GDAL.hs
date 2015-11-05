@@ -30,6 +30,7 @@ module GDAL (
   , RWBand
   , ROBand
   , Band
+  , MaskType (MaskPerBand, MaskPerDataset)
   , Value (..)
   , ProgressFun
   , ContinueOrStop (..)
@@ -88,10 +89,12 @@ module GDAL (
   , addBand
   , getBand
   , readBand
+  , createBandMask
   , readBandBlock
   , writeBand
   , writeBandBlock
   , copyBand
+  , fillBand
   , metadataDomains
   , metadata
   , metadataItem
