@@ -109,10 +109,12 @@ instance KnownDataType 'GDT_Int16     where dataTypeVal _ = GDT_Int16
 instance KnownDataType 'GDT_Int32     where dataTypeVal _ = GDT_Int32
 instance KnownDataType 'GDT_Float32   where dataTypeVal _ = GDT_Float32
 instance KnownDataType 'GDT_Float64   where dataTypeVal _ = GDT_Float64
+#ifdef STORABLE_COMPLEX
 instance KnownDataType 'GDT_CInt16    where dataTypeVal _ = GDT_CInt16
 instance KnownDataType 'GDT_CInt32    where dataTypeVal _ = GDT_CInt32
 instance KnownDataType 'GDT_CFloat32  where dataTypeVal _ = GDT_CFloat32
 instance KnownDataType 'GDT_CFloat64  where dataTypeVal _ = GDT_CFloat64
+#endif
 
 
 instance GDALType Word8 where
