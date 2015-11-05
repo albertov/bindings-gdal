@@ -33,6 +33,9 @@ module GDAL.Internal.Types (
   , mkValueUVector
   , mkMaskedValueUVector
   , mkAllValidValueUVector
+  , mkValueUMVector
+  , mkMaskedValueUMVector
+  , mkAllValidValueUMVector
   , toStVec
   , toStVecWithNodata
   , toStVecWithMask
@@ -304,6 +307,21 @@ mkValueUVector
   :: a -> St.Vector a -> U.Vector (Value a)
 mkValueUVector nd values = V_Value (UseNoData nd, values)
 {-# INLINE mkValueUVector #-}
+
+mkMaskedValueUMVector
+  :: St.MVector s Word8 -> St.MVector s a -> U.MVector s (Value a)
+mkMaskedValueUMVector mask values = MV_Value (Mask mask, values)
+{-# INLINE mkMaskedValueUMVector #-}
+
+mkAllValidValueUMVector
+  :: St.MVector s a -> U.MVector s (Value a)
+mkAllValidValueUMVector values = MV_Value (AllValid, values)
+{-# INLINE mkAllValidValueUMVector #-}
+
+mkValueUMVector
+  :: a -> St.MVector s a -> U.MVector s (Value a)
+mkValueUMVector nd values = MV_Value (UseNoData nd, values)
+{-# INLINE mkValueUMVector #-}
 
 
 newtype instance U.Vector    (Value a) =

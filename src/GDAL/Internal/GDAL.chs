@@ -142,15 +142,12 @@ import Data.Word (Word8, Word16, Word32)
 import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
+import Data.Vector.Unboxed.Mutable (unsafeRead)
 import Foreign.C.String (withCString, CString)
 import Foreign.C.Types
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr (
-    withForeignPtr
-  , mallocForeignPtrArray
-  , castForeignPtr
-  )
+import Foreign.ForeignPtr (withForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (withArrayLen)
 import Foreign.Marshal.Utils (toBool, fromBool, with)
@@ -901,49 +898,33 @@ ifoldlM'
 ifoldlM' f initialAcc band =
   checkType band >> bandMaskType band >>= \case
     MaskNoData -> do
-      fp <- liftIO $ mallocForeignPtrArray (sx*sy)
+      v <- liftIO $ Stm.new (bandBlockLen band)
       noData <- noDataOrFail band
-      let readValue i j = liftM toValue $ liftIO $ withForeignPtr fp $
-                          flip peekElemOff (j*sx+i)
-          toValue v
-            | v/=noData = Value v
-            | otherwise = NoData
-          loadBlock = blockLoader (unBand band) (castForeignPtr fp)
-      ifoldlM_loop loadBlock readValue
+      ifoldlM_loop (blockLoader (unBand band) v) (mkValueUMVector noData v)
     MaskAllValid -> do
-      fp <- liftIO $ mallocForeignPtrArray (sx*sy)
-      let readValue i j = liftM Value $ liftIO $ withForeignPtr fp $
-                          flip peekElemOff (j*sx+i)
-          loadBlock = blockLoader (unBand band) (castForeignPtr fp)
-      ifoldlM_loop loadBlock readValue
+      v <- liftIO $ Stm.new (bandBlockLen band)
+      ifoldlM_loop (blockLoader (unBand band) v) (mkAllValidValueUMVector v)
     MaskBand -> do
-      fp <- liftIO $ mallocForeignPtrArray (sx*sy)
-      fpMask <- liftIO $ mallocForeignPtrArray (sx*sy)
+      v <- liftIO $ Stm.new (bandBlockLen band)
+      vmask <- liftIO $ Stm.new (bandBlockLen band)
       mask <- bandMask band
-      let readValue i j =
-            liftIO $
-            withForeignPtr fp $ \buf ->
-            withForeignPtr fpMask $ \maskBuf -> do
-              let off = j*sx+i
-              m <- maskBuf `peekElemOff` off
-              if m/= (0 :: Word8)
-                then liftM Value (buf `peekElemOff` off)
-                else return NoData
-          loadBlock i j = do
-            blockLoader (unBand band) (castForeignPtr fp) i j
-            blockLoader (unBand mask) (castForeignPtr fpMask) i j
-      ifoldlM_loop loadBlock readValue
+      let loadBlock i j = do blockLoader (unBand band) v i j
+                             blockLoader (unBand mask) vmask i j
+      ifoldlM_loop loadBlock (mkMaskedValueUMVector vmask v)
   where
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
-    blockLoader bPtr fpBuf i j =
+    blockLoader
+      :: forall c. Storable c
+      => RasterBandH -> Stm.IOVector c -> Int -> Int -> GDAL s ()
+    blockLoader bPtr vec i j =
       liftIO $
       checkCPLError "ReadBlock" $
-      withForeignPtr fpBuf $
-      {#call ReadBlock as ^#} bPtr (fromIntegral i) (fromIntegral j)
+      Stm.unsafeWith vec $
+      {#call ReadBlock as ^#} bPtr (fromIntegral i) (fromIntegral j) . castPtr
     {-# INLINE ifoldlM_loop #-}
-    ifoldlM_loop loadBlock readValue = goB SPEC 0 0 initialAcc
+    ifoldlM_loop loadBlock vec = goB SPEC 0 0 initialAcc
       where
         goB !sPEC !iB !jB !acc
           | iB < nx = do loadBlock iB jB
@@ -955,7 +936,7 @@ ifoldlM' f initialAcc band =
               | i   < stopx = applyTo i j acc' >>= go sPEC2 (i+1) j
               | j+1 < stopy = go sPEC2 0 (j+1) acc'
               | otherwise   = return acc'
-            applyTo i j a = readValue i j >>= f a ix
+            applyTo i j a = liftIO (unsafeRead vec (j*sx+i)) >>= f a ix
               where ix = XY (iB*sx+i) (jB*sy+j)
             stopx
               | mx /= 0 && iB==nx-1 = mx
