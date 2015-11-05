@@ -7,6 +7,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module GDAL.Internal.DataType (
     GDALType (..)
@@ -92,7 +93,7 @@ type family GType (k :: DataType) where
   GType 'GDT_CFloat64 = CComplex CDouble
 
 newtype CComplex a = CComplex (Complex a)
-  deriving (Eq, Storable, Show)
+  deriving (Eq, Show)
 
 class KnownDataType (k :: DataType) where
   dataTypeVal :: Proxy (k :: DataType) -> DataType
@@ -192,6 +193,9 @@ instance GDALType Double where
   {-# INLINE fromCDouble #-}
 
 #ifdef STORABLE_COMPLEX
+
+deriving instance Storable a => Storable (CComplex a)
+
 instance GDALType (Complex Int16) where
   type DataTypeT (Complex Int16) = 'GDT_CInt16
   toCDouble = fromIntegral . realPart
