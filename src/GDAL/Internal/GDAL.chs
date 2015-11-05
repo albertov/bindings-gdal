@@ -121,7 +121,7 @@ module GDAL.Internal.GDAL (
 
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.Exception (Exception(..))
-import Control.Monad (liftM, liftM2, when, (>=>))
+import Control.Monad (liftM, liftM2, when, void, (>=>))
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Bits ((.&.))
@@ -879,30 +879,37 @@ ifoldlM'
   :: forall s t a b. GDALType a
   => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
 ifoldlM' f initialAcc band = do
+  checkType band
   v <- liftIO $ Stm.new (bandBlockLen band)
   vm <- liftIO $ Stm.new (bandBlockLen band)
-  let blockLoader i j = unsafeLoadBandBlock v vm band (XY i j)
-  ifoldlM_loop blockLoader
+  let blockLoader i j = void $ unsafeLoadBandBlock v vm band (XY i j)
+  bandMaskType band >>= \case
+    MaskAllValid ->
+      ifoldlM_loop blockLoader (mkAllValidValueUMVector v)
+    MaskNoData -> do
+      noData <- noDataOrFail band
+      ifoldlM_loop blockLoader (mkValueUMVector noData v)
+    _ -> do
+      ifoldlM_loop blockLoader (mkMaskedValueUMVector vm v)
   where
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
     {-# INLINE ifoldlM_loop #-}
-    ifoldlM_loop loadBlock = goB SPEC 0 0 initialAcc
+    ifoldlM_loop loadBlock vec = goB SPEC 0 0 initialAcc
       where
         goB !sPEC !iB !jB !acc
-          | iB < nx = do vec <- loadBlock iB jB
-                         go sPEC vec 0 0 acc >>= goB sPEC (iB+1) jB
+          | iB < nx = do loadBlock iB jB
+                         go sPEC 0 0 acc >>= goB sPEC (iB+1) jB
           | jB+1 < ny = goB sPEC 0 (jB+1) acc
           | otherwise = return acc
           where
-            go !sPEC2 vec !i !j !acc'
-              | i   < stopx = do
-                  let ix = XY (iB*sx+i) (jB*sy+j)
-                  v <- vec `G.unsafeIndexM` (j*sx+i)
-                  f acc' ix v >>= go sPEC2 vec (i+1) j
-              | j+1 < stopy = go sPEC2 vec 0 (j+1) acc'
+            go !sPEC2 !i !j !acc'
+              | i   < stopx = applyTo i j acc' >>= go sPEC2 (i+1) j
+              | j+1 < stopy = go sPEC2 0 (j+1) acc'
               | otherwise   = return acc'
+            applyTo i j a = liftIO (unsafeRead vec (j*sx+i)) >>= f a ix
+              where ix = XY (iB*sx+i) (jB*sy+j)
             stopx
               | mx /= 0 && iB==nx-1 = mx
               | otherwise           = sx
