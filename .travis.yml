@@ -6,7 +6,6 @@ addons:
   apt:
     packages:
     - libgmp-dev
-    - valgrind
     - libarmadillo-dev
     - libcurl4-gnutls-dev
     - libexpat1-dev
@@ -99,7 +98,6 @@ before_install:
 
 script:
 - stack $ARGS --no-terminal test --haddock
-- travis_wait find .stack-work -type f -name spec -exec valgrind --leak-check=full {} ';'
 
 cache:
   apt: true
