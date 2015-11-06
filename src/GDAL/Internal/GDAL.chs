@@ -680,7 +680,7 @@ bandNodataValue b =
   alloca $ \p -> do
     value <- {#call unsafe GetRasterNoDataValue as ^#} (unBand b) p
     hasNodata <- liftM toBool $ peek p
-    return (if hasNodata then Just (fromCDouble value) else Nothing)
+    return (if hasNodata then Just (convertGType value) else Nothing)
 {-# INLINE bandNodataValue #-}
 
 
@@ -688,7 +688,7 @@ setBandNodataValue :: GDALType a => RWBand s a -> a -> GDAL s ()
 setBandNodataValue b v =
   liftIO $
   checkCPLError "SetRasterNoDataValue" $
-  {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
+  {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (convertGType v)
 
 createBandMask :: RWBand s a -> MaskType -> GDAL s ()
 createBandMask band maskType = liftIO $
@@ -706,7 +706,7 @@ readBand band win (XY bx by) = readMasked band read_ read_
     XY sx sy     = envelopeSize win
     XY xoff yoff = envelopeMin win
     read_ :: forall a'. GDALType a'
-          => Band s a' t -> GDAL s (St.Vector (CDataTypeT a'))
+          => Band s a' t -> GDAL s (St.Vector a')
     read_ b = liftIO $ do
       vec <- Stm.new (bx*by)
       let dtype = fromEnumC (dataType (Proxy :: Proxy a'))
@@ -742,8 +742,8 @@ readBand band win (XY bx by) = readMasked band read_ read_
 readMasked
   :: GDALType a
   => Band s a t
-  -> (Band s a t -> GDAL s (St.Vector (CDataTypeT a)))
-  -> (Band s Word8 t -> GDAL s (St.Vector (CDataTypeT Word8)))
+  -> (Band s a t -> GDAL s (St.Vector a))
+  -> (Band s Word8 t -> GDAL s (St.Vector Word8))
   -> GDAL s (Vector (Value a))
 readMasked band reader maskReader =
   bandMaskType band >>= \case
@@ -758,8 +758,8 @@ readMasked band reader maskReader =
 writeMasked
   :: GDALType a
   => RWBand s a
-  -> (RWBand s a -> St.Vector (CDataTypeT a) -> GDAL s ())
-  -> (RWBand s Word8 -> St.Vector (CDataTypeT Word8) -> GDAL s ())
+  -> (RWBand s a -> St.Vector a -> GDAL s ())
+  -> (RWBand s Word8 -> St.Vector Word8 -> GDAL s ())
   -> Vector (Value a)
   -> GDAL s ()
 writeMasked band writer maskWriter uvec =
@@ -822,7 +822,7 @@ writeBand
 writeBand band win sz@(XY bx by) = writeMasked band write write
   where
     write :: forall a'. GDALType a'
-         => RWBand s a' -> St.Vector (CDataTypeT a') -> GDAL s ()
+         => RWBand s a' -> St.Vector a' -> GDAL s ()
     write band' vec = do
       let (fp, len)    = St.unsafeToForeignPtr0 vec
           nElems       = bx * by
@@ -891,8 +891,7 @@ ifoldlM' f initialAcc band = do
     MaskNoData -> do
       noData <- noDataOrFail band
       ifoldlM_loop blockLoader (mkValueUMVector noData v)
-    _ -> do
-      ifoldlM_loop blockLoader (mkMaskedValueUMVector vm v)
+    _ -> ifoldlM_loop blockLoader (mkMaskedValueUMVector vm v)
   where
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
@@ -976,8 +975,8 @@ readBandBlock band blockIx = do
 
 unsafeLoadBandBlock
   :: forall s t a. GDALType a
-  => Stm.IOVector (CDataTypeT a)
-  -> Stm.IOVector (CDataTypeT Word8)
+  => Stm.IOVector a
+  -> Stm.IOVector Word8
   -> Band s a t
   -> BlockIx
   -> GDAL s (Vector (Value a))

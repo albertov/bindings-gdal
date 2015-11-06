@@ -1,6 +1,6 @@
 module GDAL (
     GDAL
-  , GDALType (..)
+  , GDALType
   , ApproxOK (..)
   , DataType (..)
   , XY (..)
@@ -54,10 +54,6 @@ module GDAL (
   , createCopy
   , buildOverviews
 
-  , dataTypeSize
-  , dataTypeByName
-  , dataTypeUnion
-  , dataTypeIsComplex
   , bandTypedAs
   , bandCoercedTo
   {-

@@ -297,7 +297,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
   withOptionList options $ \opts ->
   withTransformerAndArg mTransformer (Just geotransform) $ \trans tArg ->
   with geotransform $ \gt -> do
-    vec <- liftM toGTypeM (Stm.replicate (sizeLen size) nodataValue)
+    vec <- Stm.replicate (sizeLen size) nodataValue
     Stm.unsafeWith vec $ \vecPtr ->
       checkCPLError "RasterizeLayersBuf" $
       {#call GDALRasterizeLayersBuf as ^#}
@@ -307,7 +307,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
     liftM (mkValueUVector nodataValue) (St.unsafeFreeze vec)
   where
     dt        = fromEnumC (dataType (Proxy :: Proxy a))
-    bValue    = toCDouble burnValue
+    bValue    = convertGType burnValue
     XY nx ny  = fmap fromIntegral size
 
 
@@ -339,7 +339,7 @@ createGridIO options noDataVal progressFun points envelope size =
     setNodata opts ndValue
     xs <- St.unsafeThaw (St.unsafeCast (St.map (px . gpXY) points))
     ys <- St.unsafeThaw (St.unsafeCast (St.map (py . gpXY) points))
-    zs <- St.unsafeThaw (St.map (toCDouble . gpZ) points)
+    zs <- St.unsafeThaw (convertGTypeVector (St.map gpZ points))
     out <- Stm.unsafeNew (sizeLen size)
     checkCPLError "GDALGridCreate" $
       Stm.unsafeWith xs $ \pXs ->
@@ -365,7 +365,7 @@ createGridIO options noDataVal progressFun points envelope size =
         nullPtr
     liftM (mkValueUVector noDataVal) (St.unsafeFreeze out)
   where
-    ndValue                        = toCDouble noDataVal
+    ndValue                        = convertGType noDataVal
     XY nx ny                       = fmap fromIntegral size
     Envelope (XY x0 y0) (XY x1 y1) = fmap realToFrac envelope
     gtype                          = fromEnumC (dataType (Proxy :: Proxy a))
