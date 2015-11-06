@@ -121,6 +121,7 @@ import GDAL.Internal.CPLProgress
 import GDAL.Internal.GCP
 import GDAL.Internal.GDAL as GDAL
 import GDAL.Internal.Types
+import GDAL.Internal.Types.Value
 import GDAL.Internal.Common
 
 import qualified GDAL.Internal.OGR as OGR

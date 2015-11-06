@@ -152,6 +152,7 @@ import GHC.Types (SPEC(..))
 import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
+import GDAL.Internal.Types.Value
 import GDAL.Internal.DataType
 import GDAL.Internal.Common
 import GDAL.Internal.Util

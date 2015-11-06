@@ -29,6 +29,7 @@ library
                    , GDAL.Warper
 
                    , GDAL.Internal.Types
+                   , GDAL.Internal.Types.Value
                    , GDAL.Internal.DataType
                    , GDAL.Internal.Util
                    , GDAL.Internal.Common

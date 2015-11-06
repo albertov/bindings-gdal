@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes #-}
 
 module GDAL.Internal.DataType (
     GDALType
@@ -13,6 +14,7 @@ module GDAL.Internal.DataType (
   , convertGType
   , convertGTypeVector
   , unsafeConvertGTypeMVector
+  , sizeOfGType
 
   , dataType
   , someGDALType
@@ -167,20 +169,24 @@ instance GDALType (Complex Double) where
 data SomeGDALType = forall a. GDALType a => SomeGDALType (Proxy a)
 
 someGDALType :: DataType -> Maybe SomeGDALType
-someGDALType dt =
+someGDALType dt = reifyDatatype dt (\p -> SomeGDALType p)
+
+reifyDatatype
+  :: DataType -> (forall a. GDALType a => Proxy a -> c) -> Maybe c
+reifyDatatype dt f =
   case dt of
-    GDT_Byte     -> Just (SomeGDALType (Proxy :: Proxy Word8))
-    GDT_UInt16   -> Just (SomeGDALType (Proxy :: Proxy Word16))
-    GDT_UInt32   -> Just (SomeGDALType (Proxy :: Proxy Word32))
-    GDT_Int16    -> Just (SomeGDALType (Proxy :: Proxy Int16))
-    GDT_Int32    -> Just (SomeGDALType (Proxy :: Proxy Int32))
-    GDT_Float32  -> Just (SomeGDALType (Proxy :: Proxy Float))
-    GDT_Float64  -> Just (SomeGDALType (Proxy :: Proxy Double))
+    GDT_Byte     -> Just (f (Proxy :: Proxy Word8))
+    GDT_UInt16   -> Just (f (Proxy :: Proxy Word16))
+    GDT_UInt32   -> Just (f (Proxy :: Proxy Word32))
+    GDT_Int16    -> Just (f (Proxy :: Proxy Int16))
+    GDT_Int32    -> Just (f (Proxy :: Proxy Int32))
+    GDT_Float32  -> Just (f (Proxy :: Proxy Float))
+    GDT_Float64  -> Just (f (Proxy :: Proxy Double))
 #ifdef STORABLE_COMPLEX
-    GDT_CInt16   -> Just (SomeGDALType (Proxy :: Proxy (Complex Int16)))
-    GDT_CInt32   -> Just (SomeGDALType (Proxy :: Proxy (Complex Int32)))
-    GDT_CFloat32 -> Just (SomeGDALType (Proxy :: Proxy (Complex Float)))
-    GDT_CFloat64 -> Just (SomeGDALType (Proxy :: Proxy (Complex Double)))
+    GDT_CInt16   -> Just (f (Proxy :: Proxy (Complex Int16)))
+    GDT_CInt32   -> Just (f (Proxy :: Proxy (Complex Int32)))
+    GDT_CFloat32 -> Just (f (Proxy :: Proxy (Complex Float)))
+    GDT_CFloat64 -> Just (f (Proxy :: Proxy (Complex Double)))
 #else
     GDT_CInt16   -> Nothing
     GDT_CInt32   -> Nothing
