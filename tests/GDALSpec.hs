@@ -214,7 +214,7 @@ spec = setupAndTeardown $ do
                        (Envelope 0 bs) bs
       vec `shouldBe` U.map (fmap round) (vec2 :: U.Vector (Value Double))
 
-    it "can write band and read band with automatic conversion" $ do
+    it "can write and read band with automatic conversion" $ do
       ds <- createMem (XY 100 100) 1 GDT_Int16 []
       band <- getBand 1 ds
       let vec :: U.Vector (Value Double)
@@ -256,30 +256,14 @@ spec = setupAndTeardown $ do
         fillBand (NoData :: Value Int16) band
           `shouldThrow` (==BandDoesNotAllowNoData)
 
-    withDir "throws GDALException when reading block with wrong type" $ \d -> do
-      let p = joinPath [d, "test.tif"]
-      ds <- create "GTIFF" p 100 1 GDT_Int16 []
-      flushCache ds
-      ds2 <- openReadOnly p
-      band <- getBand 1 ds2
-      let badAction =  do
-            (_ :: U.Vector (Value Word8)) <- readBandBlock band 0
-            return ()
-      badAction `shouldThrow` isGDALException
-      badAction `shouldThrow` (== (InvalidDataType GDT_Int16))
-
-    withDir "throws GDALException when writing block with wrong type" $ \d -> do
-      let p = joinPath [d, "test.tif"]
-      ds <- create "GTIFF" p 100 1 GDT_Int32 []
-      flushCache ds
-      ds2 <- openReadWrite p
-      band <- getBand 1 ds2
-      let v :: U.Vector (Value Word8)
-          v = U.replicate (bandBlockLen band) (Value 0)
-
-      writeBandBlock band 0 v `shouldThrow` isGDALException
-      writeBandBlock band 0 v
-        `shouldThrow` (==(InvalidDataType GDT_Int32))
+    it "can write and read block with automatic conversion" $ do
+      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      band <- getBand 1 ds
+      let vec :: U.Vector (Value Double)
+          vec = U.generate (bandBlockLen band) (Value . fromIntegral)
+      writeBandBlock band 0 vec
+      vec2 <- readBandBlock band 0
+      vec `shouldBe` vec2
 
     let fWord8 = (Value . fromIntegral) :: Int -> Value Word8
     it_can_write_and_read_band  fWord8

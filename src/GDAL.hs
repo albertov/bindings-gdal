@@ -56,10 +56,7 @@ module GDAL (
 
   , bandTypedAs
   , bandCoercedTo
-  {-
-  , reifyBandDataType
-  , reifyDataType
-  -}
+  , withBandNativeType
 
   , datasetDriver
   , datasetSize

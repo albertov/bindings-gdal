@@ -61,10 +61,7 @@ module GDAL.Internal.GDAL (
 
   , bandTypedAs
   , bandCoercedTo
-  {-
-  , reifyBandDataType
-  , reifyDataType
-  -}
+  , withBandNativeType
 
   , datasetDriver
   , datasetSize
@@ -121,7 +118,7 @@ module GDAL.Internal.GDAL (
 
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.Exception (Exception(..))
-import Control.Monad (liftM, liftM2, when, void, (>=>))
+import Control.Monad (liftM, liftM2, when, (>=>))
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Bits ((.&.))
@@ -138,7 +135,7 @@ import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
-import Data.Vector.Unboxed.Mutable (unsafeRead)
+import qualified Data.Vector.Unboxed.Mutable as UM
 import Data.Word (Word8)
 
 import Foreign.C.String (withCString, CString)
@@ -180,7 +177,6 @@ version = ({#const GDAL_VERSION_MAJOR#} , {#const GDAL_VERSION_MINOR#})
 data GDALRasterException
   = InvalidRasterSize !Size
   | InvalidBlockSize  !Int
-  | InvalidDataType   !DataType
   | InvalidDriverOptions
   | UnknownRasterDataType
   | UnsupportedRasterDataType !DataType
@@ -251,11 +247,16 @@ instance MajorObject (Band s a) t where
     let RasterBandH p = unBand b
     in MajorObjectH (castPtr p)
 
-{-
-reifyBandDataType
-  :: Band s t -> (forall a. GDALType a => Proxy a -> b) -> b
-reifyBandDataType b = reifyDataType (bandDataType b)
--}
+withBandNativeType
+  :: forall b c s t.
+    Band s b t -> (forall a. GDALType a => Band s a t -> GDAL s c) -> GDAL s c
+withBandNativeType b f =
+  case someGDALType bt of
+    Just (SomeGDALType (Proxy :: Proxy a)) ->
+      f (b `bandCoercedTo` (undefined :: a))
+    Nothing ->
+      throwBindingException (UnsupportedRasterDataType bt)
+  where bt = bandDataType b
 
 type ROBand s a = Band s a ReadOnly
 type RWBand s a = Band s a ReadWrite
@@ -611,30 +612,6 @@ addBand ds options = do
   getBand ix ds
   where dt = dataType (Proxy :: Proxy a)
 
-{-
-reifyDataType :: DataType -> (forall a. GDALType a => Proxy a -> b) -> b
-reifyDataType dt f =
-  case dt of
-    GDT_Unknown  -> throw (bindingExceptionToException UnknownRasterDataType)
-    GDT_Byte     -> f (Proxy :: Proxy Word8)
-    GDT_UInt16   -> f (Proxy :: Proxy Word16)
-    GDT_UInt32   -> f (Proxy :: Proxy Word32)
-    GDT_Int16    -> f (Proxy :: Proxy Int16)
-    GDT_Int32    -> f (Proxy :: Proxy Int32)
-    GDT_Float32  -> f (Proxy :: Proxy Float)
-    GDT_Float64  -> f (Proxy :: Proxy Double)
-#ifdef STORABLE_COMPLEX
-    GDT_CInt16   -> f (Proxy :: Proxy (Complex Int16))
-    GDT_CInt32   -> f (Proxy :: Proxy (Complex Int32))
-    GDT_CFloat32 -> f (Proxy :: Proxy (Complex Float))
-    GDT_CFloat64 -> f (Proxy :: Proxy (Complex Double))
-#else
-    d            -> throw
-                    (bindingExceptionToException (UnsupportedRasterDataType d))
-#endif
-
--}
-
 
 
 bandDataType :: Band s a t -> DataType
@@ -666,13 +643,9 @@ bandHasOverviews :: Band s a t -> GDAL s Bool
 bandHasOverviews =
   liftIO . liftM toBool . {#call unsafe HasArbitraryOverviews as ^#} . unBand
 
-checkType
-  :: forall s a t. GDALType a => Band s a t -> GDAL s ()
-checkType b
-  | rt == bt  = return ()
-  | otherwise = throwBindingException (InvalidDataType bt)
-  where rt = dataType (Proxy :: Proxy a)
-        bt = bandDataType b
+isNativeType
+  :: forall s a t. GDALType a => Band s a t -> Bool
+isNativeType = (==dataType (Proxy :: Proxy a)) . bandDataType
 
 bandNodataValue :: GDALType a => Band s a t -> GDAL s (Maybe a)
 bandNodataValue b =
@@ -701,7 +674,14 @@ readBand :: forall s t a. GDALType a
   -> Envelope Int
   -> Size
   -> GDAL s (Vector (Value a))
-readBand band win (XY bx by) = readMasked band read_ read_
+readBand band win (XY bx by) =
+  bandMaskType band >>= \case
+    MaskNoData ->
+      liftM2 mkValueUVector (noDataOrFail band) (read_ band)
+    MaskAllValid ->
+      liftM mkAllValidValueUVector (read_ band)
+    _ ->
+      liftM2 mkMaskedValueUVector (read_ =<< bandMask band) (read_ band)
   where
     XY sx sy     = envelopeSize win
     XY xoff yoff = envelopeMin win
@@ -739,21 +719,6 @@ readBand band win (XY bx by) = readMasked band read_ read_
       St.unsafeFreeze vec
 {-# INLINE readBand #-}
 
-readMasked
-  :: GDALType a
-  => Band s a t
-  -> (Band s a t -> GDAL s (St.Vector a))
-  -> (Band s Word8 t -> GDAL s (St.Vector Word8))
-  -> GDAL s (Vector (Value a))
-readMasked band reader maskReader =
-  bandMaskType band >>= \case
-    MaskNoData ->
-      liftM2 mkValueUVector (noDataOrFail band) (reader band)
-    MaskAllValid ->
-      liftM mkAllValidValueUVector (reader band)
-    _ ->
-      liftM2 mkMaskedValueUVector (maskReader =<< bandMask band) (reader band)
-{-# INLINE readMasked #-}
 
 writeMasked
   :: GDALType a
@@ -881,17 +846,8 @@ ifoldlM'
   :: forall s t a b. GDALType a
   => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
 ifoldlM' f initialAcc band = do
-  checkType band
-  v <- liftIO $ Stm.new (bandBlockLen band)
-  vm <- liftIO $ Stm.new (bandBlockLen band)
-  let blockLoader i j = void $ unsafeLoadBandBlock v vm band (XY i j)
-  bandMaskType band >>= \case
-    MaskAllValid ->
-      ifoldlM_loop blockLoader (mkAllValidValueUMVector v)
-    MaskNoData -> do
-      noData <- noDataOrFail band
-      ifoldlM_loop blockLoader (mkValueUMVector noData v)
-    _ -> ifoldlM_loop blockLoader (mkMaskedValueUMVector vm v)
+  (load, vec) <- mkBlockLoader band
+  ifoldlM_loop load vec
   where
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
@@ -900,7 +856,7 @@ ifoldlM' f initialAcc band = do
     ifoldlM_loop loadBlock vec = goB SPEC 0 0 initialAcc
       where
         goB !sPEC !iB !jB !acc
-          | iB < nx = do loadBlock iB jB
+          | iB < nx = do loadBlock (XY iB jB)
                          go sPEC 0 0 acc >>= goB sPEC (iB+1) jB
           | jB+1 < ny = goB sPEC 0 (jB+1) acc
           | otherwise = return acc
@@ -909,7 +865,7 @@ ifoldlM' f initialAcc band = do
               | i   < stopx = applyTo i j acc' >>= go sPEC2 (i+1) j
               | j+1 < stopy = go sPEC2 0 (j+1) acc'
               | otherwise   = return acc'
-            applyTo i j a = liftIO (unsafeRead vec (j*sx+i)) >>= f a ix
+            applyTo i j a = liftIO (UM.unsafeRead vec (j*sx+i)) >>= f a ix
               where ix = XY (iB*sx+i) (jB*sy+j)
             stopx
               | mx /= 0 && iB==nx-1 = mx
@@ -923,7 +879,6 @@ writeBandBlock
   :: forall s a. GDALType a
   => RWBand s a -> BlockIx  -> Vector (Value a) -> GDAL s ()
 writeBandBlock band blockIx uvec = do
-  checkType band
   when (bandBlockLen band /= len) $
     throwBindingException (InvalidBlockSize len)
   writeMasked band write writeMask uvec
@@ -932,10 +887,15 @@ writeBandBlock band blockIx uvec = do
     bi  = fmap fromIntegral blockIx
 
     write band' vec =
+      withBandNativeType band' $ \(nativeBand :: RWBand s b) ->
       liftIO $
       checkCPLError "WriteBlock" $
-      St.unsafeWith vec $ \pVec ->
-        {#call WriteBlock as ^#} (unBand band') (px bi) (py bi) (castPtr pVec)
+      St.unsafeWith (convertGTypeVector vec :: St.Vector b) $ \pVec ->
+        {#call WriteBlock as ^#}
+        (unBand nativeBand)
+        (px bi)
+        (py bi)
+        (castPtr pVec)
 
     bs  = fmap fromIntegral (bandBlockSize band)
     rs  = fmap fromIntegral (bandSize band)
@@ -966,57 +926,89 @@ readBandBlock
   :: forall s t a. GDALType a
   => Band s a t -> BlockIx -> GDAL s (Vector (Value a))
 readBandBlock band blockIx = do
-  checkType band
-  let len = bandBlockLen band
-  buf <- liftIO $ Stm.new len
-  maskBuf <- liftIO $ Stm.replicate len 0
-  unsafeLoadBandBlock buf maskBuf band blockIx
+  (load, vec) <- mkBlockLoader band
+  load blockIx
+  liftIO $ G.unsafeFreeze vec
 {-# INLINE readBandBlock #-}
 
-unsafeLoadBandBlock
-  :: forall s t a. GDALType a
-  => Stm.IOVector a
-  -> Stm.IOVector Word8
-  -> Band s a t
-  -> BlockIx
-  -> GDAL s (Vector (Value a))
-unsafeLoadBandBlock buf maskBuf band blockIx =
-  readMasked band reader maskReader
-  where
-    bi  = fmap fromIntegral blockIx
 
-    reader band' = liftIO $ do
+mkBlockLoader
+  :: forall s t a. GDALType a
+  => Band s a t
+  -> GDAL s (BlockIx -> GDAL s (), UM.IOVector (Value a))
+mkBlockLoader band = do
+  buf <- liftIO $ Stm.new len
+  bandLoader <- if isNativeType band
+                  then return (nativeBlockLoader buf)
+                  else withBandNativeType band $ \band' -> do
+                    nBuf <- liftIO $ Stm.new len
+                    return (foreignBlockLoader band' nBuf buf)
+  bandMaskType band >>= \case
+    MaskNoData -> do
+      noData <- noDataOrFail band
+      return (bandLoader, mkValueUMVector noData buf)
+    MaskAllValid ->
+      return (bandLoader, mkAllValidValueUMVector buf)
+    _ -> do
+      maskBuf <- liftIO $ Stm.replicate len 0
+      mask <- bandMask band
+      return ( maskedBlockLoader mask maskBuf bandLoader
+             , mkMaskedValueUMVector maskBuf buf)
+  where
+    len = bandBlockLen band
+
+    maskedBlockLoader mask maskBuf loadBlock blockIx = do
+      loadBlock blockIx
+      liftIO $ do
+        Stm.unsafeWith maskBuf $ \pVec ->
+          checkCPLError "RasterIO" $
+          {#call RasterIO as ^#}
+            (unBand mask)
+            (fromEnumC GF_Read)
+            (px off)
+            (py off)
+            (px win)
+            (py win)
+            (castPtr pVec)
+            (px win)
+            (py win)
+            (fromEnumC GDT_Byte)
+            0
+            (fromIntegral lineSpace)
+      where
+        bi  = fmap fromIntegral blockIx
+        bs  = fmap fromIntegral (bandBlockSize band)
+        rs  = fmap fromIntegral (bandSize band)
+        off = bi * bs
+        win = liftA2 min bs (rs  - off)
+        lineSpace = px bs * fromIntegral (sizeOf (undefined :: Word8))
+
+    nativeBlockLoader buf blockIx = liftIO $ do
       Stm.unsafeWith buf $ \pVec ->
         checkCPLError "ReadBlock" $
-        {#call ReadBlock as ^#} (unBand band') (px bi) (py bi) (castPtr pVec)
-      St.unsafeFreeze buf
-
-    bs  = fmap fromIntegral (bandBlockSize band)
-    rs  = fmap fromIntegral (bandSize band)
-    off = bi * bs
-    win = liftA2 min bs (rs  - off)
-    lineSpace = px bs * fromIntegral (sizeOf (undefined :: Word8))
-
-    maskReader band' = liftIO $ do
-      Stm.unsafeWith maskBuf $ \pVec ->
-        checkCPLError "RasterIO" $
-        {#call RasterIO as ^#}
-          (unBand band')
-          (fromEnumC GF_Read)
-          (px off)
-          (py off)
-          (px win)
-          (py win)
+        {#call ReadBlock as ^#}
+          (unBand band)
+          (px bi)
+          (py bi)
           (castPtr pVec)
-          (px win)
-          (py win)
-          (fromEnumC GDT_Byte)
-          0
-          (fromIntegral lineSpace)
-      St.unsafeFreeze maskBuf
-{-# INLINE unsafeLoadBandBlock #-}
+      where
+        bi  = fmap fromIntegral blockIx
 
-
+    foreignBlockLoader
+      :: forall b. GDALType b
+      => Band s b t -> Stm.IOVector b -> Stm.IOVector a -> BlockIx -> GDAL s ()
+    foreignBlockLoader band' nBuf buf blockIx = liftIO $ do
+      Stm.unsafeWith nBuf $ \pVec ->
+        checkCPLError "ReadBlock" $
+        {#call ReadBlock as ^#}
+          (unBand band')
+          (px bi)
+          (py bi)
+          (castPtr pVec)
+      unsafeConvertGTypeMVector buf nBuf
+      where
+        bi  = fmap fromIntegral blockIx
+{-# INLINE mkBlockLoader #-}
 
 openDatasetCount :: IO Int
 openDatasetCount =

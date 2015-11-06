@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
@@ -7,12 +8,14 @@
 module GDAL.Internal.DataType (
     GDALType
   , DataType (..)
+  , SomeGDALType (..)
 
   , convertGType
   , convertGTypeVector
-  , unsafeCopyWords
+  , unsafeConvertGTypeMVector
 
   , dataType
+  , someGDALType
 ) where
 
 #include "gdal.h"
@@ -28,7 +31,6 @@ import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 
 import Foreign.C.Types
-import Foreign.C.String (withCString)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (Ptr, castPtr)
@@ -80,13 +82,24 @@ convertGType a
     alloca $ \bPtr -> with a (unsafeCopyWords 1 bPtr) >> peek bPtr
 {-# INLINE convertGType #-}
 
-convertGTypeVector ::
-  (GDALType dst, GDALType src) => St.Vector src -> St.Vector dst
-convertGTypeVector src = unsafePerformIO $ do
-  dst <- Stm.new (St.length src)
-  Stm.unsafeWith dst (St.unsafeWith src . unsafeCopyWords (St.length src))
-  St.unsafeFreeze dst
+convertGTypeVector
+  :: forall dst src. (GDALType dst, GDALType src)
+  => St.Vector src -> St.Vector dst
+convertGTypeVector src
+  | dataType (Proxy :: Proxy src) == dataType (Proxy :: Proxy dst)
+  = unsafeCoerce src
+  | otherwise = unsafePerformIO $ do
+      dst <- Stm.new (St.length src)
+      St.unsafeThaw src >>= unsafeConvertGTypeMVector dst
+      St.unsafeFreeze dst
 {-# INLINE convertGTypeVector #-}
+
+unsafeConvertGTypeMVector
+  :: (GDALType dst, GDALType src)
+  => Stm.IOVector dst -> Stm.IOVector src -> IO ()
+unsafeConvertGTypeMVector dst src =
+  Stm.unsafeWith dst (Stm.unsafeWith src . unsafeCopyWords (Stm.length dst))
+{-# INLINE unsafeConvertGTypeMVector #-}
 
 instance GDALType Word8 where
   dataTypeInternal _ = GDT_Byte
@@ -150,3 +163,28 @@ instance GDALType (Complex Float) where
 instance GDALType (Complex Double) where
   dataTypeInternal _ = GDT_CFloat64
 #endif
+
+data SomeGDALType = forall a. GDALType a => SomeGDALType (Proxy a)
+
+someGDALType :: DataType -> Maybe SomeGDALType
+someGDALType dt =
+  case dt of
+    GDT_Byte     -> Just (SomeGDALType (Proxy :: Proxy Word8))
+    GDT_UInt16   -> Just (SomeGDALType (Proxy :: Proxy Word16))
+    GDT_UInt32   -> Just (SomeGDALType (Proxy :: Proxy Word32))
+    GDT_Int16    -> Just (SomeGDALType (Proxy :: Proxy Int16))
+    GDT_Int32    -> Just (SomeGDALType (Proxy :: Proxy Int32))
+    GDT_Float32  -> Just (SomeGDALType (Proxy :: Proxy Float))
+    GDT_Float64  -> Just (SomeGDALType (Proxy :: Proxy Double))
+#ifdef STORABLE_COMPLEX
+    GDT_CInt16   -> Just (SomeGDALType (Proxy :: Proxy (Complex Int16)))
+    GDT_CInt32   -> Just (SomeGDALType (Proxy :: Proxy (Complex Int32)))
+    GDT_CFloat32 -> Just (SomeGDALType (Proxy :: Proxy (Complex Float)))
+    GDT_CFloat64 -> Just (SomeGDALType (Proxy :: Proxy (Complex Double)))
+#else
+    GDT_CInt16   -> Nothing
+    GDT_CInt32   -> Nothing
+    GDT_CFloat32 -> Nothing
+    GDT_CFloat64 -> Nothing
+#endif
+    GDT_Unknown  -> Nothing
