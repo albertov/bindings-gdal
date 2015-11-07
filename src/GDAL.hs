@@ -2,7 +2,19 @@ module GDAL (
     GDAL
   , GDALType
   , ApproxOK (..)
-  , DataType (..)
+  , DataType
+  , gdtByte
+  , gdtUInt16
+  , gdtUInt32
+  , gdtInt16
+  , gdtInt32
+  , gdtFloat32
+  , gdtFloat64
+  , gdtCInt16
+  , gdtCInt32
+  , gdtCFloat32
+  , gdtCFloat64
+  , gdtUnknown
   , XY (..)
   , Size
   , BlockIx

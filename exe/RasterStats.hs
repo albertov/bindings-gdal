@@ -3,7 +3,6 @@
 {-# LANGUAGE RecordWildCards #-}
 module Main (main) where
 import System.Environment (getArgs)
-import Data.Int (Int64, Int16)
 
 import GDAL
 
@@ -12,31 +11,29 @@ main = withGDAL $ do
   [fname] <- getArgs
   summary <- execGDAL $ do
     b <- openReadOnly fname >>= getBand 1
-    computeStatistics (b `bandTypedAs` (undefined::Int16))
+    computeStatistics b
   print summary
 
 data Acc = Acc
-  { accS   :: {-# UNPACK #-} !Int64
-  , accSq  :: {-# UNPACK #-} !Int64
-  , accMin :: {-# UNPACK #-} !Int64
-  , accMax :: {-# UNPACK #-} !Int64
-  , accCnt :: {-# UNPACK #-} !Int64
+  { accS   :: {-# UNPACK #-} !Double
+  , accSq  :: {-# UNPACK #-} !Double
+  , accMin :: {-# UNPACK #-} !Double
+  , accMax :: {-# UNPACK #-} !Double
+  , accCnt :: {-# UNPACK #-} !Int
   }
 
-type Summary = (Double, Double, Int64, Int64)
+type Summary = (Double, Double, Double, Double)
 
 computeStatistics
-  :: (Integral a, GDALType a)
-  => ROBand s a -> GDAL s Summary
+  :: ROBand s Double -> GDAL s Summary
 computeStatistics
-  = fmap sumarize . GDAL.foldl' folder (Acc 0 0 maxBound minBound 0)
+  = fmap sumarize . GDAL.foldl' folder (Acc 0 0 (1/0) (-1/0) 0)
   where
     folder acc NoData = acc
     folder Acc{..} (Value v')
-      = Acc (accS+v) (accSq+v*v) (min accMin v) (max accMax v) (accCnt + 1)
-      where v = fromIntegral v'
+      = Acc (accS+v) (accSq+v*v) (min accMin v) (max accMax v) (accCnt+1)
+      where v = v'
     sumarize Acc{..} = (avg, stddev, accMin, accMax)
       where
-        avg :: Double
-        avg    = fromIntegral accS  / fromIntegral accCnt
-        stddev = sqrt (fromIntegral accSq / fromIntegral accCnt - avg*avg)
+        avg    = accS  / fromIntegral accCnt
+        stddev = sqrt (accSq / fromIntegral accCnt - avg*avg)

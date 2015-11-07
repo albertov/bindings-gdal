@@ -4,11 +4,10 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE MagicHash #-}
 
 module GDAL.Internal.DataType (
     GDALType (..)
-  , DataType (..)
+  , DataType
 
   , convertGType
   , unsafeCopyWords
@@ -37,7 +36,6 @@ module GDAL.Internal.DataType (
 import Control.Monad (liftM, liftM2)
 
 import Data.Primitive.Addr
-import GHC.Ptr (Ptr(..))
 
 import Data.Int (Int8, Int16, Int32)
 import Data.Complex (Complex(..), realPart)
@@ -48,8 +46,9 @@ import Foreign.C.String (peekCString)
 import Foreign.C.Types
 import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Marshal.Utils (copyBytes)
-import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf, alignment)
+
+import GHC.Ptr (Ptr(..))
 
 import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce (unsafeCoerce)
@@ -92,6 +91,7 @@ instance Enum DataType where
   toEnum {#const GDT_CFloat64 #} = DataType {#const GDT_CFloat64#}
   toEnum {#const GDT_Unknown  #} = DataType {#const GDT_Unknown#}
   toEnum _ = error "DataType: Invalid toEnum"
+  {-# INLINE toEnum #-}
 
   fromEnum (DataType {#const GDT_Byte     #}) = {#const GDT_Byte#}
   fromEnum (DataType {#const GDT_UInt16   #}) = {#const GDT_UInt16#}
@@ -106,6 +106,7 @@ instance Enum DataType where
   fromEnum (DataType {#const GDT_CFloat64 #}) = {#const GDT_CFloat64#}
   fromEnum (DataType {#const GDT_Unknown  #}) = {#const GDT_Unknown#}
   fromEnum _  = error "DataType: Invalid fromEnum"
+  {-# INLINE fromEnum #-}
 
 instance Bounded DataType where
   minBound = gdtByte

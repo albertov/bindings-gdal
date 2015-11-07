@@ -37,43 +37,43 @@ spec = setupAndTeardown $ do
   it "cannot open non-existent file" $ do
     openReadOnly "foo.tif" `shouldThrow` ((==OpenFailed) . gdalErrNum)
 
-  it "cannot create GDT_Unknown dataset" $
-    createMem (XY 100 100) 1 GDT_Unknown []
+  it "cannot create gdtUnknown dataset" $
+    createMem (XY 100 100) 1 gdtUnknown []
       `shouldThrow` (==UnknownRasterDataType)
 
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("compress","deflate"), ("zlevel", "9"), ("predictor", "2")]
-    ds <- create "GTIFF" p 3000 1 GDT_Int16 o
+    ds <- create "GTIFF" p 3000 1 gdtInt16 o
     flushCache ds
     p `existsAndSizeIsGreaterThan` 20000
 
   withDir "can get filelist" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
-    ds <- create "GTIFF" p 3000 1 GDT_Int16 []
+    ds <- create "GTIFF" p 3000 1 gdtInt16 []
     fl <- datasetFileList ds
     fl `shouldBe` [fromString p]
 
   it "can get empty filelist" $ do
-    ds <- createMem 3000 1 GDT_Int16 []
+    ds <- createMem 3000 1 gdtInt16 []
     fl <- datasetFileList ds
     fl `shouldSatisfy` null
 
   withDir "driver options are validated" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
         o = [("zlevel", "bad level")]
-        action = create "GTIFF" p 3000 1 GDT_Int16 o
+        action = create "GTIFF" p 3000 1 gdtInt16 o
     action `shouldThrow` (==InvalidDriverOptions)
 
   withDir "can create and open dataset" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
-    ds <- create "GTIFF" p 3000 1 GDT_Int16 []
+    ds <- create "GTIFF" p 3000 1 gdtInt16 []
     flushCache ds
     void $ (openReadOnly p)
 
   withDir "can create and copy dataset" $ \tmpDir -> do
     let p  = joinPath [tmpDir, "test.tif"]
-    ds <- createMem (XY 100 100) 1 GDT_Int16 []
+    ds <- createMem (XY 100 100) 1 gdtInt16 []
     ds2 <- createCopy "GTIFF" p ds True [] Nothing
     flushCache ds2
     p `existsAndSizeIsGreaterThan` 0
@@ -81,14 +81,14 @@ spec = setupAndTeardown $ do
   describe "progress function" $ do
     withDir "can stop copy" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (XY 100 100) 1 gdtInt16 []
       let stopIt = Just (\_ _ -> return Stop)
       createCopy "GTIFF" p ds True [] stopIt
         `shouldThrow` isInterruptedException
 
     withDir "can throw exceptions" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (XY 100 100) 1 gdtInt16 []
       let crashIt = Just (error msg)
           msg     = "I crashed!"
       createCopy "GTIFF" p ds True [] crashIt
@@ -96,7 +96,7 @@ spec = setupAndTeardown $ do
 
     withDir "can report progress" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (XY 100 100) 1 gdtInt16 []
       msgsRef <- liftIO (newIORef [])
       let report pr m = do
             modifyIORef' msgsRef ((pr,m):)
@@ -108,19 +108,19 @@ spec = setupAndTeardown $ do
       msgs `shouldSatisfy` (not . null)
 
   it "can get band count" $ do
-    ds <- createMem (XY 10 10) 5 GDT_Int16 []
+    ds <- createMem (XY 10 10) 5 gdtInt16 []
     datasetBandCount ds >>= (`shouldBe` 5)
 
   it "can get existing raster band" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (XY 10 10) 1 gdtInt16 []
     void $ getBand 1 ds
 
   it "cannot get non-existing raster band" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (XY 10 10) 1 gdtInt16 []
     getBand 2 ds `shouldThrow` ((== IllegalArg) . gdalErrNum)
 
   it "can add raster band" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (XY 10 10) 1 gdtInt16 []
     datasetBandCount ds >>= (`shouldBe` 1)
     void $ liftM (`bandTypedAs` (undefined::Double)) (addBand ds [])
     datasetBandCount ds >>= (`shouldBe` 2)
@@ -128,21 +128,21 @@ spec = setupAndTeardown $ do
   describe "datasetGeotransform" $ do
 
     it "can set and get" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (XY 10 10) 1 gdtInt16 []
       let gt = Geotransform 5.0 4.0 3.0 2.0 1.0 0.0
       setDatasetGeotransform ds gt
       gt2 <- datasetGeotransform ds
       Just gt `shouldBe` gt2
 
     it "if not set get returns Nothing" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (XY 10 10) 1 gdtInt16 []
       gt <- datasetGeotransform ds
       gt `shouldSatisfy` isNothing
 
   describe "datasetProjection" $ do
 
     it "can set and get" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (XY 10 10) 1 gdtInt16 []
       let Right proj = srsFromProj4
                           "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
       setDatasetProjection ds proj
@@ -150,14 +150,14 @@ spec = setupAndTeardown $ do
       Just proj `shouldBe` proj2
 
     it "returns Nothing if dataset has no projection" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (XY 10 10) 1 gdtInt16 []
       proj <- datasetProjection ds
       proj `shouldSatisfy` isNothing
 
   describe "datasetGCPs" $ do
 
     it "can set and get with srs" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (XY 10 10) 1 gdtInt16 []
       let Right proj = srsFromProj4
                           "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
           gcps = [gcp "1" (XY 0 0) (XY 45 21)]
@@ -167,7 +167,7 @@ spec = setupAndTeardown $ do
       Just proj `shouldBe` proj2
 
     it "can set and get with no srs" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (XY 10 10) 1 gdtInt16 []
       let gcps = [gcp "1" (XY 0 0) (XY 45 21)]
       setDatasetGCPs ds gcps Nothing
       (gcps2,proj2) <- datasetGCPs ds
@@ -175,13 +175,13 @@ spec = setupAndTeardown $ do
       proj2 `shouldSatisfy` isNothing
 
     it "returns empty list and Nothing if dataset has no gcps" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (XY 10 10) 1 gdtInt16 []
       (gcps2,proj2) <- datasetGCPs ds
       gcps2 `shouldSatisfy` null
       proj2 `shouldSatisfy` isNothing
 
   it "can set and get nodata value" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (XY 10 10) 1 gdtInt16 []
     b <- getBand 1 ds
     (nd :: Maybe Int16) <- bandNodataValue b
     nd `shouldSatisfy` isNothing
@@ -191,19 +191,19 @@ spec = setupAndTeardown $ do
     nodata2 `shouldBe` Just nodataValue
 
   it "can get bandBlockSize" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (XY 10 10) 1 gdtInt16 []
     b <- getBand 1 ds
     bandBlockSize b `shouldBe` (XY 10 1)
 
   it "can get bandSize" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (XY 10 10) 1 gdtInt16 []
     b <- getBand 1 ds
     bandSize b `shouldBe` (XY 10 10)
 
   describe "band and block IO" $ do
 
     it "can write block and read band with automatic conversion" $ do
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (XY 100 100) 1 gdtInt16 []
       band <- getBand 1 ds
       let len = bandBlockLen band
           vec :: (U.Vector (Value Int16))
@@ -215,7 +215,7 @@ spec = setupAndTeardown $ do
       vec `shouldBe` U.map (fmap round) (vec2 :: U.Vector (Value Double))
 
     it "can write and read band with automatic conversion" $ do
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (XY 100 100) 1 gdtInt16 []
       band <- getBand 1 ds
       let vec :: U.Vector (Value Double)
           vec = U.generate 10000 (Value . fromIntegral)
@@ -227,7 +227,7 @@ spec = setupAndTeardown $ do
 
       it "can fill and read band" $ do
         forM_ ([-10..10] :: [Int16]) $ \value -> do
-          band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
+          band <- getBand 1 =<< createMem (XY 100 100) 1 gdtInt16 []
           fillBand (Value value)  band
           v <- readBand band (allBand band) (bandSize band)
           U.length v `shouldBe` 10000
@@ -237,14 +237,14 @@ spec = setupAndTeardown $ do
           allEqual `shouldBe` True
 
       it "can fill with NoData if setBandNodataValue" $ do
-        band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
+        band <- getBand 1 =<< createMem (XY 100 100) 1 gdtInt16 []
         setBandNodataValue band (-999 :: Int16)
         fillBand NoData band
         v <- readBand band (allBand band) (bandSize band)
         v `shouldSatisfy` (U.all isNoData)
 
       withDir "can fill with NoData if createBandMask" $ \d -> do
-        ds <- create "GTIFF" (joinPath [d, "test.tif"]) 100 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [d, "test.tif"]) 100 1 gdtInt16 []
         band <- getBand 1 ds
         createBandMask band MaskPerDataset
         fillBand (NoData :: Value Int16) band
@@ -252,12 +252,12 @@ spec = setupAndTeardown $ do
         v `shouldSatisfy` (U.all isNoData)
 
       it "cannot fill with NoData if no nodata value or mask has been set" $ do
-        band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
+        band <- getBand 1 =<< createMem (XY 100 100) 1 gdtInt16 []
         fillBand (NoData :: Value Int16) band
           `shouldThrow` (==BandDoesNotAllowNoData)
 
     it "can write and read block with automatic conversion" $ do
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (XY 100 100) 1 gdtInt16 []
       band <- getBand 1 ds
       let vec :: U.Vector (Value Double)
           vec = U.generate (bandBlockLen band) (Value . fromIntegral)
@@ -306,7 +306,6 @@ spec = setupAndTeardown $ do
     it_can_foldl                fDouble (+) 0
 
 
-#ifdef STORABLE_COMPLEX
     let fCInt16 i = Value ((fromIntegral i  :+ fromIntegral (i + i)))
         fCInt16 :: Int -> Value (Complex Int16)
         f2C :: Num a
@@ -338,8 +337,6 @@ spec = setupAndTeardown $ do
     it_can_write_and_read_block fCDouble
     it_can_write_and_read_band  fCDouble
     it_can_foldl                fCDouble f2C zC
-#endif
-
 
   describe "Geotransform" $ do
 
@@ -387,19 +384,19 @@ spec = setupAndTeardown $ do
     describe "metadataDomains" $ do
 
       it "mem driver dataset" $ do
-        ds <- createMem 3000 1 GDT_Int16 []
+        ds <- createMem 3000 1 gdtInt16 []
         doms <- metadataDomains ds
         doms `shouldBe` []
 
       withDir "GTIFF driver dataset" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 gdtInt16 []
         doms <- metadataDomains ds
         if version > (1,11)
            then doms `shouldBe` ["IMAGE_STRUCTURE"]
            else doms `shouldBe` []
 
       withDir "GTIFF driver band" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 gdtInt16 []
         b <- getBand 1 ds
         doms <- metadataDomains b
         doms `shouldBe` []
@@ -407,7 +404,7 @@ spec = setupAndTeardown $ do
     describe "metadata" $ do
 
       withDir "GTIFF driver dataset" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 gdtInt16 []
         meta <- metadata (Just "IMAGE_STRUCTURE") ds
         if version > (1,11)
            then meta `shouldBe` [("INTERLEAVE","BAND")]
@@ -416,19 +413,19 @@ spec = setupAndTeardown $ do
     describe "metadataItem" $ do
 
       withDir "GTIFF driver dataset (existing key)" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 gdtInt16 []
         meta <- metadataItem (Just "IMAGE_STRUCTURE") "INTERLEAVE" ds
         if version > (1,11)
            then meta `shouldBe` (Just "BAND")
            else meta `shouldBe` Nothing
 
       withDir "GTIFF driver dataset (non-existing key)" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 gdtInt16 []
         meta <- metadataItem (Just "IMAGE_STRUCTURE") "FOO" ds
         meta `shouldBe` Nothing
 
       withDir "GTIFF driver dataset (can set)" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 gdtInt16 []
         setMetadataItem Nothing "foo" "bar" ds
         meta <- metadataItem Nothing "foo" ds
         meta `shouldBe` (Just "bar")
@@ -438,25 +435,25 @@ spec = setupAndTeardown $ do
 
       withDir "GTIFF driver dataset" $ \tmpDir -> do
         let path = (joinPath [tmpDir, "foo"])
-        ds <- create "GTIFF" path 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" path 3000 1 gdtInt16 []
         desc <- description ds
         desc `shouldBe` (fromString path)
 
       withDir "GTIFF driver dataset (can set unicode)" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 gdtInt16 []
         let someDesc = "ñamñamñamççççö"
         setDescription someDesc ds
         desc <- description ds
         desc `shouldBe` someDesc
 
       withDir "GTIFF driver band" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 gdtInt16 []
         b <- getBand 1 ds
         desc <- description b
         desc `shouldBe` ""
 
       withDir "GTIFF driver band (can set)" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 gdtInt16 []
         b <- getBand 1 ds
         let someDesc = "hjgjhghjgjh,gjhgjhgl"
         setDescription someDesc b

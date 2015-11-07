@@ -77,9 +77,6 @@ library
   includes:        cbits/errorhandler.h
                  , cbits/contourwriter.h
 
-  if impl(ghc >= 7.10.0)
-    cpp-options: -DSTORABLE_COMPLEX
-
 test-suite spec
   type:             exitcode-stdio-1.0
   build-depends:    base
@@ -114,8 +111,6 @@ test-suite spec
   ghc-options:     -Wall -rtsopts -threaded -with-rtsopts=-N
   default-extensions: CPP
   include-dirs:    src/GDAL/Internal/
-  if impl(ghc >= 7.10.0)
-    cpp-options: -DSTORABLE_COMPLEX
 
 executable ogrinfo-hs
   build-depends:       base
