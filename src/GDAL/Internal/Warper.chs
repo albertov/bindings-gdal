@@ -90,7 +90,7 @@ instance Default (WarpOptions s) where
           woResampleAlg      = NearestNeighbour
         , woWarpOptions      = []
         , woMemoryLimit      = 0
-        , woWorkingDataType  = GDT_Unknown
+        , woWorkingDataType  = gdtUnknown
         , woBands            = []
         , woTransfomer       = def
         , woCutline          = Nothing

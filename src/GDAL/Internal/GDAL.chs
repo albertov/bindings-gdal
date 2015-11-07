@@ -277,18 +277,18 @@ validateCreationOptions d o = do
 create
   :: Driver -> String -> Size -> Int -> DataType -> OptionList
   -> GDAL s (Dataset s ReadWrite)
-create _   _    _          _     GDT_Unknown _       =
-  throwBindingException UnknownRasterDataType
-create drv path (XY nx ny) bands dtype  options =
-  newDatasetHandle $ withCString path $ \path' -> do
-    let nx'    = fromIntegral nx
-        ny'    = fromIntegral ny
-        bands' = fromIntegral bands
-        dtype' = fromEnumC dtype
-    d <- driverByName drv
-    withOptionList options $ \opts -> do
-      validateCreationOptions d opts
-      {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' opts
+create drv path (XY nx ny) bands dtype  options
+  | dtype == gdtUnknown = throwBindingException UnknownRasterDataType
+  | otherwise
+  = newDatasetHandle $ withCString path $ \path' -> do
+      let nx'    = fromIntegral nx
+          ny'    = fromIntegral ny
+          bands' = fromIntegral bands
+          dtype' = fromEnumC dtype
+      d <- driverByName drv
+      withOptionList options $ \opts -> do
+        validateCreationOptions d opts
+        {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' opts
 
 delete :: Driver -> String -> GDAL s ()
 delete driver path =
@@ -827,33 +827,30 @@ ifoldlM'
   :: forall s t a b. GDALType a
   => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
 ifoldlM' f initialAcc band = do
-  (load, vec) <- mkBlockLoader band
-  ifoldlM_loop load vec
+  (loadBlock, vec) <- mkBlockLoader band
+  let goB !sPEC !iB !jB !acc
+        | iB < nx = do loadBlock (XY iB jB)
+                       go sPEC 0 0 acc >>= goB sPEC (iB+1) jB
+        | jB+1 < ny = goB sPEC 0 (jB+1) acc
+        | otherwise = return acc
+        where
+          go !sPEC2 !i !j !acc'
+            | i   < stopx = applyTo i j acc' >>= go sPEC2 (i+1) j
+            | j+1 < stopy = go sPEC2 0 (j+1) acc'
+            | otherwise   = return acc'
+          applyTo i j a = liftIO (UM.unsafeRead vec (j*sx+i)) >>= f a ix
+            where ix = XY (iB*sx+i) (jB*sy+j)
+          stopx
+            | mx /= 0 && iB==nx-1 = mx
+            | otherwise           = sx
+          stopy
+            | my /= 0 && jB==ny-1 = my
+            | otherwise           = sy
+  goB SPEC 0 0 initialAcc
   where
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
-    {-# INLINE ifoldlM_loop #-}
-    ifoldlM_loop loadBlock vec = goB SPEC 0 0 initialAcc
-      where
-        goB !sPEC !iB !jB !acc
-          | iB < nx = do loadBlock (XY iB jB)
-                         go sPEC 0 0 acc >>= goB sPEC (iB+1) jB
-          | jB+1 < ny = goB sPEC 0 (jB+1) acc
-          | otherwise = return acc
-          where
-            go !sPEC2 !i !j !acc'
-              | i   < stopx = applyTo i j acc' >>= go sPEC2 (i+1) j
-              | j+1 < stopy = go sPEC2 0 (j+1) acc'
-              | otherwise   = return acc'
-            applyTo i j a = liftIO (UM.unsafeRead vec (j*sx+i)) >>= f a ix
-              where ix = XY (iB*sx+i) (jB*sy+j)
-            stopx
-              | mx /= 0 && iB==nx-1 = mx
-              | otherwise           = sx
-            stopy
-              | my /= 0 && jB==ny-1 = my
-              | otherwise           = sy
 {-# INLINE ifoldlM' #-}
 
 writeBandBlock

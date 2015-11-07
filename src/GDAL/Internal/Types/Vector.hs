@@ -36,18 +36,21 @@ import Text.Read     ( Read(..), readListPrecDefault )
 import GDAL.Internal.DataType
 
 -- | 'GDALType'-based vectors
-data Vector a = Vector {-# UNPACK #-} !Int
-                       {-# UNPACK #-} !DataType
-                       {-# UNPACK #-} !(ForeignPtr ())
+data Vector a = Vector { vLen         :: {-# UNPACK #-} !Int
+                       , vDataType    :: {-# UNPACK #-} !DataType
+                       , vPeekElemOff :: !(Ptr () -> Int -> IO a)
+                       , vPokeElemOff :: !(Ptr () -> Int -> a -> IO ())
+                       , vForeignPtr  :: {-# UNPACK #-} !(ForeignPtr ())
+                       }
         deriving ( Typeable )
 
 instance NFData (Vector a) where
-  rnf (Vector _ _ _) = ()
+  rnf (Vector _ _ _ _ _) = ()
 
-instance (Show a, GDALType a) => Show (Vector a) where
+instance (GDALType a, Show a) => Show (Vector a) where
   showsPrec = G.showsPrec
 
-instance (Read a, GDALType a) => Read (Vector a) where
+instance (GDALType a, Read a) => Read (Vector a) where
   readPrec = G.readPrec
   readListPrec = readListPrecDefault
 
@@ -55,24 +58,24 @@ type instance G.Mutable Vector = MVector
 
 instance GDALType a => G.Vector Vector a where
   {-# INLINE basicUnsafeFreeze #-}
-  basicUnsafeFreeze (MVector n dp fp) = return $ Vector n dp fp
+  basicUnsafeFreeze (MVector n dp pe po fp) = return $ Vector n dp pe po fp
 
   {-# INLINE basicUnsafeThaw #-}
-  basicUnsafeThaw (Vector n dp fp) = return $ MVector n dp fp
+  basicUnsafeThaw (Vector n dp pe po fp) = return $ MVector n dp pe po fp
 
   {-# INLINE basicLength #-}
-  basicLength (Vector n _ _) = n
+  basicLength = vLen
 
   {-# INLINE basicUnsafeSlice #-}
-  basicUnsafeSlice i n (Vector _ dp fp) =
-      Vector n dp (updPtr (`plusPtr` (i*sizeOfDataType dp)) fp)
+  basicUnsafeSlice i n (Vector _ dp pe po fp) =
+      Vector n dp pe po (updPtr (`plusPtr` (i*sizeOfDataType dp)) fp)
 
   {-# INLINE basicUnsafeIndexM #-}
-  basicUnsafeIndexM (Vector _ dp fp) i =
-    return . unsafeInlineIO $ withForeignPtr fp $ \p -> gPeekElemOff dp p i
+  basicUnsafeIndexM (Vector _ _ pe _ fp) i =
+    return . unsafeInlineIO $ withForeignPtr fp $ \p -> pe p i
 
   {-# INLINE basicUnsafeCopy #-}
-  basicUnsafeCopy (MVector n dp fp) (Vector _ dq fq)
+  basicUnsafeCopy (MVector n dp _ _ fp) (Vector _ dq _ _ fq)
     = unsafePrimToPrim
     $ withForeignPtr fp $ \p ->
       withForeignPtr fq $ \q ->
@@ -82,15 +85,13 @@ instance GDALType a => G.Vector Vector a where
   elemseq _ = seq
 
 unsafeWithDataType
-  :: GDALType a
-  => Vector a -> (DataType -> Ptr () -> IO b) -> IO b
-unsafeWithDataType (Vector _ dp fp) f = withForeignPtr fp (f dp)
+  :: Vector a -> (DataType -> Ptr () -> IO b) -> IO b
+unsafeWithDataType (Vector _ dp _ _ fp) f = withForeignPtr fp (f dp)
 {-# INLINE unsafeWithDataType #-}
 
 unsafeAsDataType
-  :: GDALType a
-  => DataType -> Vector a -> (Ptr () -> IO b) -> IO b
-unsafeAsDataType dt (Vector n dp fp) f
+  :: DataType -> Vector a -> (Ptr () -> IO b) -> IO b
+unsafeAsDataType dt (Vector n dp _ _ fp) f
   | dp == dt  = withForeignPtr fp f
   | otherwise =
     withForeignPtr fp $ \sPtr ->
@@ -99,9 +100,15 @@ unsafeAsDataType dt (Vector n dp fp) f
 {-# INLINE unsafeAsDataType #-}
 
 unsafeFromStorable
-  :: forall dst src. (Storable src, GDALType dst, GDALType src)
+  :: forall dst src. (Storable src, GDALType src, GDALType dst)
   => St.Vector src -> Vector dst
 unsafeFromStorable src =
-  Vector len (dataType (Proxy :: Proxy src)) (castForeignPtr fp)
+  Vector { vLen         = len
+         , vDataType    = dt
+         , vPeekElemOff = gPeekElemOff dt
+         , vPokeElemOff = gPokeElemOff dt
+         , vForeignPtr  = castForeignPtr fp
+         }
   where (fp, len) = St.unsafeToForeignPtr0 src
+        dt        = dataType (Proxy :: Proxy src)
 {-# INLINE unsafeFromStorable #-}
