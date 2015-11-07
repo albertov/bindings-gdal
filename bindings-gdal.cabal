@@ -63,6 +63,7 @@ library
                    , data-default
                    , unordered-containers
                    , ghc-prim
+                   , primitive
   ghc-options:       -funbox-strict-fields -Wall
   install-includes: bindings.h
   default-extensions: CPP
