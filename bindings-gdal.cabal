@@ -30,6 +30,8 @@ library
 
                    , GDAL.Internal.Types
                    , GDAL.Internal.Types.Value
+                   , GDAL.Internal.Types.Vector
+                   , GDAL.Internal.Types.Vector.Mutable
                    , GDAL.Internal.DataType
                    , GDAL.Internal.Util
                    , GDAL.Internal.Common

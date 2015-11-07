@@ -1,21 +1,18 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module GDAL.Internal.DataType (
-    GDALType
+    GDALType (..)
   , DataType (..)
-  , SomeGDALType (..)
 
   , convertGType
-  , convertGTypeVector
-  , unsafeConvertGTypeMVector
+  , unsafeCopyWords
 
-  , dataType
-  , someGDALType
+  , sizeOfDataType
+  , alignOfDataType
 ) where
 
 #include "gdal.h"
@@ -23,16 +20,16 @@ module GDAL.Internal.DataType (
 
 {#context lib = "gdal" prefix = "GDAL" #}
 
+import Control.Monad (liftM, liftM2)
+
 import Data.Int (Int8, Int16, Int32)
-import Data.Complex (Complex(..))
+import Data.Complex (Complex(..), realPart)
 import Data.Proxy (Proxy(..))
 import Data.Word (Word8, Word16, Word32)
-import qualified Data.Vector.Storable as St
-import qualified Data.Vector.Storable.Mutable as Stm
 
 import Foreign.C.Types
-import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Utils (with)
+import Foreign.Marshal.Alloc (allocaBytes)
+import Foreign.Marshal.Utils (with, copyBytes)
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (Storable(..))
 
@@ -45,146 +42,481 @@ import GDAL.Internal.Util (fromEnumC)
 
 {#enum DataType {} omit (GDT_TypeCount) deriving (Eq, Show, Bounded) #}
 
-sizeOfGType :: forall a. GDALType a => a -> CInt
-sizeOfGType _ =
-  fromIntegral ({#call pure unsafe GetDataTypeSize as ^#} dt `div` 8)
-  where dt = fromEnumC (dataType (Proxy :: Proxy a))
+sizeOfDataType :: DataType -> Int
+sizeOfDataType dt =
+  case dt of
+    GDT_Byte     -> {#sizeof GByte   #}
+    GDT_UInt16   -> {#sizeof GUInt16 #}
+    GDT_UInt32   -> {#sizeof GUInt32 #}
+    GDT_Int16    -> {#sizeof GInt16  #}
+    GDT_Int32    -> {#sizeof GInt32  #}
+    GDT_Float32  -> sizeOf (undefined :: CFloat)
+    GDT_Float64  -> sizeOf (undefined :: CDouble)
+    GDT_CInt16   -> {#sizeof GInt16  #} * 2
+    GDT_CInt32   -> {#sizeof GInt32  #} * 2
+    GDT_CFloat32 -> sizeOf (undefined :: CFloat) * 2
+    GDT_CFloat64 -> sizeOf (undefined :: CDouble) * 2
+    GDT_Unknown  -> error "sizeOfDataType: GDT_Unknown"
+{-# INLINE sizeOfDataType #-}
 
-dataType :: GDALType a => Proxy a -> DataType
-dataType = dataTypeInternal
-{-# INLINE dataType #-}
-
+alignOfDataType :: DataType -> Int
+alignOfDataType dt =
+  case dt of
+    GDT_Byte     -> {#alignof GByte   #}
+    GDT_UInt16   -> {#alignof GUInt16 #}
+    GDT_UInt32   -> {#alignof GUInt32 #}
+    GDT_Int16    -> {#alignof GInt16  #}
+    GDT_Int32    -> {#alignof GInt32  #}
+    GDT_Float32  -> alignment (undefined :: CFloat)
+    GDT_Float64  -> sizeOf (undefined :: CDouble)
+    GDT_CInt16   -> {#alignof GInt16  #}
+    GDT_CInt32   -> {#alignof GInt32  #}
+    GDT_CFloat32 -> alignment (undefined :: CFloat)
+    GDT_CFloat64 -> alignment (undefined :: CDouble)
+    GDT_Unknown  -> error "alignOfDataType: GDT_Unknown"
+{-# INLINE alignOfDataType #-}
 
 ------------------------------------------------------------------------------
 -- GDALType
 ------------------------------------------------------------------------------
-class (Eq a, Storable a) => GDALType a where
-  dataTypeInternal :: Proxy a -> DataType
+class Eq a  => GDALType a where
+  dataType :: Proxy a -> DataType
+
+  gPeekElemOff :: DataType -> Ptr () -> Int -> IO a
+  gPokeElemOff :: DataType -> Ptr () -> Int -> a -> IO ()
+
+gUnsafeCopyWords
+  :: forall dst src. (GDALType dst, GDALType src)
+  => Ptr dst -> Ptr src -> Int -> IO ()
+gUnsafeCopyWords dst src =
+  unsafeCopyWords
+    (castPtr dst)
+    (dataType (Proxy :: Proxy dst))
+    (castPtr src)
+    (dataType (Proxy :: Proxy src))
+{-# INLINE gUnsafeCopyWords #-}
 
 unsafeCopyWords
-  :: forall dst src. (GDALType dst, GDALType src)
-  => Int -> Ptr dst -> Ptr src -> IO ()
-unsafeCopyWords count dst src =
-  {#call unsafe GDALCopyWords as ^#}
-    (castPtr src)
-    (fromEnumC (dataType (Proxy :: Proxy src)))
-    (sizeOfGType (undefined :: src))
-    (castPtr dst)
-    (fromEnumC (dataType (Proxy :: Proxy dst)))
-    (sizeOfGType (undefined :: dst))
-    (fromIntegral count)
+  :: Ptr () -> DataType -> Ptr () -> DataType -> Int -> IO ()
+unsafeCopyWords dst dDst src dSrc count
+  | dDst == dSrc = copyBytes dst src (count * sizeOfDataType dDst)
+  | otherwise =
+    {#call unsafe GDALCopyWords as ^#}
+      src (fromEnumC dSrc) (fromIntegral (sizeOfDataType dSrc))
+      dst (fromEnumC dDst) (fromIntegral (sizeOfDataType dDst))
+      (fromIntegral count)
 {-# INLINE unsafeCopyWords #-}
 
 convertGType :: forall a b. (GDALType a, GDALType b) => a -> b
 convertGType a
-  | dataType (Proxy :: Proxy a) == dataType (Proxy :: Proxy b) = unsafeCoerce a
-  | otherwise = unsafePerformIO $
-    alloca $ \bPtr -> with a (unsafeCopyWords 1 bPtr) >> peek bPtr
+  | adt == bdt = unsafeCoerce a
+  | otherwise  = unsafePerformIO $
+    allocaBytes (sizeOfDataType bdt) $ \bPtr -> do
+      gPokeElemOff bdt bPtr 0 a
+      gPeekElemOff bdt bPtr 0
+  where adt = dataType (Proxy :: Proxy a) 
+        bdt = dataType (Proxy :: Proxy b) 
 {-# INLINE convertGType #-}
 
-convertGTypeVector
-  :: forall dst src. (GDALType dst, GDALType src)
-  => St.Vector src -> St.Vector dst
-convertGTypeVector src
-  | dataType (Proxy :: Proxy src) == dataType (Proxy :: Proxy dst)
-  = unsafeCoerce src
-  | otherwise = unsafePerformIO $ do
-      dst <- Stm.new (St.length src)
-      St.unsafeThaw src >>= unsafeConvertGTypeMVector dst
-      St.unsafeFreeze dst
-{-# INLINE convertGTypeVector #-}
-
-unsafeConvertGTypeMVector
-  :: (GDALType dst, GDALType src)
-  => Stm.IOVector dst -> Stm.IOVector src -> IO ()
-unsafeConvertGTypeMVector dst src =
-  Stm.unsafeWith dst (Stm.unsafeWith src . unsafeCopyWords (Stm.length dst))
-{-# INLINE unsafeConvertGTypeMVector #-}
-
 instance GDALType Word8 where
-  dataTypeInternal _ = GDT_Byte
+  dataType _ = GDT_Byte
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType CUChar where
-  dataTypeInternal _ = GDT_Byte
+  dataType _ = GDT_Byte
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType Word16 where
-  dataTypeInternal _ = GDT_UInt16
+  dataType _ = GDT_UInt16
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType CUShort where
-  dataTypeInternal _ = GDT_UInt16
+  dataType _ = GDT_UInt16
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType Word32 where
-  dataTypeInternal _ = GDT_UInt32
+  dataType _ = GDT_UInt32
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType CUInt where
-  dataTypeInternal _ = GDT_UInt32
+  dataType _ = GDT_UInt32
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType Int8 where
-  dataTypeInternal _ = GDT_Byte
+  dataType _ = GDT_Byte
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType CSChar where
-  dataTypeInternal _ = GDT_Byte
+  dataType _ = GDT_Byte
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType Int16 where
-  dataTypeInternal _ = GDT_Int16
+  dataType _ = GDT_Int16
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType CShort where
-  dataTypeInternal _ = GDT_Int16
+  dataType _ = GDT_Int16
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType Int32 where
-  dataTypeInternal _ = GDT_Int32
+  dataType _ = GDT_Int32
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType CInt where
-  dataTypeInternal _ = GDT_Int32
+  dataType _ = GDT_Int32
+  gPeekElemOff = gPeekElemOffInt
+  gPokeElemOff = gPokeElemOffInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType Float where
-  dataTypeInternal _ = GDT_Float32
+  dataType _ = GDT_Float32
+  gPeekElemOff = gPeekElemOffReal
+  gPokeElemOff = gPokeElemOffReal
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType CFloat where
-  dataTypeInternal _ = GDT_Float32
+  dataType _ = GDT_Float32
+  gPeekElemOff = gPeekElemOffReal
+  gPokeElemOff = gPokeElemOffReal
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType Double where
-  dataTypeInternal _ = GDT_Float64
+  dataType _ = GDT_Float64
+  gPeekElemOff = gPeekElemOffReal
+  gPokeElemOff = gPokeElemOffReal
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
+
 
 instance GDALType CDouble where
-  dataTypeInternal _ = GDT_Float64
+  dataType _ = GDT_Float64
+  gPeekElemOff = gPeekElemOffReal
+  gPokeElemOff = gPokeElemOffReal
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 
 #ifdef STORABLE_COMPLEX
 instance GDALType (Complex Int16) where
-  dataTypeInternal _ = GDT_CInt16
+  dataType _ = GDT_CInt16
+  gPeekElemOff = gPeekElemOffCInt
+  gPokeElemOff = gPokeElemOffCInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType (Complex Int32) where
-  dataTypeInternal _ = GDT_CInt32
+  dataType _ = GDT_CInt32
+  gPeekElemOff = gPeekElemOffCInt
+  gPokeElemOff = gPokeElemOffCInt
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType (Complex Float) where
-  dataTypeInternal _ = GDT_CFloat32
+  dataType _ = GDT_CFloat32
+  gPeekElemOff = gPeekElemOffCReal
+  gPokeElemOff = gPokeElemOffCReal
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 
 instance GDALType (Complex Double) where
-  dataTypeInternal _ = GDT_CFloat64
+  dataType _ = GDT_CFloat64
+  gPeekElemOff = gPeekElemOffCReal
+  gPokeElemOff = gPokeElemOffCReal
+  {-# INLINE dataType #-}
+  {-# INLINE gPeekElemOff #-}
+  {-# INLINE gPokeElemOff #-}
 #endif
 
-data SomeGDALType = forall a. GDALType a => SomeGDALType (Proxy a)
-
-someGDALType :: DataType -> Maybe SomeGDALType
-someGDALType dt =
+gPeekElemOffInt :: Integral a => DataType -> Ptr b -> Int -> IO a
+gPeekElemOffInt dt p =
   case dt of
-    GDT_Byte     -> Just (SomeGDALType (Proxy :: Proxy Word8))
-    GDT_UInt16   -> Just (SomeGDALType (Proxy :: Proxy Word16))
-    GDT_UInt32   -> Just (SomeGDALType (Proxy :: Proxy Word32))
-    GDT_Int16    -> Just (SomeGDALType (Proxy :: Proxy Int16))
-    GDT_Int32    -> Just (SomeGDALType (Proxy :: Proxy Int32))
-    GDT_Float32  -> Just (SomeGDALType (Proxy :: Proxy Float))
-    GDT_Float64  -> Just (SomeGDALType (Proxy :: Proxy Double))
-#ifdef STORABLE_COMPLEX
-    GDT_CInt16   -> Just (SomeGDALType (Proxy :: Proxy (Complex Int16)))
-    GDT_CInt32   -> Just (SomeGDALType (Proxy :: Proxy (Complex Int32)))
-    GDT_CFloat32 -> Just (SomeGDALType (Proxy :: Proxy (Complex Float)))
-    GDT_CFloat64 -> Just (SomeGDALType (Proxy :: Proxy (Complex Double)))
-#else
-    GDT_CInt16   -> Nothing
-    GDT_CInt32   -> Nothing
-    GDT_CFloat32 -> Nothing
-    GDT_CFloat64 -> Nothing
-#endif
-    GDT_Unknown  -> Nothing
+    GDT_Byte     -> liftM fromIntegral              . peekWord8   p
+    GDT_UInt16   -> liftM fromIntegral              . peekWord16  p
+    GDT_UInt32   -> liftM fromIntegral              . peekWord32  p
+    GDT_Int16    -> liftM fromIntegral              . peekInt16   p
+    GDT_Int32    -> liftM fromIntegral              . peekInt32   p
+    GDT_Float32  -> liftM truncate                  . peekReal32  p
+    GDT_Float64  -> liftM truncate                  . peekReal64  p
+    GDT_CInt16   -> liftM (fromIntegral . realPart) . peekCInt16  p
+    GDT_CInt32   -> liftM (fromIntegral . realPart) . peekCInt32  p
+    GDT_CFloat32 -> liftM (truncate     . realPart) . peekCReal32 p
+    GDT_CFloat64 -> liftM (truncate     . realPart) . peekCReal64 p
+    GDT_Unknown  -> error "gPeekElemOff: GDT_Unknown"
+{-# INLINE gPeekElemOffInt #-}
+
+gPokeElemOffInt :: Integral a => DataType -> Ptr b -> Int -> a -> IO ()
+gPokeElemOffInt dt p i v =
+  case dt of
+    GDT_Byte     -> pokeWord8   p i (fromIntegral v)
+    GDT_UInt16   -> pokeWord16  p i (fromIntegral v)
+    GDT_UInt32   -> pokeWord32  p i (fromIntegral v)
+    GDT_Int16    -> pokeWord16  p i (fromIntegral v)
+    GDT_Int32    -> pokeWord32  p i (fromIntegral v)
+    GDT_Float32  -> pokeReal32  p i (fromIntegral v)
+    GDT_Float64  -> pokeReal64  p i (fromIntegral v)
+    GDT_CInt16   -> pokeCInt16  p i (fromIntegral v :+ 0)
+    GDT_CInt32   -> pokeCInt32  p i (fromIntegral v :+ 0)
+    GDT_CFloat32 -> pokeCReal32 p i (fromIntegral v :+ 0)
+    GDT_CFloat64 -> pokeCReal64 p i (fromIntegral v :+ 0)
+    GDT_Unknown  -> error "gPeekElemOff: GDT_Unknown"
+{-# INLINE gPokeElemOffInt #-}
+
+gPeekElemOffReal :: RealFrac a => DataType -> Ptr b -> Int -> IO a
+gPeekElemOffReal dt p =
+  case dt of
+    GDT_Byte     -> liftM realToFrac              . peekWord8   p
+    GDT_UInt16   -> liftM realToFrac              . peekWord16  p
+    GDT_UInt32   -> liftM realToFrac              . peekWord32  p
+    GDT_Int16    -> liftM realToFrac              . peekInt16   p
+    GDT_Int32    -> liftM realToFrac              . peekInt32   p
+    GDT_Float32  -> liftM realToFrac              . peekReal32  p
+    GDT_Float64  -> liftM realToFrac              . peekReal64  p
+    GDT_CInt16   -> liftM (realToFrac . realPart) . peekCInt16  p
+    GDT_CInt32   -> liftM (realToFrac . realPart) . peekCInt32  p
+    GDT_CFloat32 -> liftM (realToFrac . realPart) . peekCReal32 p
+    GDT_CFloat64 -> liftM (realToFrac . realPart) . peekCReal64 p
+    GDT_Unknown  -> error "gPeekElemOff: GDT_Unknown"
+{-# INLINE gPeekElemOffReal #-}
+
+gPokeElemOffReal :: RealFrac a => DataType -> Ptr b -> Int -> a -> IO ()
+gPokeElemOffReal dt p i v =
+  case dt of
+    GDT_Byte     -> pokeWord8   p i (truncate v)
+    GDT_UInt16   -> pokeWord16  p i (truncate v)
+    GDT_UInt32   -> pokeWord32  p i (truncate v)
+    GDT_Int16    -> pokeWord16  p i (truncate v)
+    GDT_Int32    -> pokeWord32  p i (truncate v)
+    GDT_Float32  -> pokeReal32  p i (realToFrac v)
+    GDT_Float64  -> pokeReal64  p i (realToFrac v)
+    GDT_CInt16   -> pokeCInt16  p i (truncate v :+ 0)
+    GDT_CInt32   -> pokeCInt32  p i (truncate v :+ 0)
+    GDT_CFloat32 -> pokeCReal32 p i (realToFrac v :+ 0)
+    GDT_CFloat64 -> pokeCReal64 p i (realToFrac v :+ 0)
+    GDT_Unknown  -> error "gPeekElemOff: GDT_Unknown"
+{-# INLINE gPokeElemOffReal #-}
+
+
+gPeekElemOffCInt :: Integral a => DataType -> Ptr b -> Int -> IO (Complex a)
+gPeekElemOffCInt dt p =
+  case dt of
+    GDT_Byte     -> liftM (woImag . fromIntegral) . peekWord8   p
+    GDT_UInt16   -> liftM (woImag . fromIntegral) . peekWord16  p
+    GDT_UInt32   -> liftM (woImag . fromIntegral) . peekWord32  p
+    GDT_Int16    -> liftM (woImag . fromIntegral) . peekInt16   p
+    GDT_Int32    -> liftM (woImag . fromIntegral) . peekInt32   p
+    GDT_Float32  -> liftM (woImag . truncate    ) . peekReal32  p
+    GDT_Float64  -> liftM (woImag . truncate    ) . peekReal64  p
+    GDT_CInt16   -> liftM (cmap fromIntegral    ) . peekCInt16  p
+    GDT_CInt32   -> liftM (cmap fromIntegral    ) . peekCInt32  p
+    GDT_CFloat32 -> liftM (cmap truncate        ) . peekCReal32 p
+    GDT_CFloat64 -> liftM (cmap truncate        ) . peekCReal64 p
+    GDT_Unknown  -> error "gPeekElemOff: GDT_Unknown"
+{-# INLINE gPeekElemOffCInt #-}
+
+gPokeElemOffCInt
+  :: Integral a => DataType -> Ptr b -> Int -> (Complex a) -> IO ()
+gPokeElemOffCInt dt p i v =
+  case dt of
+    GDT_Byte     -> pokeWord8   p i (fromIntegral (realPart v))
+    GDT_UInt16   -> pokeWord16  p i (fromIntegral (realPart v))
+    GDT_UInt32   -> pokeWord32  p i (fromIntegral (realPart v))
+    GDT_Int16    -> pokeWord16  p i (fromIntegral (realPart v))
+    GDT_Int32    -> pokeWord32  p i (fromIntegral (realPart v))
+    GDT_Float32  -> pokeReal32  p i (fromIntegral (realPart v))
+    GDT_Float64  -> pokeReal64  p i (fromIntegral (realPart v))
+    GDT_CInt16   -> pokeCInt16  p i (cmap fromIntegral v)
+    GDT_CInt32   -> pokeCInt32  p i (cmap fromIntegral v)
+    GDT_CFloat32 -> pokeCReal32 p i (cmap fromIntegral v)
+    GDT_CFloat64 -> pokeCReal64 p i (cmap fromIntegral v)
+    GDT_Unknown  -> error "gPeekElemOff: GDT_Unknown"
+{-# INLINE gPokeElemOffCInt #-}
+
+
+gPeekElemOffCReal :: RealFrac a => DataType -> Ptr b -> Int -> IO (Complex a)
+gPeekElemOffCReal dt p =
+  case dt of
+    GDT_Byte     -> liftM (woImag . realToFrac) . peekWord8   p
+    GDT_UInt16   -> liftM (woImag . realToFrac) . peekWord16  p
+    GDT_UInt32   -> liftM (woImag . realToFrac) . peekWord32  p
+    GDT_Int16    -> liftM (woImag . realToFrac) . peekInt16   p
+    GDT_Int32    -> liftM (woImag . realToFrac) . peekInt32   p
+    GDT_Float32  -> liftM (woImag . realToFrac) . peekReal32  p
+    GDT_Float64  -> liftM (woImag . realToFrac) . peekReal64  p
+    GDT_CInt16   -> liftM (cmap realToFrac    ) . peekCInt16  p
+    GDT_CInt32   -> liftM (cmap realToFrac    ) . peekCInt32  p
+    GDT_CFloat32 -> liftM (cmap realToFrac    ) . peekCReal32 p
+    GDT_CFloat64 -> liftM (cmap realToFrac    ) . peekCReal64 p
+    GDT_Unknown  -> error "gPeekElemOff: GDT_Unknown"
+{-# INLINE gPeekElemOffCReal #-}
+
+gPokeElemOffCReal
+  :: RealFrac a => DataType -> Ptr b -> Int -> (Complex a) -> IO ()
+gPokeElemOffCReal dt p i v =
+  case dt of
+    GDT_Byte     -> pokeWord8   p i (truncate (realPart v))
+    GDT_UInt16   -> pokeWord16  p i (truncate (realPart v))
+    GDT_UInt32   -> pokeWord32  p i (truncate (realPart v))
+    GDT_Int16    -> pokeWord16  p i (truncate (realPart v))
+    GDT_Int32    -> pokeWord32  p i (truncate (realPart v))
+    GDT_Float32  -> pokeReal32  p i (realToFrac (realPart v))
+    GDT_Float64  -> pokeReal64  p i (realToFrac (realPart v))
+    GDT_CInt16   -> pokeCInt16  p i (cmap truncate v)
+    GDT_CInt32   -> pokeCInt32  p i (cmap truncate v)
+    GDT_CFloat32 -> pokeCReal32 p i (cmap realToFrac v)
+    GDT_CFloat64 -> pokeCReal64 p i (cmap realToFrac v)
+    GDT_Unknown  -> error "gPeekElemOff: GDT_Unknown"
+{-# INLINE gPokeElemOffCReal #-}
+
+woImag :: Num a => a -> Complex a
+woImag v = v :+ 0
+{-# INLINE woImag #-}
+
+cmap :: (t -> a) -> Complex t -> Complex a
+cmap f (a :+ b) = f a :+ f b
+{-# INLINE cmap #-}
+
+peekWord8 :: Ptr b -> Int -> IO Word8
+peekWord8 = peekByteOff
+{-# INLINE peekWord8 #-}
+
+peekWord16 :: Ptr b -> Int -> IO Word16
+peekWord16 p i = peekByteOff p (i*2)
+{-# INLINE peekWord16 #-}
+
+peekWord32 :: Ptr b -> Int -> IO Word32
+peekWord32 p i = peekByteOff p (i*4)
+{-# INLINE peekWord32 #-}
+
+peekInt16 :: Ptr b -> Int -> IO Int16
+peekInt16 p i = peekByteOff p (i*2)
+{-# INLINE peekInt16 #-}
+
+peekInt32 :: Ptr b -> Int -> IO Int32
+peekInt32 p i = peekByteOff p (i*4)
+{-# INLINE peekInt32 #-}
+
+
+peekReal32 :: Ptr b -> Int -> IO Float
+peekReal32 p i = peekByteOff p (i*4)
+{-# INLINE peekReal32 #-}
+
+peekReal64 :: Ptr b -> Int -> IO Double
+peekReal64 p i = peekByteOff p (i*8)
+{-# INLINE peekReal64 #-}
+
+peekCInt16 :: Ptr b -> Int -> IO (Complex Int16)
+peekCInt16 p i = liftM2 (:+) (peekInt16 p (i*2)) (peekInt16 p (i*2+1))
+{-# INLINE peekCInt16 #-}
+
+peekCInt32 :: Ptr b -> Int -> IO (Complex Int32)
+peekCInt32 p i = liftM2 (:+) (peekInt32 p (i*2)) (peekInt32 p (i*2+1))
+{-# INLINE peekCInt32 #-}
+
+peekCReal32 :: Ptr b -> Int -> IO (Complex Float)
+peekCReal32 p i = liftM2 (:+) (peekReal32 p (i*2)) (peekReal32 p (i*2+1))
+{-# INLINE peekCReal32 #-}
+
+peekCReal64 :: Ptr b -> Int -> IO (Complex Double)
+peekCReal64 p i = liftM2 (:+) (peekReal64 p (i*2)) (peekReal64 p (i*2+1))
+{-# INLINE peekCReal64 #-}
+
+
+
+pokeWord8 :: Ptr b -> Int -> Word8 -> IO ()
+pokeWord8 = pokeByteOff
+{-# INLINE pokeWord8 #-}
+
+pokeWord16 :: Ptr b -> Int -> Word16 -> IO ()
+pokeWord16 p i = pokeByteOff p (i*2)
+{-# INLINE pokeWord16 #-}
+
+pokeWord32 :: Ptr b -> Int -> Word32 -> IO ()
+pokeWord32 p i = pokeByteOff p (i*4)
+{-# INLINE pokeWord32 #-}
+
+pokeInt16 :: Ptr b -> Int -> Int16 -> IO ()
+pokeInt16 p i = pokeByteOff p (i*2)
+{-# INLINE pokeInt16 #-}
+
+pokeInt32 :: Ptr b -> Int -> Int32 -> IO ()
+pokeInt32 p i = pokeByteOff p (i*4)
+{-# INLINE pokeInt32 #-}
+
+pokeReal32 :: Ptr b -> Int -> Float -> IO ()
+pokeReal32 p i = pokeByteOff p (i*4)
+{-# INLINE pokeReal32 #-}
+
+pokeReal64 :: Ptr b -> Int -> Double -> IO ()
+pokeReal64 p i = pokeByteOff p (i*8)
+{-# INLINE pokeReal64 #-}
+
+pokeCInt16 :: Ptr b -> Int -> Complex Int16 -> IO ()
+pokeCInt16 p i (a:+b) = pokeInt16 p (i*2) a >> pokeInt16 p (i*2+1) b
+{-# INLINE pokeCInt16 #-}
+
+pokeCInt32 :: Ptr b -> Int -> Complex Int32 -> IO ()
+pokeCInt32 p i (a:+b) = pokeInt32 p (i*2) a >> pokeInt32 p (i*2+1) b
+{-# INLINE pokeCInt32 #-}
+
+pokeCReal32 :: Ptr b -> Int -> Complex Float -> IO ()
+pokeCReal32 p i (a:+b) = pokeReal32 p (i*2) a >> pokeReal32 p (i*2+1) b
+{-# INLINE pokeCReal32 #-}
+
+pokeCReal64 :: Ptr b -> Int -> Complex Double -> IO ()
+pokeCReal64 p i (a:+b) = pokeReal64 p (i*2) a >> pokeReal64 p (i*2+1) b
+{-# INLINE pokeCReal64 #-}

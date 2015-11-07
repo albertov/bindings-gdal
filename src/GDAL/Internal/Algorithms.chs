@@ -50,10 +50,11 @@ import Control.Monad (liftM, mapM_, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
 import Data.Maybe (isJust)
-import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Generic as G
+import qualified Data.Vector.Generic.Mutable as GM
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 
@@ -77,6 +78,8 @@ import System.IO.Unsafe (unsafePerformIO)
 import GDAL.Internal.Util (fromEnumC)
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value
+import qualified GDAL.Internal.Types.Vector as GV
+import qualified GDAL.Internal.Types.Vector.Mutable as GVM
 {#import GDAL.Internal.CPLString#}
 {#import GDAL.Internal.OSR #}
 {#import GDAL.Internal.CPLProgress#}
@@ -276,7 +279,7 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
 -- ############################################################################
 
 rasterizeLayersBuf
-  :: forall s l a b. GDALType a
+  :: GDALType a
   => GDAL s [ROLayer s l b]
   -> SomeTransformer s
   -> a
@@ -298,16 +301,15 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
   withOptionList options $ \opts ->
   withTransformerAndArg mTransformer (Just geotransform) $ \trans tArg ->
   with geotransform $ \gt -> do
-    vec <- Stm.replicate (sizeLen size) nodataValue
-    Stm.unsafeWith vec $ \vecPtr ->
+    vec <- GM.replicate (sizeLen size) nodataValue
+    GVM.unsafeWithDataType vec $ \dt vecPtr ->
       checkCPLError "RasterizeLayersBuf" $
       {#call GDALRasterizeLayersBuf as ^#}
-        (castPtr vecPtr) nx ny dt 0 0 (fromIntegral len)
+        (castPtr vecPtr) nx ny (fromEnumC dt) 0 0 (fromIntegral len)
         lPtrPtr srsPtr (castPtr gt) trans
         tArg bValue opts pFun nullPtr
-    liftM (mkValueUVector nodataValue) (St.unsafeFreeze vec)
+    liftM (mkValueUVector nodataValue) (G.unsafeFreeze vec)
   where
-    dt        = fromEnumC (dataType (Proxy :: Proxy a))
     bValue    = convertGType burnValue
     XY nx ny  = fmap fromIntegral size
 
@@ -325,7 +327,7 @@ class (Storable a, Typeable a, Default a, Show a) => GridAlgorithm a where
   setNodata     :: Ptr a -> CDouble -> IO ()
 
 createGridIO
-  :: forall a opts. (GDALType a, GridAlgorithm opts)
+  :: forall a opts. (Storable a, GDALType a, GridAlgorithm opts)
   => opts
   -> a
   -> Maybe ProgressFun
@@ -338,43 +340,43 @@ createGridIO options noDataVal progressFun points envelope size =
   withErrorHandler $
   with options $ \opts -> do
     setNodata opts ndValue
-    xs <- St.unsafeThaw (St.unsafeCast (St.map (px . gpXY) points))
-    ys <- St.unsafeThaw (St.unsafeCast (St.map (py . gpXY) points))
-    zs <- St.unsafeThaw (convertGTypeVector (St.map gpZ points))
-    out <- Stm.unsafeNew (sizeLen size)
+    xs <- G.unsafeThaw (St.unsafeCast (St.map (px . gpXY) points))
+    ys <- G.unsafeThaw (St.unsafeCast (St.map (py . gpXY) points))
+    zs <- G.unsafeThaw
+            (GV.unsafeFromStorable (St.map gpZ points) :: GV.Vector a)
+    out <- GM.unsafeNew (sizeLen size)
     checkCPLError "GDALGridCreate" $
       Stm.unsafeWith xs $ \pXs ->
       Stm.unsafeWith ys $ \pYs ->
-      Stm.unsafeWith zs $ \pZs ->
-      Stm.unsafeWith out $ \pOut ->
+      GVM.unsafeWithDataType zs $ \gtype pZs ->
+      GVM.unsafeWithDataType out $ \_ pOut ->
       {#call GDALGridCreate as ^#}
         (fromEnumC (gridAlgorithm options))
         (castPtr opts)
         (fromIntegral (St.length points))
         pXs
         pYs
-        pZs
+        (castPtr pZs)
         x0
         x1
         y0
         y1
         nx
         ny
-        gtype
-        (castPtr pOut)
+        (fromEnumC gtype)
+        pOut
         pFun
         nullPtr
-    liftM (mkValueUVector noDataVal) (St.unsafeFreeze out)
+    liftM (mkValueUVector noDataVal) (G.unsafeFreeze out)
   where
     ndValue                        = convertGType noDataVal
     XY nx ny                       = fmap fromIntegral size
     Envelope (XY x0 y0) (XY x1 y1) = fmap realToFrac envelope
-    gtype                          = fromEnumC (dataType (Proxy :: Proxy a))
 {-# INLINE createGridIO #-}
 
 
 createGrid
-  :: forall a opts. (GDALType a, GridAlgorithm opts)
+  :: forall a opts. (Storable a, GDALType a, GridAlgorithm opts)
   => opts
   -> a
   -> St.Vector (GridPoint a)
