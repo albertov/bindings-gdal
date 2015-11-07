@@ -78,34 +78,10 @@ instance Show DataType where
 #endc
 
 instance Enum DataType where
-  toEnum {#const GDT_Byte     #} = DataType {#const GDT_Byte#}
-  toEnum {#const GDT_UInt16   #} = DataType {#const GDT_UInt16#}
-  toEnum {#const GDT_UInt32   #} = DataType {#const GDT_UInt32#}
-  toEnum {#const GDT_Int16    #} = DataType {#const GDT_Int16#}
-  toEnum {#const GDT_Int32    #} = DataType {#const GDT_Int32#}
-  toEnum {#const GDT_Float32  #} = DataType {#const GDT_Float32#}
-  toEnum {#const GDT_Float64  #} = DataType {#const GDT_Float64#}
-  toEnum {#const GDT_CInt16   #} = DataType {#const GDT_CInt16#}
-  toEnum {#const GDT_CInt32   #} = DataType {#const GDT_CInt32#}
-  toEnum {#const GDT_CFloat32 #} = DataType {#const GDT_CFloat32#}
-  toEnum {#const GDT_CFloat64 #} = DataType {#const GDT_CFloat64#}
-  toEnum {#const GDT_Unknown  #} = DataType {#const GDT_Unknown#}
-  toEnum _ = error "DataType: Invalid toEnum"
+  toEnum = DataType
   {-# INLINE toEnum #-}
 
-  fromEnum (DataType {#const GDT_Byte     #}) = {#const GDT_Byte#}
-  fromEnum (DataType {#const GDT_UInt16   #}) = {#const GDT_UInt16#}
-  fromEnum (DataType {#const GDT_UInt32   #}) = {#const GDT_UInt32#}
-  fromEnum (DataType {#const GDT_Int16    #}) = {#const GDT_Int16#}
-  fromEnum (DataType {#const GDT_Int32    #}) = {#const GDT_Int32#}
-  fromEnum (DataType {#const GDT_Float32  #}) = {#const GDT_Float32#}
-  fromEnum (DataType {#const GDT_Float64  #}) = {#const GDT_Float64#}
-  fromEnum (DataType {#const GDT_CInt16   #}) = {#const GDT_CInt16#}
-  fromEnum (DataType {#const GDT_CInt32   #}) = {#const GDT_CInt32#}
-  fromEnum (DataType {#const GDT_CFloat32 #}) = {#const GDT_CFloat32#}
-  fromEnum (DataType {#const GDT_CFloat64 #}) = {#const GDT_CFloat64#}
-  fromEnum (DataType {#const GDT_Unknown  #}) = {#const GDT_Unknown#}
-  fromEnum _  = error "DataType: Invalid fromEnum"
+  fromEnum (DataType a) = a
   {-# INLINE fromEnum #-}
 
 instance Bounded DataType where

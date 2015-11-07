@@ -11,16 +11,11 @@ import Language.Haskell.TH
 
 fromEnumC :: Enum a => a -> CInt
 fromEnumC = fromIntegral . fromEnum
-{-# INLINE[0] fromEnumC #-}
+{-# INLINE fromEnumC #-}
 
 toEnumC :: Enum a => CInt -> a
 toEnumC = toEnum . fromIntegral
-{-# INLINE[0] toEnumC #-}
-
-{-# RULES
-"toEnumC/fromEnumC" forall a. toEnumC (fromEnumC a) = a
-"fromEnumC/toEnumC" forall a. fromEnumC (toEnumC a) = a
-  #-}
+{-# INLINE toEnumC #-}
 
 createEnum :: String -> IO [String] -> Q [Dec]
 createEnum name getNames = do

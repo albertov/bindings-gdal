@@ -30,7 +30,9 @@ import Control.DeepSeq (NFData(rnf))
 import Control.Monad (liftM, liftM2)
 
 import Data.Typeable (Typeable)
-import Data.Word (Word8)
+import Data.Complex
+import Data.Int
+import Data.Word
 
 import qualified Data.Vector.Generic.Mutable as M
 import qualified Data.Vector.Generic as G
@@ -156,36 +158,30 @@ mkMaskedValueUVector
   -> U.Vector (Value a)
 mkMaskedValueUVector mask values =
     V_Value (Mask (mask), values)
-{-# INLINE mkMaskedValueUVector #-}
 
 mkAllValidValueUVector
   :: GDALType a
   => GV.Vector a -> U.Vector (Value a)
 mkAllValidValueUVector values = V_Value (AllValid, values)
-{-# INLINE mkAllValidValueUVector #-}
 
 mkValueUVector
   :: GDALType a
   => a -> GV.Vector a -> U.Vector (Value a)
 mkValueUVector nd values = V_Value (UseNoData nd, values)
-{-# INLINE mkValueUVector #-}
 
 mkMaskedValueUMVector
   :: GDALType a
   => GV.MVector s Word8 -> GV.MVector s a -> U.MVector s (Value a)
 mkMaskedValueUMVector mask values = MV_Value (Mask mask, values)
-{-# INLINE mkMaskedValueUMVector #-}
 
 mkAllValidValueUMVector
   :: GDALType a
   => GV.MVector s a -> U.MVector s (Value a)
 mkAllValidValueUMVector values = MV_Value (AllValid, values)
-{-# INLINE mkAllValidValueUMVector #-}
 
 mkValueUMVector
   :: GDALType a => a -> GV.MVector s a -> U.MVector s (Value a)
 mkValueUMVector nd values = MV_Value (UseNoData nd, values)
-{-# INLINE mkValueUMVector #-}
 
 
 
@@ -194,7 +190,6 @@ toGVecWithNodata
   => a -> U.Vector (Value a) -> GV.Vector a
 toGVecWithNodata nd v =
    (G.generate (G.length v) (fromValue nd . G.unsafeIndex v))
-{-# INLINE toGVecWithNodata #-}
 
 toGVecWithMask
   :: GDALType a
@@ -206,7 +201,6 @@ toGVecWithMask (V_Value (AllValid, vs)) =
 toGVecWithMask (V_Value (UseNoData nd, vs)) =
   (  (G.map (\v->if v==nd then maskNoData else maskValid) vs)
   ,  vs)
-{-# INLINE toGVecWithMask #-}
 
 
 toGVec :: GDALType a => U.Vector (Value a) -> Maybe (GV.Vector a)
@@ -217,36 +211,52 @@ toGVec (V_Value (UseNoData nd, v))
 toGVec (V_Value (Mask m, v))
   | G.any (==maskNoData) m = Nothing
   | otherwise               = Just ( v)
-{-# INLINE toGVec #-}
 
 instance GDALType a => M.MVector U.MVector (Value a) where
+  {-
+  {-# SPECIALIZE instance M.MVector U.MVector (Value Word8) #-}
+  {-# SPECIALIZE instance M.MVector U.MVector (Value Word16) #-}
+  {-# SPECIALIZE instance M.MVector U.MVector (Value Word32) #-}
+  {-# SPECIALIZE instance M.MVector U.MVector (Value Int8) #-}
+  {-# SPECIALIZE instance M.MVector U.MVector (Value Int16) #-}
+  {-# SPECIALIZE instance M.MVector U.MVector (Value Int32) #-}
+  {-# SPECIALIZE instance M.MVector U.MVector (Value Float) #-}
+  {-# SPECIALIZE instance M.MVector U.MVector (Value Double) #-}
+  {-# SPECIALIZE instance M.MVector U.MVector (Value (Complex Float)) #-}
+  {-# SPECIALIZE instance M.MVector U.MVector (Value (Complex Double)) #-}
+  -}
+
   basicLength (MV_Value (_,v)) = M.basicLength v
+  {-# INLINE basicLength #-}
 
   basicUnsafeSlice m n (MV_Value (Mask x,v)) =
     MV_Value ( Mask (M.basicUnsafeSlice m n x)
              , M.basicUnsafeSlice m n v)
   basicUnsafeSlice m n (MV_Value (x,v)) =
     MV_Value (x, M.basicUnsafeSlice m n v)
+  {-# INLINE basicUnsafeSlice #-}
 
   basicOverlaps (MV_Value (_,v)) (MV_Value (_,v')) = M.basicOverlaps v v'
+  {-# INLINE basicOverlaps #-}
 
   basicUnsafeNew i =
     liftM2 (\x v -> MV_Value (Mask x,v))
            (M.basicUnsafeNew i)
            (M.basicUnsafeNew i)
+  {-# INLINE basicUnsafeNew #-}
+
 
   basicUnsafeRead (MV_Value (Mask x,v)) i = do
     m <- M.basicUnsafeRead x i
     if m/=maskNoData
        then liftM Value (M.basicUnsafeRead v i)
        else return NoData
-
   basicUnsafeRead (MV_Value (AllValid,v)) i =
     liftM Value (M.basicUnsafeRead v i)
-
   basicUnsafeRead (MV_Value (UseNoData nd,v)) i = do
     val <- M.basicUnsafeRead v i
     return (if val==nd then NoData else Value val)
+  {-# INLINE basicUnsafeRead #-}
 
   basicUnsafeWrite (MV_Value (Mask x,v)) i a =
     case a of
@@ -255,23 +265,15 @@ instance GDALType a => M.MVector U.MVector (Value a) where
       Value a' -> do
         M.basicUnsafeWrite x i maskValid
         M.basicUnsafeWrite v i a'
-
   basicUnsafeWrite (MV_Value (AllValid,v)) i a =
     case a of
       --TODO log the error or throw an exception in debug mode
       NoData   -> return ()
       Value a' -> M.basicUnsafeWrite v i a'
-
   basicUnsafeWrite (MV_Value (UseNoData nd,v)) i a =
     case a of
       NoData   -> M.basicUnsafeWrite v i nd
       Value a' -> M.basicUnsafeWrite v i a'
-
-  {-# INLINE basicLength #-}
-  {-# INLINE basicUnsafeSlice #-}
-  {-# INLINE basicOverlaps #-}
-  {-# INLINE basicUnsafeNew #-}
-  {-# INLINE basicUnsafeRead #-}
   {-# INLINE basicUnsafeWrite #-}
 
 #if MIN_VERSION_vector(0,11,0)
@@ -283,6 +285,19 @@ instance GDALType a => M.MVector U.MVector (Value a) where
 #endif
 
 instance GDALType a => G.Vector U.Vector (Value a) where
+  {-
+  {-# SPECIALIZE instance G.Vector U.Vector (Value Word8) #-}
+  {-# SPECIALIZE instance G.Vector U.Vector (Value Word16) #-}
+  {-# SPECIALIZE instance G.Vector U.Vector (Value Word32) #-}
+  {-# SPECIALIZE instance G.Vector U.Vector (Value Int8) #-}
+  {-# SPECIALIZE instance G.Vector U.Vector (Value Int16) #-}
+  {-# SPECIALIZE instance G.Vector U.Vector (Value Int32) #-}
+  {-# SPECIALIZE instance G.Vector U.Vector (Value Float) #-}
+  {-# SPECIALIZE instance G.Vector U.Vector (Value Double) #-}
+  {-# SPECIALIZE instance G.Vector U.Vector (Value (Complex Float)) #-}
+  {-# SPECIALIZE instance G.Vector U.Vector (Value (Complex Double)) #-}
+  -}
+
   basicUnsafeFreeze (MV_Value (Mask x,v)) =
     liftM2 (\x' v' -> V_Value (Mask x',v'))
            (G.basicUnsafeFreeze x)
@@ -291,6 +306,7 @@ instance GDALType a => G.Vector U.Vector (Value a) where
     liftM (\v' -> V_Value (AllValid,v')) (G.basicUnsafeFreeze v)
   basicUnsafeFreeze (MV_Value (UseNoData nd,v)) =
     liftM (\v' -> V_Value (UseNoData nd,v')) (G.basicUnsafeFreeze v)
+  {-# INLINE basicUnsafeFreeze #-}
 
   basicUnsafeThaw (V_Value (Mask x,v)) =
     liftM2 (\x' v' -> MV_Value (Mask x',v'))
@@ -300,13 +316,16 @@ instance GDALType a => G.Vector U.Vector (Value a) where
     liftM (\v' -> MV_Value (AllValid,v')) (G.basicUnsafeThaw v)
   basicUnsafeThaw (V_Value (UseNoData nd,v)) =
     liftM (\v' -> MV_Value (UseNoData nd,v')) (G.basicUnsafeThaw v)
+  {-# INLINE basicUnsafeThaw #-}
 
   basicLength  (V_Value (_,v)) = G.basicLength v
+  {-# INLINE basicLength #-}
 
   basicUnsafeSlice m n (V_Value (Mask x,v)) =
     V_Value (Mask (G.basicUnsafeSlice m n x), G.basicUnsafeSlice m n v)
   basicUnsafeSlice m n (V_Value (x,v)) =
     V_Value (x, G.basicUnsafeSlice m n v)
+  {-# INLINE basicUnsafeSlice #-}
 
   basicUnsafeIndexM (V_Value (Mask x,v)) i = do
     m <- G.basicUnsafeIndexM x i
@@ -318,9 +337,4 @@ instance GDALType a => G.Vector U.Vector (Value a) where
   basicUnsafeIndexM (V_Value (UseNoData nd,v)) i = do
     val <- G.basicUnsafeIndexM v i
     return (if val==nd then NoData else Value val)
-
-  {-# INLINE basicUnsafeFreeze #-}
-  {-# INLINE basicUnsafeThaw #-}
-  {-# INLINE basicLength #-}
-  {-# INLINE basicUnsafeSlice #-}
   {-# INLINE basicUnsafeIndexM #-}

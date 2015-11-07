@@ -827,30 +827,34 @@ ifoldlM'
   :: forall s t a b. GDALType a
   => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
 ifoldlM' f initialAcc band = do
-  (loadBlock, vec) <- mkBlockLoader band
-  let goB !sPEC !iB !jB !acc
-        | iB < nx = do loadBlock (XY iB jB)
-                       go sPEC 0 0 acc >>= goB sPEC (iB+1) jB
-        | jB+1 < ny = goB sPEC 0 (jB+1) acc
-        | otherwise = return acc
-        where
-          go !sPEC2 !i !j !acc'
-            | i   < stopx = applyTo i j acc' >>= go sPEC2 (i+1) j
-            | j+1 < stopy = go sPEC2 0 (j+1) acc'
-            | otherwise   = return acc'
-          applyTo i j a = liftIO (UM.unsafeRead vec (j*sx+i)) >>= f a ix
-            where ix = XY (iB*sx+i) (jB*sy+j)
-          stopx
-            | mx /= 0 && iB==nx-1 = mx
-            | otherwise           = sx
-          stopy
-            | my /= 0 && jB==ny-1 = my
-            | otherwise           = sy
-  goB SPEC 0 0 initialAcc
+  (load, vec) <- mkBlockLoader band
+  ifoldlM_loop load vec
   where
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
+    {-# INLINE ifoldlM_loop #-}
+    ifoldlM_loop loadBlock vec = goB SPEC 0 0 initialAcc
+      where
+        goB !sPEC !iB !jB !acc
+          | iB < nx = do loadBlock (XY iB jB)
+                         go SPEC 0 0 acc >>= goB sPEC (iB+1) jB
+          | jB+1 < ny = goB sPEC 0 (jB+1) acc
+          | otherwise = return acc
+          where
+            go !sPEC2 !i !j !acc'
+              | i   < stopx = do
+                  !v <- liftIO (UM.unsafeRead vec (j*sx+i))
+                  f acc' ix v >>= go sPEC2 (i+1) j
+              | j+1 < stopy = go sPEC2 0 (j+1) acc'
+              | otherwise   = return acc'
+              where ix = XY (iB*sx+i) (jB*sy+j)
+            !stopx
+              | mx /= 0 && iB==nx-1 = mx
+              | otherwise           = sx
+            !stopy
+              | my /= 0 && jB==ny-1 = my
+              | otherwise           = sy
 {-# INLINE ifoldlM' #-}
 
 writeBandBlock

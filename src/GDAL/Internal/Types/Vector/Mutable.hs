@@ -150,6 +150,7 @@ gdalVectorSet (MVector n dp _ po fp) x
                        do_set 1
 
   where
+    {-# INLINE[0] gdalVectorSetAsPrim #-}
     gdalVectorSetAsPrim :: Prim b => b -> IO ()
     gdalVectorSetAsPrim y = withForeignPtr fp $ \(Ptr p) -> do
       po (Ptr p) 0 x

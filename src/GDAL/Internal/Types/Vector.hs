@@ -7,7 +7,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module GDAL.Internal.Types.Vector (
-    Vector
+    Vector (..)
   , MVector(..)
   , unsafeWithDataType
   , unsafeAsDataType
