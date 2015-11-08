@@ -29,6 +29,7 @@ library
                    , GDAL.Warper
 
                    , GDAL.Internal.Types
+                   , GDAL.Internal.Types.Pair
                    , GDAL.Internal.Types.Value
                    , GDAL.Internal.Types.Vector
                    , GDAL.Internal.Types.Vector.Mutable

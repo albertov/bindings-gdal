@@ -78,8 +78,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import GDAL.Internal.Util (fromEnumC)
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value
-import qualified GDAL.Internal.Types.Vector as GV
-import qualified GDAL.Internal.Types.Vector.Mutable as GVM
+import GDAL.Internal.Types.Vector.Mutable (unsafeWithDataType)
 {#import GDAL.Internal.CPLString#}
 {#import GDAL.Internal.OSR #}
 {#import GDAL.Internal.CPLProgress#}
@@ -302,7 +301,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
   withTransformerAndArg mTransformer (Just geotransform) $ \trans tArg ->
   with geotransform $ \gt -> do
     vec <- GM.replicate (sizeLen size) nodataValue
-    GVM.unsafeWithDataType vec $ \dt vecPtr ->
+    unsafeWithDataType vec $ \dt vecPtr ->
       checkCPLError "RasterizeLayersBuf" $
       {#call GDALRasterizeLayersBuf as ^#}
         (castPtr vecPtr) nx ny (fromEnumC dt) 0 0 (fromIntegral len)
@@ -327,36 +326,35 @@ class (Storable a, Typeable a, Default a, Show a) => GridAlgorithm a where
   setNodata     :: Ptr a -> CDouble -> IO ()
 
 createGridIO
-  :: forall a opts. (Storable a, GDALType a, GridAlgorithm opts)
+  :: GridAlgorithm opts
   => opts
-  -> a
+  -> Double
   -> Maybe ProgressFun
-  -> St.Vector (GridPoint a)
+  -> St.Vector GridPoint
   -> EnvelopeReal
   -> Size
-  -> IO (U.Vector (Value a))
+  -> IO (U.Vector (Value Double))
 createGridIO options noDataVal progressFun points envelope size =
   withProgressFun "createGridIO" progressFun $ \pFun ->
   withErrorHandler $
   with options $ \opts -> do
-    setNodata opts ndValue
+    setNodata opts (realToFrac noDataVal)
     xs <- G.unsafeThaw (St.unsafeCast (St.map (px . gpXY) points))
     ys <- G.unsafeThaw (St.unsafeCast (St.map (py . gpXY) points))
-    zs <- G.unsafeThaw
-            (GV.unsafeFromStorable (St.map gpZ points) :: GV.Vector a)
+    zs <- G.unsafeThaw (St.unsafeCast (St.map gpZ         points))
     out <- GM.unsafeNew (sizeLen size)
     checkCPLError "GDALGridCreate" $
       Stm.unsafeWith xs $ \pXs ->
       Stm.unsafeWith ys $ \pYs ->
-      GVM.unsafeWithDataType zs $ \gtype pZs ->
-      GVM.unsafeWithDataType out $ \_ pOut ->
+      Stm.unsafeWith zs $ \pZs ->
+      unsafeWithDataType out $ \gtype pOut ->
       {#call GDALGridCreate as ^#}
         (fromEnumC (gridAlgorithm options))
         (castPtr opts)
         (fromIntegral (St.length points))
         pXs
         pYs
-        (castPtr pZs)
+        pZs
         x0
         x1
         y0
@@ -369,20 +367,19 @@ createGridIO options noDataVal progressFun points envelope size =
         nullPtr
     liftM (mkValueUVector noDataVal) (G.unsafeFreeze out)
   where
-    ndValue                        = convertGType noDataVal
     XY nx ny                       = fmap fromIntegral size
     Envelope (XY x0 y0) (XY x1 y1) = fmap realToFrac envelope
 {-# INLINE createGridIO #-}
 
 
 createGrid
-  :: forall a opts. (Storable a, GDALType a, GridAlgorithm opts)
+  :: GridAlgorithm opts
   => opts
-  -> a
-  -> St.Vector (GridPoint a)
+  -> Double
+  -> St.Vector GridPoint
   -> EnvelopeReal
   -> Size
-  -> Either GDALException (U.Vector (Value a))
+  -> Either GDALException (U.Vector (Value Double))
 createGrid options noDataVal points envelope =
   unsafePerformIO .
   try .
@@ -390,13 +387,13 @@ createGrid options noDataVal points envelope =
 {-# INLINE createGrid #-}
 
 
-data GridPoint a =
+data GridPoint =
   GP {
     gpXY :: {-# UNPACK #-} !(XY Double)
-  , gpZ  :: {-# UNPACK #-} !a
+  , gpZ  :: {-# UNPACK #-} !Double
   } deriving (Eq, Show, Read)
 
-instance Storable a => Storable (GridPoint a) where
+instance Storable GridPoint where
   sizeOf _ = sizeOf (undefined::XY Double) + sizeOf (undefined::Double)
   {-# INLINE sizeOf #-}
   alignment _ = alignment (undefined::Double)

@@ -255,7 +255,7 @@ instance GDALType a => M.MVector U.MVector (Value a) where
     liftM Value (M.basicUnsafeRead v i)
   basicUnsafeRead (MV_Value (UseNoData nd,v)) i = do
     val <- M.basicUnsafeRead v i
-    return (if val==nd then NoData else Value val)
+    return $! if val==nd then NoData else Value val
   {-# INLINE basicUnsafeRead #-}
 
   basicUnsafeWrite (MV_Value (Mask x,v)) i a =

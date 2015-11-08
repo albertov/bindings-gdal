@@ -4,16 +4,19 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 module GDAL.Internal.DataType (
     GDALType (..)
   , DataType
 
-  , convertGType
-  , unsafeCopyWords
+  , Reader
+  , Writer
+  , Indexer
 
+  , convertGType
   , sizeOfDataType
-  , alignOfDataType
 
   , gdtByte
   , gdtUInt16
@@ -27,18 +30,25 @@ module GDAL.Internal.DataType (
   , gdtCFloat32
   , gdtCFloat64
   , gdtUnknown
+
+  , gWithMutableByteArray
+  , gUnsafeWithByteArray
+  , gCopyMutableByteArray
 ) where
 
 #include "gdal.h"
 
 {#context lib = "gdal" prefix = "GDAL" #}
 
-import Control.Arrow ((***))
+import Control.Arrow ((&&&))
 import Control.Monad (liftM, liftM2)
 import Control.Monad.Primitive
+import Control.Monad.ST (runST)
 
+import Data.Primitive.ByteArray
 import Data.Primitive.Addr
-import Data.Primitive.Types (Prim)
+import Data.Primitive.Types
+import Data.Primitive.MachDeps
 
 import Data.Int (Int8, Int16, Int32)
 import Data.Complex (Complex(..), realPart, imagPart)
@@ -47,22 +57,21 @@ import Data.Word (Word8, Word16, Word32)
 
 import Foreign.C.String (peekCString)
 import Foreign.C.Types
-import Foreign.Marshal.Alloc (allocaBytes)
-import Foreign.Marshal.Utils (copyBytes)
-import Foreign.Storable (sizeOf, alignment)
 
+import GHC.Base
+import GHC.Exts (inline)
 import GHC.Ptr (Ptr(..))
 
-import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce (unsafeCoerce)
 
 import GDAL.Internal.Util (fromEnumC)
+import GDAL.Internal.Types.Pair (Pair(..))
 
 newtype DataType = DataType Int
   deriving Eq
 
 instance Show DataType where
-  show (DataType d) = unsafePerformIO $
+  show (DataType d) = unsafeInlineIO $
     {#call unsafe GetDataTypeName as ^#} (fromIntegral d) >>= peekCString
 
 #c
@@ -136,116 +145,100 @@ sizeOfDataType dt =
     _ | dt == gdtUInt32   -> {#sizeof GUInt32 #}
     _ | dt == gdtInt16    -> {#sizeof GInt16  #}
     _ | dt == gdtInt32    -> {#sizeof GInt32  #}
-    _ | dt == gdtFloat32  -> sizeOf (undefined :: CFloat)
-    _ | dt == gdtFloat64  -> sizeOf (undefined :: CDouble)
+    _ | dt == gdtFloat32  -> sIZEOF_FLOAT
+    _ | dt == gdtFloat64  -> sIZEOF_DOUBLE
     _ | dt == gdtCInt16   -> {#sizeof GInt16  #} * 2
     _ | dt == gdtCInt32   -> {#sizeof GInt32  #} * 2
-    _ | dt == gdtCFloat32 -> sizeOf (undefined :: CFloat) * 2
-    _ | dt == gdtCFloat64 -> sizeOf (undefined :: CDouble) * 2
+    _ | dt == gdtCFloat32 -> sIZEOF_FLOAT * 2
+    _ | dt == gdtCFloat64 -> sIZEOF_DOUBLE * 2
     _                     -> error "sizeOfDataType: GDT_Unknown"
 {-# INLINE sizeOfDataType #-}
 
-alignOfDataType :: DataType -> Int
-alignOfDataType dt =
-  case dt of
-    _ | dt == gdtByte     -> {#alignof GByte   #}
-    _ | dt == gdtUInt16   -> {#alignof GUInt16 #}
-    _ | dt == gdtUInt32   -> {#alignof GUInt32 #}
-    _ | dt == gdtInt16    -> {#alignof GInt16  #}
-    _ | dt == gdtInt32    -> {#alignof GInt32  #}
-    _ | dt == gdtFloat32  -> alignment (undefined :: CFloat)
-    _ | dt == gdtFloat64  -> sizeOf (undefined :: CDouble)
-    _ | dt == gdtCInt16   -> {#alignof GInt16  #}
-    _ | dt == gdtCInt32   -> {#alignof GInt32  #}
-    _ | dt == gdtCFloat32 -> alignment (undefined :: CFloat)
-    _ | dt == gdtCFloat64 -> alignment (undefined :: CDouble)
-    _                     -> error "alignOfDataType: GDT_Unknown"
-{-# INLINE alignOfDataType #-}
 
-type Pair a = (a, a)
 ------------------------------------------------------------------------------
 -- GDALType
 ------------------------------------------------------------------------------
+
+type Reader s a = MutableByteArray# s -> Int# -> State# s -> (# State# s, a #)
+type Writer s a = MutableByteArray# s -> Int# -> a -> State# s -> State# s
+type Indexer a  = ByteArray# -> Int# -> a
+
 class Eq a  => GDALType a where
   dataType :: Proxy a -> DataType
 
-  gPokeElemOff :: DataType -> Ptr () -> Int -> a -> IO ()
-  gPokeElemOff !dt !(Ptr a) !i = gWriteOffAddr dt (Addr a) i
-  {-# INLINE gPokeElemOff #-}
-
-  gPeekElemOff :: DataType -> Ptr () -> Int -> IO a
-  gPeekElemOff !dt !(Ptr a) = gReadOffAddr dt (Addr a)
-  {-# INLINE gPeekElemOff #-}
-
-  gWriteOffAddr :: PrimMonad m => DataType -> Addr -> Int -> a -> m ()
-  gWriteOffAddr !dt !p !i v =
+  gWrite :: DataType -> Writer s a
+  gWrite dt p# i# v =
     case dt of
-      _ | dt == gdtByte     -> writeOffAddr p i (gToIntegral v :: Word8)
-      _ | dt == gdtUInt16   -> writeOffAddr p i (gToIntegral v :: Word16)
-      _ | dt == gdtUInt32   -> writeOffAddr p i (gToIntegral v :: Word32)
-      _ | dt == gdtInt16    -> writeOffAddr p i (gToIntegral v :: Int16)
-      _ | dt == gdtInt32    -> writeOffAddr p i (gToIntegral v :: Int32)
-      _ | dt == gdtFloat32  -> writeOffAddr p i (gToReal     v :: Float)
-      _ | dt == gdtFloat64  -> writeOffAddr p i (gToReal     v :: Double)
+      _ | dt == gdtByte     -> writeWith (undefined :: Word8) gToIntegral
+      _ | dt == gdtUInt16   -> writeWith (undefined :: Word16) gToIntegral
+      _ | dt == gdtUInt32   -> writeWith (undefined :: Word32) gToIntegral
+      _ | dt == gdtInt16    -> writeWith (undefined :: Int16) gToIntegral
+      _ | dt == gdtInt32    -> writeWith (undefined :: Int32) gToIntegral
+      _ | dt == gdtFloat32  -> writeWith (undefined :: Float) gToReal
+      _ | dt == gdtFloat64  -> writeWith (undefined :: Double) gToReal
       _ | dt == gdtCInt16   ->
-            writeOffAddrPair p i (gToIntegralPair v :: Pair Int16)
+            writeWith (undefined :: Pair Int16) gToIntegralPair
       _ | dt == gdtCInt32   ->
-            writeOffAddrPair p i (gToIntegralPair v :: Pair Int32)
+            writeWith (undefined :: Pair Int32) gToIntegralPair
       _ | dt == gdtCFloat32 ->
-            writeOffAddrPair p i (gToRealPair     v :: Pair Float)
+            writeWith (undefined :: Pair Float) gToRealPair
       _ | dt == gdtCFloat64 ->
-            writeOffAddrPair p i (gToRealPair     v :: Pair Double)
-      _ -> error "gWriteOffAddr: Invalid GType"
-  {-# INLINE gWriteOffAddr #-}
+            writeWith (undefined :: Pair Double) gToRealPair
+      _ -> error "gWrite: Invalid GType"
+    where
+      {-# INLINE[0] writeWith #-}
+      writeWith y f = inline writeByteArray# p# i# (inline f v `asTypeOf` y)
+  {-# INLINE gWrite #-}
 
-  gReadOffAddr :: PrimMonad m => DataType -> Addr -> Int -> m a
-  gReadOffAddr !dt !p !i =
+  gRead :: DataType -> Reader s a
+  gRead dt p# i# s# =
     case dt of
-      _ | dt == gdtByte     ->
-            liftM (gFromIntegral :: Word8 -> a) (readOffAddr p i)
-      _ | dt == gdtUInt16   ->
-            liftM (gFromIntegral :: Word16 -> a) (readOffAddr p i)
-      _ | dt == gdtUInt32   ->
-            liftM (gFromIntegral :: Word32 -> a) (readOffAddr p i)
-      _ | dt == gdtInt16    ->
-            liftM (gFromIntegral :: Int16 -> a) (readOffAddr p i)
-      _ | dt == gdtInt32    ->
-            liftM (gFromIntegral :: Int32 -> a) (readOffAddr p i)
-      _ | dt == gdtFloat32  ->
-            liftM (gFromReal :: Float -> a) (readOffAddr p i)
-      _ | dt == gdtFloat64  ->
-            liftM (gFromReal :: Double -> a) (readOffAddr p i)
+      _ | dt == gdtByte     -> readWith (undefined :: Word8) gFromIntegral
+      _ | dt == gdtUInt16   -> readWith (undefined :: Word16) gFromIntegral
+      _ | dt == gdtUInt32   -> readWith (undefined :: Word32) gFromIntegral
+      _ | dt == gdtInt16    -> readWith (undefined :: Int16) gFromIntegral
+      _ | dt == gdtInt32    -> readWith (undefined :: Int32) gFromIntegral
+      _ | dt == gdtFloat32  -> readWith (undefined :: Float) gFromReal
+      _ | dt == gdtFloat64  -> readWith (undefined :: Double) gFromReal
       _ | dt == gdtCInt16   ->
-            liftM (gFromIntegralPair :: Pair Int16 -> a) (readOffAddrPair p i)
+            readWith (undefined :: Pair Int16) gFromIntegralPair
       _ | dt == gdtCInt32   ->
-            liftM (gFromIntegralPair :: Pair Int32 -> a) (readOffAddrPair p i)
+            readWith (undefined :: Pair Int32) gFromIntegralPair
       _ | dt == gdtCFloat32 ->
-            liftM (gFromRealPair :: Pair Float -> a) (readOffAddrPair p i)
+            readWith (undefined :: Pair Float) gFromRealPair
       _ | dt == gdtCFloat64 ->
-            liftM (gFromRealPair :: Pair Double -> a) (readOffAddrPair p i)
-      _ -> error "gReadOffAddr: Invalid GType"
-  {-# INLINE gReadOffAddr #-}
+            readWith (undefined :: Pair Double) gFromRealPair
+      _ -> error "gRead: Invalid GType"
+    where
+      {-# INLINE[0] readWith #-}
+      readWith y f =
+        case inline readByteArray# p# i# s# of
+          (# s1#, v #) -> (# s1#, inline f (v `asTypeOf` y) #)
+  {-# INLINE gRead #-}
 
-  gIndexOffAddr :: DataType -> Addr -> Int -> a
-  gIndexOffAddr !dt !p =
+  gIndex :: DataType -> Indexer a
+  gIndex dt p# i# =
     case dt of
-      _ | dt == gdtByte     -> (gFromIntegral :: Word8  -> a) . indexOffAddr p
-      _ | dt == gdtUInt16   -> (gFromIntegral :: Word16 -> a) . indexOffAddr p
-      _ | dt == gdtUInt32   -> (gFromIntegral :: Word32 -> a) . indexOffAddr p
-      _ | dt == gdtInt16    -> (gFromIntegral :: Int16  -> a) . indexOffAddr p
-      _ | dt == gdtInt32    -> (gFromIntegral :: Int32  -> a) . indexOffAddr p
-      _ | dt == gdtFloat32  -> (gFromReal     :: Float  -> a) . indexOffAddr p
-      _ | dt == gdtFloat64  -> (gFromReal     :: Double -> a) . indexOffAddr p
+      _ | dt == gdtByte     -> indexWith (undefined :: Word8) gFromIntegral
+      _ | dt == gdtUInt16   -> indexWith (undefined :: Word16) gFromIntegral
+      _ | dt == gdtUInt32   -> indexWith (undefined :: Word32) gFromIntegral
+      _ | dt == gdtInt16    -> indexWith (undefined :: Int16) gFromIntegral
+      _ | dt == gdtInt32    -> indexWith (undefined :: Int32) gFromIntegral
+      _ | dt == gdtFloat32  -> indexWith (undefined :: Float) gFromReal
+      _ | dt == gdtFloat64  -> indexWith (undefined :: Double) gFromReal
       _ | dt == gdtCInt16   ->
-            (gFromIntegralPair :: Pair Int16  -> a) . indexOffAddrPair p
+            indexWith (undefined :: Pair Int16) gFromIntegralPair
       _ | dt == gdtCInt32   ->
-            (gFromIntegralPair :: Pair Int32  -> a) . indexOffAddrPair p
+            indexWith (undefined :: Pair Int32) gFromIntegralPair
       _ | dt == gdtCFloat32 ->
-            (gFromRealPair     :: Pair Float  -> a) . indexOffAddrPair p
+            indexWith (undefined :: Pair Float) gFromRealPair
       _ | dt == gdtCFloat64 ->
-            (gFromRealPair     :: Pair Double -> a) . indexOffAddrPair p
-      _ -> error "gIndexOffAddr: Invalid GType"
-  {-# INLINE gIndexOffAddr #-}
+            indexWith (undefined :: Pair Double) gFromRealPair
+      _ -> error "gIndex: Invalid GType"
+    where
+      {-# INLINE[0] indexWith #-}
+      indexWith y f = inline f (inline indexByteArray# p# i# `asTypeOf` y)
+  {-# INLINE gIndex #-}
 
   gToIntegral   :: Integral b => a -> b
   gFromIntegral :: Integral b => b -> a
@@ -253,63 +246,87 @@ class Eq a  => GDALType a where
   gToReal   :: RealFrac b => a -> b
   gFromReal :: RealFrac b => b -> a
 
-  gToRealPair   :: RealFrac b => a -> (b, b)
-  gFromRealPair :: RealFrac b => (b, b) -> a
+  gToRealPair   :: RealFrac b => a -> Pair b
+  gFromRealPair :: RealFrac b => Pair b -> a
 
-  gToIntegralPair   :: Integral b => a -> (b, b)
-  gFromIntegralPair :: Integral b => (b, b) -> a
-
-{-# RULES "gReadOffAddr/int16" gReadOffAddr gdtInt16 = (readOffAddr :: Addr -> Int -> IO Int16) #-}
+  gToIntegralPair   :: Integral b => a -> Pair b
+  gFromIntegralPair :: Integral b => Pair b -> a
 
 
-readOffAddrPair :: (Prim a, PrimMonad m) => Addr -> Int -> m (Pair a)
-readOffAddrPair a i = liftM2 (,) (readOffAddr a (i*2    ))
-                                 (readOffAddr a (i*2 + 1))
-{-# INLINE readOffAddrPair #-}
+gWithMutableByteArray
+  :: PrimMonad m
+  => DataType
+  -> Int
+  -> MutableByteArray (PrimState m)
+  -> (Ptr () -> m a)
+  -> m a
+gWithMutableByteArray dt off a f = do
+  r <- f (Ptr addr)
+  touch a
+  return r
+  where !(Addr addr) = mutableByteArrayContents a `plusAddr` byteOff
+        !byteOff     = off * sizeOfDataType dt
+{-# INLINE gWithMutableByteArray #-}
 
-indexOffAddrPair :: Prim a => Addr -> Int -> Pair a
-indexOffAddrPair a i = let v = indexOffAddr a (i*2    )
-                           w = indexOffAddr a (i*2 + 1)
-                       in (v, w)
-{-# INLINE indexOffAddrPair #-}
+gUnsafeWithByteArray
+  :: PrimMonad m
+  => DataType
+  -> Int
+  -> ByteArray
+  -> (Ptr () -> m a)
+  -> m a
+gUnsafeWithByteArray dt off a f = do
+  r <- f (Ptr addr)
+  touch a
+  return r
+  where !(Addr addr) = byteArrayContents a `plusAddr` byteOff
+        !byteOff     = off * sizeOfDataType dt
+{-# INLINE gUnsafeWithByteArray #-}
 
-writeOffAddrPair :: (Prim a, PrimMonad m) => Addr -> Int -> (Pair a) -> m ()
-writeOffAddrPair a i (v,w) = do writeOffAddr a (i*2    ) v
-                                writeOffAddr a (i*2 + 1) w
-{-# INLINE writeOffAddrPair #-}
-
-unsafeCopyWords
-  :: Ptr () -> DataType -> Ptr () -> DataType -> Int -> IO ()
-unsafeCopyWords dst dDst src dSrc count
-  | dDst == dSrc = copyBytes dst src (count * sizeOfDataType dDst)
+gCopyMutableByteArray
+  :: PrimMonad m
+  => MutableByteArray (PrimState m)
+  -> DataType
+  -> Int
+  -> MutableByteArray (PrimState m)
+  -> DataType
+  -> Int
+  -> Int
+  -> m ()
+gCopyMutableByteArray dArr dDt dOff sArr sDt sOff count
+  | dDt == sDt
+  = copyMutableByteArray dArr dOff sArr sOff (count * sizeOfDataType dDt)
   | otherwise =
-    {#call unsafe GDALCopyWords as ^#}
-      src (fromEnumC dSrc) (fromIntegral (sizeOfDataType dSrc))
-      dst (fromEnumC dDst) (fromIntegral (sizeOfDataType dDst))
-      (fromIntegral count)
-{-# INLINE unsafeCopyWords #-}
+      gWithMutableByteArray dDt dOff dArr$ \dPtr ->
+      gWithMutableByteArray sDt sOff sArr$ \sPtr ->
+      unsafePrimToPrim $
+      {#call unsafe GDALCopyWords as ^#}
+        sPtr (fromEnumC sDt) (fromIntegral (sizeOfDataType sDt))
+        dPtr (fromEnumC dDt) (fromIntegral (sizeOfDataType dDt))
+        (fromIntegral count)
+{-# INLINE gCopyMutableByteArray #-}
 
 convertGType :: forall a b. (GDALType a, GDALType b) => a -> b
 convertGType a
   | adt == bdt = unsafeCoerce a
-  | otherwise  = unsafePerformIO $
-    allocaBytes (sizeOfDataType bdt) $ \bPtr -> do
-      gPokeElemOff bdt bPtr 0 a
-      gPeekElemOff bdt bPtr 0
+  | otherwise  = runST $ do
+      MutableByteArray arr# <- newByteArray (sizeOfDataType bdt)
+      primitive_ (gWrite bdt arr# 0# a)
+      primitive  (gRead  bdt arr# 0#)
   where adt = dataType (Proxy :: Proxy a)
         bdt = dataType (Proxy :: Proxy b)
 {-# INLINE convertGType #-}
 
 instance GDALType Word8 where
-  dataType _      = gdtByte
+  dataType _          = gdtByte
   gToIntegral         = fromIntegral
   gFromIntegral       = fromIntegral
   gToReal             = fromIntegral
   gFromReal           = truncate
-  gToIntegralPair   v = (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst
-  gToRealPair       v = (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst
+  gToIntegralPair   v = Pair (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst . unPair
+  gToRealPair       v = Pair (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst . unPair
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -326,10 +343,10 @@ instance GDALType Word16 where
   gFromIntegral       = fromIntegral
   gToReal             = fromIntegral
   gFromReal           = truncate
-  gToIntegralPair   v = (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst
-  gToRealPair       v = (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst
+  gToIntegralPair   v = Pair (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst . unPair
+  gToRealPair       v = Pair (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst . unPair
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -346,10 +363,10 @@ instance GDALType Word32 where
   gFromIntegral       = fromIntegral
   gToReal             = fromIntegral
   gFromReal           = truncate
-  gToIntegralPair   v = (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst
-  gToRealPair       v = (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst
+  gToIntegralPair   v = Pair (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst . unPair
+  gToRealPair       v = Pair (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst . unPair
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -366,10 +383,10 @@ instance GDALType Int8 where
   gFromIntegral       = fromIntegral
   gToReal             = fromIntegral
   gFromReal           = truncate
-  gToIntegralPair   v = (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst
-  gToRealPair       v = (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst
+  gToIntegralPair   v = Pair (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst . unPair
+  gToRealPair       v = Pair (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst . unPair
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -386,10 +403,10 @@ instance GDALType Int16 where
   gFromIntegral       = fromIntegral
   gToReal             = fromIntegral
   gFromReal           = truncate
-  gToIntegralPair   v = (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst
-  gToRealPair       v = (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst
+  gToIntegralPair   v = Pair (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst . unPair
+  gToRealPair       v = Pair (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst . unPair
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -406,10 +423,10 @@ instance GDALType Int32 where
   gFromIntegral       = fromIntegral
   gToReal             = fromIntegral
   gFromReal           = truncate
-  gToIntegralPair   v = (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst
-  gToRealPair       v = (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst
+  gToIntegralPair   v = Pair (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst . unPair
+  gToRealPair       v = Pair (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst . unPair
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -426,10 +443,10 @@ instance GDALType Float where
   gFromIntegral       = fromIntegral
   gToReal             = realToFrac
   gFromReal           = realToFrac
-  gToIntegralPair   v = (truncate v, 0)
-  gFromIntegralPair   = fromIntegral . fst
-  gToRealPair       v = (realToFrac v, 0)
-  gFromRealPair       = realToFrac . fst
+  gToIntegralPair   v = Pair (truncate v, 0)
+  gFromIntegralPair   = fromIntegral . fst . unPair
+  gToRealPair       v = Pair (realToFrac v, 0)
+  gFromRealPair       = realToFrac . fst . unPair
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -446,10 +463,10 @@ instance GDALType Double where
   gFromIntegral       = fromIntegral
   gToReal             = realToFrac
   gFromReal           = realToFrac
-  gToIntegralPair   v = (truncate v, 0)
-  gFromIntegralPair   = fromIntegral . fst
-  gToRealPair       v = (realToFrac v, 0)
-  gFromRealPair       = realToFrac . fst
+  gToIntegralPair   v = Pair (truncate v, 0)
+  gFromIntegralPair   = fromIntegral . fst . unPair
+  gToRealPair       v = Pair (realToFrac v, 0)
+  gFromRealPair       = realToFrac . fst . unPair
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -466,10 +483,10 @@ instance GDALType CDouble where
   gFromIntegral       = fromIntegral
   gToReal             = realToFrac
   gFromReal           = realToFrac
-  gToIntegralPair   v = (truncate v, 0)
-  gFromIntegralPair   = fromIntegral . fst
-  gToRealPair       v = (realToFrac v, 0)
-  gFromRealPair       = realToFrac . fst
+  gToIntegralPair   v = Pair (truncate v, 0)
+  gFromIntegralPair   = fromIntegral . fst . unPair
+  gToRealPair       v = Pair (realToFrac v, 0)
+  gFromRealPair       = realToFrac . fst . unPair
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -487,10 +504,10 @@ instance GDALType (Complex Int16) where
   gFromIntegral     v = fromIntegral v :+ 0
   gToReal             = fromIntegral . realPart
   gFromReal         v = truncate v :+ 0
-  gToIntegralPair   v = (fromIntegral (realPart v), fromIntegral (imagPart v))
-  gFromIntegralPair   = uncurry (:+) . (fromIntegral *** fromIntegral)
-  gToRealPair       v = (fromIntegral (realPart v), fromIntegral (imagPart v))
-  gFromRealPair       = uncurry (:+) . (truncate *** truncate)
+  gToIntegralPair     = fmap fromIntegral . Pair . (realPart &&& imagPart)
+  gFromIntegralPair   = uncurry (:+) . unPair . fmap fromIntegral
+  gToRealPair         = fmap fromIntegral . Pair . (realPart &&& imagPart)
+  gFromRealPair       = uncurry (:+) . unPair . fmap truncate
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -509,10 +526,10 @@ instance GDALType (Complex Int32) where
   gFromIntegral     v = fromIntegral v :+ 0
   gToReal             = fromIntegral . realPart
   gFromReal         v = truncate v :+ 0
-  gToIntegralPair   v = (fromIntegral (realPart v), fromIntegral (imagPart v))
-  gFromIntegralPair   = uncurry (:+) . (fromIntegral *** fromIntegral)
-  gToRealPair       v = (fromIntegral (realPart v), fromIntegral (imagPart v))
-  gFromRealPair       = uncurry (:+) . (truncate *** truncate)
+  gToIntegralPair     = fmap fromIntegral . Pair . (realPart &&& imagPart)
+  gFromIntegralPair   = uncurry (:+) . unPair . fmap fromIntegral
+  gToRealPair         = fmap fromIntegral . Pair . (realPart &&& imagPart)
+  gFromRealPair       = uncurry (:+) . unPair . fmap truncate
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -529,10 +546,10 @@ instance GDALType (Complex Float) where
   gFromIntegral     v = fromIntegral v :+ 0
   gToReal             = realToFrac . realPart
   gFromReal         v = realToFrac v :+ 0
-  gToIntegralPair   v = (truncate (realPart v), truncate (imagPart v))
-  gFromIntegralPair   = uncurry (:+) . (fromIntegral *** fromIntegral)
-  gToRealPair       v = (realToFrac (realPart v), realToFrac (imagPart v))
-  gFromRealPair       = uncurry (:+) . (realToFrac *** realToFrac)
+  gToIntegralPair     = fmap truncate . Pair . (realPart &&& imagPart)
+  gFromIntegralPair   = uncurry (:+) . unPair . fmap fromIntegral
+  gToRealPair         = fmap realToFrac . Pair . (realPart &&& imagPart)
+  gFromRealPair       = uncurry (:+) . unPair . fmap realToFrac
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}
@@ -549,10 +566,10 @@ instance GDALType (Complex Double) where
   gFromIntegral     v = fromIntegral v :+ 0
   gToReal             = realToFrac . realPart
   gFromReal         v = realToFrac v :+ 0
-  gToIntegralPair   v = (truncate (realPart v), truncate (imagPart v))
-  gFromIntegralPair   = uncurry (:+) . (fromIntegral *** fromIntegral)
-  gToRealPair       v = (realToFrac (realPart v), realToFrac (imagPart v))
-  gFromRealPair       = uncurry (:+) . (realToFrac *** realToFrac)
+  gToIntegralPair     = fmap truncate . Pair . (realPart &&& imagPart)
+  gFromIntegralPair   = uncurry (:+) . unPair . fmap fromIntegral
+  gToRealPair         = fmap realToFrac . Pair . (realPart &&& imagPart)
+  gFromRealPair       = uncurry (:+) . unPair . fmap realToFrac
   {-# INLINE dataType #-}
   {-# INLINE gToIntegral       #-}
   {-# INLINE gFromIntegral     #-}

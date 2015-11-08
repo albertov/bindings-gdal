@@ -1,8 +1,12 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 module GDAL.Internal.Types.Vector.Mutable(
     MVector(..)
@@ -12,106 +16,101 @@ module GDAL.Internal.Types.Vector.Mutable(
   , newAs
   , unsafeWithDataType
   , unsafeAsDataType
-  , unsafeFromStorable
 ) where
 
 import Control.DeepSeq ( NFData(rnf) )
 
-import qualified Data.Vector.Storable.Mutable as St
 import qualified Data.Vector.Generic.Mutable  as G
-import Data.Vector.Storable.Internal
 
-import Foreign.ForeignPtr
-
-import GHC.ForeignPtr (mallocPlainForeignPtrBytes)
-
-import Foreign.Ptr
-import Foreign.Marshal.Utils (copyBytes)
-import Foreign.Marshal.Alloc (allocaBytesAligned)
-import Foreign.Storable (Storable)
+import Foreign.Ptr (Ptr)
 
 import Control.Monad.Primitive
-import Data.Primitive.Addr
-import Data.Primitive.Types (Prim)
+import Data.Primitive.Types (Prim(..))
 
 import GHC.Word (Word8, Word16, Word32, Word64)
-import GHC.Ptr (Ptr(..))
+import GHC.Base (Int(..), (+#))
+import GHC.Exts (inline)
 
+import Data.Primitive.ByteArray
 import Data.Proxy (Proxy(Proxy))
 import Data.Typeable (Typeable)
 
 import GDAL.Internal.DataType
 
 -- | Mutable 'GDALType'-based vectors
-data MVector s a = MVector { mvLen         :: {-# UNPACK #-} !Int
-                           , mvDataType    :: {-# UNPACK #-} !DataType
-                           , mvPeekElemOff :: !(Ptr () -> Int -> IO a)
-                           , mvPokeElemOff :: !(Ptr () -> Int -> a -> IO ())
-                           , mvForeignPtr  :: {-# UNPACK #-} !(ForeignPtr ())
-                           }
-        deriving ( Typeable )
+data MVector s a =
+  MVector { mvLen      :: {-# UNPACK #-} !Int
+          , mvOff      :: {-# UNPACK #-} !Int
+          , mvDataType :: {-# UNPACK #-} !DataType
+          , mvData     :: {-# UNPACK #-} !(MutableByteArray s)
+          }
+  deriving ( Typeable )
 
 type IOVector = MVector RealWorld
 type STVector s = MVector s
 
 instance NFData (MVector s a) where
-  rnf (MVector _ _ _ _ _) = ()
+  rnf (MVector _ _ _ _) = ()
 
 instance GDALType a => G.MVector MVector a where
   {-# INLINE basicLength #-}
-  basicLength = mvLen
+  basicLength v = mvLen v
 
   {-# INLINE basicUnsafeSlice #-}
-  basicUnsafeSlice j m (MVector _ dp pe po fp) =
-    MVector m dp pe po (updPtr (`plusPtr` (j*sizeOfDataType dp)) fp)
+  basicUnsafeSlice j m v = v { mvOff = mvOff v + j
+                             , mvLen = m
+                             }
 
-  -- FIXME: this relies on non-portable pointer comparisons
   {-# INLINE basicOverlaps #-}
-  basicOverlaps (MVector m dp _ _ fp) (MVector n dq _ _ fq)
-    =  between p q (q `plusPtr` (n*sizeOfDataType dp))
-    || between q p (p `plusPtr` (m*sizeOfDataType dq))
+  basicOverlaps MVector{mvOff=i, mvLen=m, mvData=arr1, mvDataType=dt1}
+                MVector{mvOff=j, mvLen=n, mvData=arr2, mvDataType=dt2}
+    = dt1 == dt2
+      && sameMutableByteArray arr1 arr2
+      && (between i j (j+n) || between j i (i+m))
     where
       between x y z = x >= y && x < z
-      p = getPtr fp
-      q = getPtr fq
 
-  basicUnsafeNew = newAs (dataType (Proxy :: Proxy a))
+  basicUnsafeNew i = newAs (dataType (Proxy :: Proxy a)) i
+  {-# INLINE basicUnsafeNew #-}
 
 #if MIN_VERSION_vector(0,11,0)
   {-# INLINE basicInitialize #-}
-  basicInitialize (MVector n dp _ _ fp) =
-    unsafePrimToPrim . withForeignPtr fp $ \(Ptr p) -> do
-      let q = Addr p
-      setAddr q byteSize (0 :: Word8)
+  basicInitialize MVector{mvOff=off, mvLen=n, mvData=v, mvDataType=dt} =
+      setByteArray v (off * size) (n * size) (0 :: Word8)
     where
-      byteSize :: Int
-      byteSize = n * sizeOfDataType dp
+      size = sizeOfDataType dt
 #endif
 
   {-# INLINE basicUnsafeRead #-}
-  basicUnsafeRead (MVector _ _ pe _ fp) i
-    = unsafePrimToPrim $ withForeignPtr fp $ \p -> pe p i
+  basicUnsafeRead MVector{ mvData=MutableByteArray arr#
+                         , mvOff =I# o#
+                         , mvDataType
+                         } (I# i#) =
+    primitive (inline gRead mvDataType arr# (i# +# o#))
 
   {-# INLINE basicUnsafeWrite #-}
-  basicUnsafeWrite (MVector _ _ _ po fp) i x
-    = unsafePrimToPrim $ withForeignPtr fp $ \p -> po p i x
+  basicUnsafeWrite MVector{ mvData=MutableByteArray arr#
+                          , mvOff=I# o#
+                          , mvDataType
+                          } (I# i#) x =
+    primitive_ (inline gWrite mvDataType arr# (i# +# o#) x)
 
   {-# INLINE basicSet #-}
-  basicSet = gdalVectorSet
+  basicSet v x = gdalVectorSet v x
 
   {-# INLINE basicUnsafeCopy #-}
-  basicUnsafeCopy (MVector n dp _ _ fp) (MVector _ dq _ _ fq)
-    = unsafePrimToPrim
-    $ withForeignPtr fp $ \p ->
-      withForeignPtr fq $ \q ->
-        unsafeCopyWords p dp q dq n
+  basicUnsafeCopy MVector{mvOff=dOff, mvLen=dLen, mvData=dArr, mvDataType=dDt}
+                  MVector{mvOff=sOff, mvData=sArr, mvDataType=sDt} =
+    gCopyMutableByteArray dArr dDt dOff sArr sDt sOff dLen
 
   {-# INLINE basicUnsafeMove #-}
-  basicUnsafeMove (MVector n dp _ _ fp) (MVector _ dq _ _ fq)
-    = unsafePrimToPrim
-    $ withForeignPtr fp $ \p ->
-      withForeignPtr fq $ \q ->
-        unsafeCopyWords p dp q dq n
+  basicUnsafeMove MVector{mvOff=i, mvLen=n, mvData=dst, mvDataType=dDt}
+                  MVector{mvOff=j, mvData=src, mvDataType=sDt}
+    | dDt == sDt = moveByteArray dst (i*sz) src (j*sz) (n * sz)
+    | otherwise  = gCopyMutableByteArray dst dDt i src sDt j n
+    where sz = sizeOfDataType dDt
+
+
 
 newAs
   :: (GDALType a, PrimMonad m)
@@ -119,70 +118,55 @@ newAs
 newAs dt n
   | n < 0 = error $ "GDAL.Vector.new: negative length: " ++ show n
   | n > mx = error $ "GDAL.Vector.new: length too large: " ++ show n
-  | otherwise = unsafePrimToPrim $ do
-      fp <- mallocPlainForeignPtrBytes (n*size)
-      return $ MVector n dt (gPeekElemOff dt) (gPokeElemOff dt) fp
+  | otherwise = do
+      arr <- newPinnedByteArray (n*size)
+      return MVector { mvLen      = n
+                     , mvOff      = 0
+                     , mvDataType = dt
+                     , mvData     = arr
+                     }
   where
     size = sizeOfDataType dt
     mx = maxBound `quot` size :: Int
 {-# INLINE newAs #-}
 
-
-gdalVectorSet :: PrimMonad m => MVector (PrimState m) a -> a -> m ()
-{-# INLINE gdalVectorSet #-}
-gdalVectorSet (MVector n dp _ po fp) x
+gdalVectorSet
+  :: forall m a. (GDALType a, PrimMonad m)
+  => MVector (PrimState m) a -> a -> m ()
+gdalVectorSet v@MVector{mvLen=n, mvDataType=dp, mvData} x
   | n == 0 = return ()
-  | otherwise = unsafePrimToPrim $
-                case sizeOfDataType dp of
+  | otherwise = case sizeOfDataType dp of
                   1 -> gdalVectorSetAsPrim (undefined :: Word8)
                   2 -> gdalVectorSetAsPrim (undefined :: Word16)
                   4 -> gdalVectorSetAsPrim (undefined :: Word32)
                   8 -> gdalVectorSetAsPrim (undefined :: Word64)
-                  _ -> withForeignPtr fp $ \p -> do
-                       po p 0 x
-                       let do_set i
-                             | 2*i < n = do
-                                 copyBytes (p `plusPtr` o i) p (o i)
-                                 do_set (2*i)
-                             | otherwise =
-                               copyBytes (p `plusPtr` o i) p (o (n-i))
-                           o i = sizeOfDataType dp * i
-                       do_set 1
+                  _ -> let do_set !i
+                             | i<n = G.basicUnsafeWrite v i x  >> do_set (i+1)
+                             | otherwise = return ()
+                       in do_set 0
 
   where
     {-# INLINE[0] gdalVectorSetAsPrim #-}
-    gdalVectorSetAsPrim :: Prim b => b -> IO ()
-    gdalVectorSetAsPrim y = withForeignPtr fp $ \(Ptr p) -> do
-      po (Ptr p) 0 x
-      let q = Addr p
-      w <- readOffAddr q 0
-      setAddr (q `plusAddr` sizeOfDataType dp) (n-1) (w `asTypeOf` y)
+    gdalVectorSetAsPrim :: Prim b => b -> m ()
+    gdalVectorSetAsPrim y = do
+      G.basicUnsafeWrite v 0 x
+      w <- readByteArray mvData 0
+      setByteArray mvData 1 (n-1) (w `asTypeOf` y)
+{-# INLINE gdalVectorSet #-}
 
 
-unsafeWithDataType
-  :: IOVector a -> (DataType -> Ptr () -> IO b) -> IO b
-unsafeWithDataType (MVector _ dp _ _ fp) f = withForeignPtr fp (f dp)
+unsafeWithDataType :: IOVector a -> (DataType -> Ptr () -> IO b) -> IO b
+unsafeWithDataType MVector{mvDataType, mvOff, mvData} f =
+  gWithMutableByteArray mvDataType mvOff mvData (f mvDataType)
 {-# INLINE unsafeWithDataType #-}
 
 unsafeAsDataType
-  :: DataType -> IOVector a -> (Ptr () -> IO b) -> IO b
-unsafeAsDataType dt (MVector n dp _ _ fp) f
-  | dp == dt  = withForeignPtr fp f
-  | otherwise =
-    withForeignPtr fp $ \sPtr ->
-    allocaBytesAligned (sizeOfDataType dt * n) (alignOfDataType dt) $ \dPtr ->
-      unsafeCopyWords dPtr dt sPtr dp n >> f dPtr
+  :: GDALType a
+  => DataType -> IOVector a -> (Ptr () -> IO b) -> IO b
+unsafeAsDataType dt v@MVector{mvDataType=dt', mvOff=off, mvData=arr, mvLen=n} f
+  | dt == dt' = gWithMutableByteArray dt off arr f
+  | otherwise = do
+      copy <- newAs dt n
+      G.unsafeCopy copy v
+      gWithMutableByteArray dt (mvOff copy) (mvData copy) f
 {-# INLINE unsafeAsDataType #-}
-
-unsafeFromStorable
-  :: forall s dst src. (Storable src, GDALType src, GDALType dst)
-  => St.MVector s src -> MVector s dst
-unsafeFromStorable (St.MVector len fp) =
-  MVector { mvLen         = len
-          , mvDataType    = dt
-          , mvPeekElemOff = gPeekElemOff dt
-          , mvPokeElemOff = gPokeElemOff dt
-          , mvForeignPtr  = castForeignPtr fp
-          }
-  where dt = dataType (Proxy :: Proxy src)
-{-# INLINE unsafeFromStorable #-}

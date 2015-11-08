@@ -1,51 +1,51 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE MagicHash #-}
 
 module GDAL.Internal.Types.Vector (
     Vector (..)
   , MVector(..)
   , unsafeWithDataType
   , unsafeAsDataType
-  , unsafeFromStorable
 ) where
 
-import qualified Data.Vector.Storable         as St
 import qualified Data.Vector.Generic          as G
-import           GDAL.Internal.Types.Vector.Mutable ( MVector(..) )
-import           Data.Vector.Storable.Internal
+import qualified Data.Vector.Generic.Mutable  as GM
+import           GDAL.Internal.Types.Vector.Mutable ( MVector(..), newAs)
 
-import Foreign.ForeignPtr
-import Foreign.Storable (Storable)
-import Foreign.Ptr
-import Foreign.Marshal.Alloc (allocaBytesAligned)
+import Foreign.Ptr (Ptr)
 
 import Control.DeepSeq ( NFData(rnf) )
 
-import Control.Monad.Primitive
-
-import Data.Proxy (Proxy(Proxy))
+import Data.Primitive.ByteArray
+--import Data.Proxy (Proxy(Proxy))
 import Data.Typeable (Typeable)
 
 import Text.Read     ( Read(..), readListPrecDefault )
 
+import GHC.Base (Int(..))
+import GHC.Exts (inline)
 import GDAL.Internal.DataType
 
 -- | 'GDALType'-based vectors
-data Vector a = Vector { vLen         :: {-# UNPACK #-} !Int
-                       , vDataType    :: {-# UNPACK #-} !DataType
-                       , vPeekElemOff :: !(Ptr () -> Int -> IO a)
-                       , vPokeElemOff :: !(Ptr () -> Int -> a -> IO ())
-                       , vForeignPtr  :: {-# UNPACK #-} !(ForeignPtr ())
-                       }
-        deriving ( Typeable )
+
+data Vector a =
+  Vector { vLen      :: {-# UNPACK #-} !Int
+         , vOff      :: {-# UNPACK #-} !Int
+         , vDataType :: {-# UNPACK #-} !DataType
+         , vData     :: {-# UNPACK #-} !ByteArray
+         }
+  deriving ( Typeable )
 
 instance NFData (Vector a) where
-  rnf (Vector _ _ _ _ _) = ()
+  rnf (Vector _ _ _ _) = ()
 
 instance (GDALType a, Show a) => Show (Vector a) where
   showsPrec = G.showsPrec
@@ -58,57 +58,54 @@ type instance G.Mutable Vector = MVector
 
 instance GDALType a => G.Vector Vector a where
   {-# INLINE basicUnsafeFreeze #-}
-  basicUnsafeFreeze (MVector n dp pe po fp) = return $ Vector n dp pe po fp
+  basicUnsafeFreeze MVector{mvLen, mvOff, mvDataType, mvData} = do
+    arr <- unsafeFreezeByteArray mvData
+    return Vector { vLen      = mvLen
+                  , vOff      = mvOff
+                  , vDataType = mvDataType
+                  , vData     = arr
+                  }
 
   {-# INLINE basicUnsafeThaw #-}
-  basicUnsafeThaw (Vector n dp pe po fp) = return $ MVector n dp pe po fp
+  basicUnsafeThaw Vector{vLen, vOff, vDataType, vData} = do
+    arr <- unsafeThawByteArray vData
+    return MVector { mvLen      = vLen
+                   , mvOff      = vOff
+                   , mvDataType = vDataType
+                   , mvData     = arr
+                   }
 
   {-# INLINE basicLength #-}
-  basicLength = vLen
+  basicLength v = vLen v
 
   {-# INLINE basicUnsafeSlice #-}
-  basicUnsafeSlice i n (Vector _ dp pe po fp) =
-      Vector n dp pe po (updPtr (`plusPtr` (i*sizeOfDataType dp)) fp)
+  basicUnsafeSlice j m v = v { vOff = vOff v + j
+                             , vLen = m
+                             }
 
   {-# INLINE basicUnsafeIndexM #-}
-  basicUnsafeIndexM (Vector _ _ pe _ fp) i =
-    return . unsafeInlineIO $ withForeignPtr fp $ \p -> pe p i
+  basicUnsafeIndexM Vector{vOff,vData=ByteArray arr#,vDataType} i =
+    return $! inline gIndex vDataType arr# ix#
+    where !(I# ix#) = vOff + i
 
   {-# INLINE basicUnsafeCopy #-}
-  basicUnsafeCopy (MVector n dp _ _ fp) (Vector _ dq _ _ fq)
-    = unsafePrimToPrim
-    $ withForeignPtr fp $ \p ->
-      withForeignPtr fq $ \q ->
-        unsafeCopyWords p dp q dq n
+  basicUnsafeCopy dst src = G.unsafeThaw src >>= GM.unsafeCopy dst
 
   {-# INLINE elemseq #-}
   elemseq _ = seq
 
 unsafeWithDataType
   :: Vector a -> (DataType -> Ptr () -> IO b) -> IO b
-unsafeWithDataType (Vector _ dp _ _ fp) f = withForeignPtr fp (f dp)
+unsafeWithDataType Vector{vDataType, vOff, vData} f =
+  gUnsafeWithByteArray vDataType vOff vData (f vDataType)
 {-# INLINE unsafeWithDataType #-}
 
 unsafeAsDataType
-  :: DataType -> Vector a -> (Ptr () -> IO b) -> IO b
-unsafeAsDataType dt (Vector n dp _ _ fp) f
-  | dp == dt  = withForeignPtr fp f
-  | otherwise =
-    withForeignPtr fp $ \sPtr ->
-    allocaBytesAligned (sizeOfDataType dt * n) (alignOfDataType dt) $ \dPtr ->
-      unsafeCopyWords dPtr dt sPtr dp n >> f dPtr
+  :: GDALType a => DataType -> Vector a -> (Ptr () -> IO b) -> IO b
+unsafeAsDataType dt v@Vector{vDataType=dt', vOff=off, vData=arr, vLen=n} f
+  | dt == dt' = gUnsafeWithByteArray dt off arr f
+  | otherwise = do
+      copy <- newAs dt n
+      G.unsafeCopy copy v
+      gWithMutableByteArray dt (mvOff copy) (mvData copy) f
 {-# INLINE unsafeAsDataType #-}
-
-unsafeFromStorable
-  :: forall dst src. (Storable src, GDALType src, GDALType dst)
-  => St.Vector src -> Vector dst
-unsafeFromStorable src =
-  Vector { vLen         = len
-         , vDataType    = dt
-         , vPeekElemOff = gPeekElemOff dt
-         , vPokeElemOff = gPokeElemOff dt
-         , vForeignPtr  = castForeignPtr fp
-         }
-  where (fp, len) = St.unsafeToForeignPtr0 src
-        dt        = dataType (Proxy :: Proxy src)
-{-# INLINE unsafeFromStorable #-}
