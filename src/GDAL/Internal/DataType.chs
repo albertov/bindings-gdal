@@ -33,12 +33,15 @@ module GDAL.Internal.DataType (
 
 {#context lib = "gdal" prefix = "GDAL" #}
 
+import Control.Arrow ((***))
 import Control.Monad (liftM, liftM2)
+import Control.Monad.Primitive
 
 import Data.Primitive.Addr
+import Data.Primitive.Types (Prim)
 
 import Data.Int (Int8, Int16, Int32)
-import Data.Complex (Complex(..), realPart)
+import Data.Complex (Complex(..), realPart, imagPart)
 import Data.Proxy (Proxy(..))
 import Data.Word (Word8, Word16, Word32)
 
@@ -60,7 +63,7 @@ newtype DataType = DataType Int
 
 instance Show DataType where
   show (DataType d) = unsafePerformIO $
-    {#call unsafe GetDataTypeName as ^#} (fromIntegral d) >>= peekCString 
+    {#call unsafe GetDataTypeName as ^#} (fromIntegral d) >>= peekCString
 
 #c
 #define GDT_Unknown   0
@@ -159,14 +162,121 @@ alignOfDataType dt =
     _                     -> error "alignOfDataType: GDT_Unknown"
 {-# INLINE alignOfDataType #-}
 
+type Pair a = (a, a)
 ------------------------------------------------------------------------------
 -- GDALType
 ------------------------------------------------------------------------------
 class Eq a  => GDALType a where
   dataType :: Proxy a -> DataType
 
-  gPeekElemOff :: DataType -> Ptr () -> Int -> IO a
   gPokeElemOff :: DataType -> Ptr () -> Int -> a -> IO ()
+  gPokeElemOff !dt !(Ptr a) !i = gWriteOffAddr dt (Addr a) i
+  {-# INLINE gPokeElemOff #-}
+
+  gPeekElemOff :: DataType -> Ptr () -> Int -> IO a
+  gPeekElemOff !dt !(Ptr a) = gReadOffAddr dt (Addr a)
+  {-# INLINE gPeekElemOff #-}
+
+  gWriteOffAddr :: PrimMonad m => DataType -> Addr -> Int -> a -> m ()
+  gWriteOffAddr !dt !p !i v =
+    case dt of
+      _ | dt == gdtByte     -> writeOffAddr p i (gToIntegral v :: Word8)
+      _ | dt == gdtUInt16   -> writeOffAddr p i (gToIntegral v :: Word16)
+      _ | dt == gdtUInt32   -> writeOffAddr p i (gToIntegral v :: Word32)
+      _ | dt == gdtInt16    -> writeOffAddr p i (gToIntegral v :: Int16)
+      _ | dt == gdtInt32    -> writeOffAddr p i (gToIntegral v :: Int32)
+      _ | dt == gdtFloat32  -> writeOffAddr p i (gToReal     v :: Float)
+      _ | dt == gdtFloat64  -> writeOffAddr p i (gToReal     v :: Double)
+      _ | dt == gdtCInt16   ->
+            writeOffAddrPair p i (gToIntegralPair v :: Pair Int16)
+      _ | dt == gdtCInt32   ->
+            writeOffAddrPair p i (gToIntegralPair v :: Pair Int32)
+      _ | dt == gdtCFloat32 ->
+            writeOffAddrPair p i (gToRealPair     v :: Pair Float)
+      _ | dt == gdtCFloat64 ->
+            writeOffAddrPair p i (gToRealPair     v :: Pair Double)
+      _ -> error "gWriteOffAddr: Invalid GType"
+  {-# INLINE gWriteOffAddr #-}
+
+  gReadOffAddr :: PrimMonad m => DataType -> Addr -> Int -> m a
+  gReadOffAddr !dt !p !i =
+    case dt of
+      _ | dt == gdtByte     ->
+            liftM (gFromIntegral :: Word8 -> a) (readOffAddr p i)
+      _ | dt == gdtUInt16   ->
+            liftM (gFromIntegral :: Word16 -> a) (readOffAddr p i)
+      _ | dt == gdtUInt32   ->
+            liftM (gFromIntegral :: Word32 -> a) (readOffAddr p i)
+      _ | dt == gdtInt16    ->
+            liftM (gFromIntegral :: Int16 -> a) (readOffAddr p i)
+      _ | dt == gdtInt32    ->
+            liftM (gFromIntegral :: Int32 -> a) (readOffAddr p i)
+      _ | dt == gdtFloat32  ->
+            liftM (gFromReal :: Float -> a) (readOffAddr p i)
+      _ | dt == gdtFloat64  ->
+            liftM (gFromReal :: Double -> a) (readOffAddr p i)
+      _ | dt == gdtCInt16   ->
+            liftM (gFromIntegralPair :: Pair Int16 -> a) (readOffAddrPair p i)
+      _ | dt == gdtCInt32   ->
+            liftM (gFromIntegralPair :: Pair Int32 -> a) (readOffAddrPair p i)
+      _ | dt == gdtCFloat32 ->
+            liftM (gFromRealPair :: Pair Float -> a) (readOffAddrPair p i)
+      _ | dt == gdtCFloat64 ->
+            liftM (gFromRealPair :: Pair Double -> a) (readOffAddrPair p i)
+      _ -> error "gReadOffAddr: Invalid GType"
+  {-# INLINE gReadOffAddr #-}
+
+  gIndexOffAddr :: DataType -> Addr -> Int -> a
+  gIndexOffAddr !dt !p =
+    case dt of
+      _ | dt == gdtByte     -> (gFromIntegral :: Word8  -> a) . indexOffAddr p
+      _ | dt == gdtUInt16   -> (gFromIntegral :: Word16 -> a) . indexOffAddr p
+      _ | dt == gdtUInt32   -> (gFromIntegral :: Word32 -> a) . indexOffAddr p
+      _ | dt == gdtInt16    -> (gFromIntegral :: Int16  -> a) . indexOffAddr p
+      _ | dt == gdtInt32    -> (gFromIntegral :: Int32  -> a) . indexOffAddr p
+      _ | dt == gdtFloat32  -> (gFromReal     :: Float  -> a) . indexOffAddr p
+      _ | dt == gdtFloat64  -> (gFromReal     :: Double -> a) . indexOffAddr p
+      _ | dt == gdtCInt16   ->
+            (gFromIntegralPair :: Pair Int16  -> a) . indexOffAddrPair p
+      _ | dt == gdtCInt32   ->
+            (gFromIntegralPair :: Pair Int32  -> a) . indexOffAddrPair p
+      _ | dt == gdtCFloat32 ->
+            (gFromRealPair     :: Pair Float  -> a) . indexOffAddrPair p
+      _ | dt == gdtCFloat64 ->
+            (gFromRealPair     :: Pair Double -> a) . indexOffAddrPair p
+      _ -> error "gIndexOffAddr: Invalid GType"
+  {-# INLINE gIndexOffAddr #-}
+
+  gToIntegral   :: Integral b => a -> b
+  gFromIntegral :: Integral b => b -> a
+
+  gToReal   :: RealFrac b => a -> b
+  gFromReal :: RealFrac b => b -> a
+
+  gToRealPair   :: RealFrac b => a -> (b, b)
+  gFromRealPair :: RealFrac b => (b, b) -> a
+
+  gToIntegralPair   :: Integral b => a -> (b, b)
+  gFromIntegralPair :: Integral b => (b, b) -> a
+
+{-# RULES "gReadOffAddr/int16" gReadOffAddr gdtInt16 = (readOffAddr :: Addr -> Int -> IO Int16) #-}
+
+
+readOffAddrPair :: (Prim a, PrimMonad m) => Addr -> Int -> m (Pair a)
+readOffAddrPair a i = liftM2 (,) (readOffAddr a (i*2    ))
+                                 (readOffAddr a (i*2 + 1))
+{-# INLINE readOffAddrPair #-}
+
+indexOffAddrPair :: Prim a => Addr -> Int -> Pair a
+indexOffAddrPair a i = let v = indexOffAddr a (i*2    )
+                           w = indexOffAddr a (i*2 + 1)
+                       in (v, w)
+{-# INLINE indexOffAddrPair #-}
+
+writeOffAddrPair :: (Prim a, PrimMonad m) => Addr -> Int -> (Pair a) -> m ()
+writeOffAddrPair a i (v,w) = do writeOffAddr a (i*2    ) v
+                                writeOffAddr a (i*2 + 1) w
+{-# INLINE writeOffAddrPair #-}
 
 unsafeCopyWords
   :: Ptr () -> DataType -> Ptr () -> DataType -> Int -> IO ()
@@ -186,350 +296,269 @@ convertGType a
     allocaBytes (sizeOfDataType bdt) $ \bPtr -> do
       gPokeElemOff bdt bPtr 0 a
       gPeekElemOff bdt bPtr 0
-  where adt = dataType (Proxy :: Proxy a) 
-        bdt = dataType (Proxy :: Proxy b) 
+  where adt = dataType (Proxy :: Proxy a)
+        bdt = dataType (Proxy :: Proxy b)
 {-# INLINE convertGType #-}
 
 instance GDALType Word8 where
-  dataType _ = gdtByte
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffInt dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffInt dt (Addr p)
+  dataType _      = gdtByte
+  gToIntegral         = fromIntegral
+  gFromIntegral       = fromIntegral
+  gToReal             = fromIntegral
+  gFromReal           = truncate
+  gToIntegralPair   v = (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst
+  gToRealPair       v = (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType Word16 where
   dataType _ = gdtUInt16
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffInt dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffInt dt (Addr p)
+  gToIntegral         = fromIntegral
+  gFromIntegral       = fromIntegral
+  gToReal             = fromIntegral
+  gFromReal           = truncate
+  gToIntegralPair   v = (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst
+  gToRealPair       v = (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType Word32 where
   dataType _ = gdtUInt32
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffInt dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffInt dt (Addr p)
+  gToIntegral         = fromIntegral
+  gFromIntegral       = fromIntegral
+  gToReal             = fromIntegral
+  gFromReal           = truncate
+  gToIntegralPair   v = (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst
+  gToRealPair       v = (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType Int8 where
   dataType _ = gdtByte
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffInt dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffInt dt (Addr p)
+  gToIntegral         = fromIntegral
+  gFromIntegral       = fromIntegral
+  gToReal             = fromIntegral
+  gFromReal           = truncate
+  gToIntegralPair   v = (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst
+  gToRealPair       v = (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType Int16 where
   dataType _ = gdtInt16
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffInt dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffInt dt (Addr p)
+  gToIntegral         = fromIntegral
+  gFromIntegral       = fromIntegral
+  gToReal             = fromIntegral
+  gFromReal           = truncate
+  gToIntegralPair   v = (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst
+  gToRealPair       v = (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType Int32 where
   dataType _ = gdtInt32
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffInt dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffInt dt (Addr p)
+  gToIntegral         = fromIntegral
+  gFromIntegral       = fromIntegral
+  gToReal             = fromIntegral
+  gFromReal           = truncate
+  gToIntegralPair   v = (fromIntegral v, 0)
+  gFromIntegralPair   = fromIntegral . fst
+  gToRealPair       v = (fromIntegral v, 0)
+  gFromRealPair       = truncate . fst
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType Float where
   dataType _ = gdtFloat32
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffReal dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffReal dt (Addr p)
+  gToIntegral         = truncate
+  gFromIntegral       = fromIntegral
+  gToReal             = realToFrac
+  gFromReal           = realToFrac
+  gToIntegralPair   v = (truncate v, 0)
+  gFromIntegralPair   = fromIntegral . fst
+  gToRealPair       v = (realToFrac v, 0)
+  gFromRealPair       = realToFrac . fst
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType Double where
   dataType _ = gdtFloat64
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffReal dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffReal dt (Addr p)
+  gToIntegral         = truncate
+  gFromIntegral       = fromIntegral
+  gToReal             = realToFrac
+  gFromReal           = realToFrac
+  gToIntegralPair   v = (truncate v, 0)
+  gFromIntegralPair   = fromIntegral . fst
+  gToRealPair       v = (realToFrac v, 0)
+  gFromRealPair       = realToFrac . fst
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType CDouble where
   dataType _ = gdtFloat64
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffReal dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffReal dt (Addr p)
+  gToIntegral         = truncate
+  gFromIntegral       = fromIntegral
+  gToReal             = realToFrac
+  gFromReal           = realToFrac
+  gToIntegralPair   v = (truncate v, 0)
+  gFromIntegralPair   = fromIntegral . fst
+  gToRealPair       v = (realToFrac v, 0)
+  gFromRealPair       = realToFrac . fst
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 
 instance GDALType (Complex Int16) where
-  dataType _ = gdtCInt16
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffCInt dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffCInt dt (Addr p)
+  dataType _          = gdtCInt16
+  gToIntegral         = fromIntegral . realPart
+  gFromIntegral     v = fromIntegral v :+ 0
+  gToReal             = fromIntegral . realPart
+  gFromReal         v = truncate v :+ 0
+  gToIntegralPair   v = (fromIntegral (realPart v), fromIntegral (imagPart v))
+  gFromIntegralPair   = uncurry (:+) . (fromIntegral *** fromIntegral)
+  gToRealPair       v = (fromIntegral (realPart v), fromIntegral (imagPart v))
+  gFromRealPair       = uncurry (:+) . (truncate *** truncate)
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
+
+
 
 instance GDALType (Complex Int32) where
   dataType _ = gdtCInt32
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffCInt dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffCInt dt (Addr p)
+  gToIntegral         = fromIntegral . realPart
+  gFromIntegral     v = fromIntegral v :+ 0
+  gToReal             = fromIntegral . realPart
+  gFromReal         v = truncate v :+ 0
+  gToIntegralPair   v = (fromIntegral (realPart v), fromIntegral (imagPart v))
+  gFromIntegralPair   = uncurry (:+) . (fromIntegral *** fromIntegral)
+  gToRealPair       v = (fromIntegral (realPart v), fromIntegral (imagPart v))
+  gFromRealPair       = uncurry (:+) . (truncate *** truncate)
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType (Complex Float) where
   dataType _ = gdtCFloat32
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffCReal dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffCReal dt (Addr p)
+  gToIntegral         = truncate . realPart
+  gFromIntegral     v = fromIntegral v :+ 0
+  gToReal             = realToFrac . realPart
+  gFromReal         v = realToFrac v :+ 0
+  gToIntegralPair   v = (truncate (realPart v), truncate (imagPart v))
+  gFromIntegralPair   = uncurry (:+) . (fromIntegral *** fromIntegral)
+  gToRealPair       v = (realToFrac (realPart v), realToFrac (imagPart v))
+  gFromRealPair       = uncurry (:+) . (realToFrac *** realToFrac)
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}
 
 instance GDALType (Complex Double) where
   dataType _ = gdtCFloat64
-  gPeekElemOff !dt (Ptr p) = gPeekElemOffCReal dt (Addr p)
-  gPokeElemOff !dt (Ptr p) = gPokeElemOffCReal dt (Addr p)
+  gToIntegral         = truncate . realPart
+  gFromIntegral     v = fromIntegral v :+ 0
+  gToReal             = realToFrac . realPart
+  gFromReal         v = realToFrac v :+ 0
+  gToIntegralPair   v = (truncate (realPart v), truncate (imagPart v))
+  gFromIntegralPair   = uncurry (:+) . (fromIntegral *** fromIntegral)
+  gToRealPair       v = (realToFrac (realPart v), realToFrac (imagPart v))
+  gFromRealPair       = uncurry (:+) . (realToFrac *** realToFrac)
   {-# INLINE dataType #-}
-  {-# INLINE gPeekElemOff #-}
-  {-# INLINE gPokeElemOff #-}
-
-gPeekElemOffInt :: Integral a => DataType -> Addr -> Int -> IO a
-gPeekElemOffInt !dt p =
-  case dt of
-    _ | dt == gdtByte     -> liftM fromIntegral              . peekWord8   p
-    _ | dt == gdtUInt16   -> liftM fromIntegral              . peekWord16  p
-    _ | dt == gdtUInt32   -> liftM fromIntegral              . peekWord32  p
-    _ | dt == gdtInt16    -> liftM fromIntegral              . peekInt16   p
-    _ | dt == gdtInt32    -> liftM fromIntegral              . peekInt32   p
-    _ | dt == gdtFloat32  -> liftM truncate                  . peekReal32  p
-    _ | dt == gdtFloat64  -> liftM truncate                  . peekReal64  p
-    _ | dt == gdtCInt16   -> liftM (fromIntegral . realPart) . peekCInt16  p
-    _ | dt == gdtCInt32   -> liftM (fromIntegral . realPart) . peekCInt32  p
-    _ | dt == gdtCFloat32 -> liftM (truncate     . realPart) . peekCReal32 p
-    _ | dt == gdtCFloat64 -> liftM (truncate     . realPart) . peekCReal64 p
-    _                     -> error "gPeekElemOff: GDT_Unknown"
-{-# INLINE gPeekElemOffInt #-}
-
-gPokeElemOffInt :: Integral a => DataType -> Addr -> Int-> a -> IO ()
-gPokeElemOffInt !dt p i v =
-  case dt of
-    _ | dt == gdtByte     -> pokeWord8   p i (fromIntegral v)
-    _ | dt == gdtUInt16   -> pokeWord16  p i (fromIntegral v)
-    _ | dt == gdtUInt32   -> pokeWord32  p i (fromIntegral v)
-    _ | dt == gdtInt16    -> pokeInt16   p i (fromIntegral v)
-    _ | dt == gdtInt32    -> pokeInt32   p i (fromIntegral v)
-    _ | dt == gdtFloat32  -> pokeReal32  p i (fromIntegral v)
-    _ | dt == gdtFloat64  -> pokeReal64  p i (fromIntegral v)
-    _ | dt == gdtCInt16   -> pokeCInt16  p i (fromIntegral v :+ 0)
-    _ | dt == gdtCInt32   -> pokeCInt32  p i (fromIntegral v :+ 0)
-    _ | dt == gdtCFloat32 -> pokeCReal32 p i (fromIntegral v :+ 0)
-    _ | dt == gdtCFloat64 -> pokeCReal64 p i (fromIntegral v :+ 0)
-    _                     -> error "gPeekElemOff: GDT_Unknown"
-{-# INLINE gPokeElemOffInt #-}
-
-gPeekElemOffReal :: RealFrac a => DataType -> Addr -> Int-> IO a
-gPeekElemOffReal !dt p =
-  case dt of
-    _ | dt == gdtByte     -> liftM fromIntegral              . peekWord8   p
-    _ | dt == gdtUInt16   -> liftM fromIntegral              . peekWord16  p
-    _ | dt == gdtUInt32   -> liftM fromIntegral              . peekWord32  p
-    _ | dt == gdtInt16    -> liftM fromIntegral              . peekInt16   p
-    _ | dt == gdtInt32    -> liftM fromIntegral              . peekInt32   p
-    _ | dt == gdtFloat32  -> liftM realToFrac                . peekReal32  p
-    _ | dt == gdtFloat64  -> liftM realToFrac                . peekReal64  p
-    _ | dt == gdtCInt16   -> liftM (fromIntegral . realPart) . peekCInt16  p
-    _ | dt == gdtCInt32   -> liftM (fromIntegral . realPart) . peekCInt32  p
-    _ | dt == gdtCFloat32 -> liftM (realToFrac . realPart)   . peekCReal32 p
-    _ | dt == gdtCFloat64 -> liftM (realToFrac . realPart)   . peekCReal64 p
-    _                     -> error "gPeekElemOff: GDT_Unknown"
-{-# INLINE gPeekElemOffReal #-}
-
-gPokeElemOffReal :: RealFrac a => DataType -> Addr -> Int-> a -> IO ()
-gPokeElemOffReal !dt p i v =
-  case dt of
-    _ | dt == gdtByte     -> pokeWord8   p i (truncate v)
-    _ | dt == gdtUInt16   -> pokeWord16  p i (truncate v)
-    _ | dt == gdtUInt32   -> pokeWord32  p i (truncate v)
-    _ | dt == gdtInt16    -> pokeInt16   p i (truncate v)
-    _ | dt == gdtInt32    -> pokeInt32   p i (truncate v)
-    _ | dt == gdtFloat32  -> pokeReal32  p i (realToFrac v)
-    _ | dt == gdtFloat64  -> pokeReal64  p i (realToFrac v)
-    _ | dt == gdtCInt16   -> pokeCInt16  p i (truncate v :+ 0)
-    _ | dt == gdtCInt32   -> pokeCInt32  p i (truncate v :+ 0)
-    _ | dt == gdtCFloat32 -> pokeCReal32 p i (realToFrac v :+ 0)
-    _ | dt == gdtCFloat64 -> pokeCReal64 p i (realToFrac v :+ 0)
-    _                     -> error "gPeekElemOff: GDT_Unknown"
-{-# INLINE gPokeElemOffReal #-}
-
-
-gPeekElemOffCInt :: Integral a => DataType -> Addr -> Int-> IO (Complex a)
-gPeekElemOffCInt !dt p =
-  case dt of
-    _ | dt == gdtByte     -> liftM (woImag . fromIntegral) . peekWord8   p
-    _ | dt == gdtUInt16   -> liftM (woImag . fromIntegral) . peekWord16  p
-    _ | dt == gdtUInt32   -> liftM (woImag . fromIntegral) . peekWord32  p
-    _ | dt == gdtInt16    -> liftM (woImag . fromIntegral) . peekInt16   p
-    _ | dt == gdtInt32    -> liftM (woImag . fromIntegral) . peekInt32   p
-    _ | dt == gdtFloat32  -> liftM (woImag . truncate    ) . peekReal32  p
-    _ | dt == gdtFloat64  -> liftM (woImag . truncate    ) . peekReal64  p
-    _ | dt == gdtCInt16   -> liftM (cmap fromIntegral    ) . peekCInt16  p
-    _ | dt == gdtCInt32   -> liftM (cmap fromIntegral    ) . peekCInt32  p
-    _ | dt == gdtCFloat32 -> liftM (cmap truncate        ) . peekCReal32 p
-    _ | dt == gdtCFloat64 -> liftM (cmap truncate        ) . peekCReal64 p
-    _                     -> error "gPeekElemOff: GDT_Unknown"
-{-# INLINE gPeekElemOffCInt #-}
-
-gPokeElemOffCInt
-  :: Integral a => DataType -> Addr -> Int-> (Complex a) -> IO ()
-gPokeElemOffCInt !dt p i v =
-  case dt of
-    _ | dt == gdtByte     -> pokeWord8   p i (fromIntegral (realPart v))
-    _ | dt == gdtUInt16   -> pokeWord16  p i (fromIntegral (realPart v))
-    _ | dt == gdtUInt32   -> pokeWord32  p i (fromIntegral (realPart v))
-    _ | dt == gdtInt16    -> pokeInt16   p i (fromIntegral (realPart v))
-    _ | dt == gdtInt32    -> pokeInt32   p i (fromIntegral (realPart v))
-    _ | dt == gdtFloat32  -> pokeReal32  p i (fromIntegral (realPart v))
-    _ | dt == gdtFloat64  -> pokeReal64  p i (fromIntegral (realPart v))
-    _ | dt == gdtCInt16   -> pokeCInt16  p i (cmap fromIntegral v)
-    _ | dt == gdtCInt32   -> pokeCInt32  p i (cmap fromIntegral v)
-    _ | dt == gdtCFloat32 -> pokeCReal32 p i (cmap fromIntegral v)
-    _ | dt == gdtCFloat64 -> pokeCReal64 p i (cmap fromIntegral v)
-    _                     -> error "gPeekElemOff: GDT_Unknown"
-{-# INLINE gPokeElemOffCInt #-}
-
-
-gPeekElemOffCReal :: RealFrac a => DataType -> Addr -> Int-> IO (Complex a)
-gPeekElemOffCReal !dt p =
-  case dt of
-    _ | dt == gdtByte     -> liftM (woImag . fromIntegral) . peekWord8   p
-    _ | dt == gdtUInt16   -> liftM (woImag . fromIntegral) . peekWord16  p
-    _ | dt == gdtUInt32   -> liftM (woImag . fromIntegral) . peekWord32  p
-    _ | dt == gdtInt16    -> liftM (woImag . fromIntegral) . peekInt16   p
-    _ | dt == gdtInt32    -> liftM (woImag . fromIntegral) . peekInt32   p
-    _ | dt == gdtFloat32  -> liftM (woImag . realToFrac  ) . peekReal32  p
-    _ | dt == gdtFloat64  -> liftM (woImag . realToFrac  ) . peekReal64  p
-    _ | dt == gdtCInt16   -> liftM (cmap fromIntegral    ) . peekCInt16  p
-    _ | dt == gdtCInt32   -> liftM (cmap fromIntegral    ) . peekCInt32  p
-    _ | dt == gdtCFloat32 -> liftM (cmap realToFrac      ) . peekCReal32 p
-    _ | dt == gdtCFloat64 -> liftM (cmap realToFrac      ) . peekCReal64 p
-    _                     -> error "gPeekElemOff: GDT_Unknown"
-{-# INLINE gPeekElemOffCReal #-}
-
-gPokeElemOffCReal
-  :: RealFrac a => DataType -> Addr -> Int-> (Complex a) -> IO ()
-gPokeElemOffCReal !dt p i v =
-  case dt of
-    _ | dt == gdtByte     -> pokeWord8   p i (truncate (realPart v))
-    _ | dt == gdtUInt16   -> pokeWord16  p i (truncate (realPart v))
-    _ | dt == gdtUInt32   -> pokeWord32  p i (truncate (realPart v))
-    _ | dt == gdtInt16    -> pokeInt16   p i (truncate (realPart v))
-    _ | dt == gdtInt32    -> pokeInt32   p i (truncate (realPart v))
-    _ | dt == gdtFloat32  -> pokeReal32  p i (realToFrac (realPart v))
-    _ | dt == gdtFloat64  -> pokeReal64  p i (realToFrac (realPart v))
-    _ | dt == gdtCInt16   -> pokeCInt16  p i (cmap truncate v)
-    _ | dt == gdtCInt32   -> pokeCInt32  p i (cmap truncate v)
-    _ | dt == gdtCFloat32 -> pokeCReal32 p i (cmap realToFrac v)
-    _ | dt == gdtCFloat64 -> pokeCReal64 p i (cmap realToFrac v)
-    _                     -> error "gPeekElemOff: GDT_Unknown"
-{-# INLINE gPokeElemOffCReal #-}
-
-woImag :: Num a => a -> Complex a
-woImag v = v :+ 0
-{-# INLINE woImag #-}
-
-cmap :: (t -> a) -> Complex t -> Complex a
-cmap f (a :+ b) = f a :+ f b
-{-# INLINE cmap #-}
-
-peekWord8 :: Addr -> Int-> IO Word8
-peekWord8 = readOffAddr
-{-# INLINE peekWord8 #-}
-
-peekWord16 :: Addr -> Int-> IO Word16
-peekWord16 = readOffAddr
-{-# INLINE peekWord16 #-}
-
-peekWord32 :: Addr -> Int-> IO Word32
-peekWord32 = readOffAddr
-{-# INLINE peekWord32 #-}
-
-peekInt16 :: Addr -> Int-> IO Int16
-peekInt16 = readOffAddr
-{-# INLINE peekInt16 #-}
-
-peekInt32 :: Addr -> Int-> IO Int32
-peekInt32 = readOffAddr
-{-# INLINE peekInt32 #-}
-
-
-peekReal32 :: Addr -> Int-> IO Float
-peekReal32 = readOffAddr
-{-# INLINE peekReal32 #-}
-
-peekReal64 :: Addr -> Int-> IO Double
-peekReal64 = readOffAddr
-{-# INLINE peekReal64 #-}
-
-peekCInt16 :: Addr -> Int-> IO (Complex Int16)
-peekCInt16 p i = liftM2 (:+) (peekInt16 p (i*2)) (peekInt16 p (i*2+1))
-{-# INLINE peekCInt16 #-}
-
-peekCInt32 :: Addr -> Int-> IO (Complex Int32)
-peekCInt32 p i = liftM2 (:+) (peekInt32 p (i*2)) (peekInt32 p (i*2+1))
-{-# INLINE peekCInt32 #-}
-
-peekCReal32 :: Addr -> Int-> IO (Complex Float)
-peekCReal32 p i = liftM2 (:+) (peekReal32 p (i*2)) (peekReal32 p (i*2+1))
-{-# INLINE peekCReal32 #-}
-
-peekCReal64 :: Addr -> Int-> IO (Complex Double)
-peekCReal64 p i = liftM2 (:+) (peekReal64 p (i*2)) (peekReal64 p (i*2+1))
-{-# INLINE peekCReal64 #-}
-
-
-
-pokeWord8 :: Addr -> Int-> Word8 -> IO ()
-pokeWord8 = writeOffAddr
-{-# INLINE pokeWord8 #-}
-
-pokeWord16 :: Addr -> Int-> Word16 -> IO ()
-pokeWord16 = writeOffAddr
-{-# INLINE pokeWord16 #-}
-
-pokeWord32 :: Addr -> Int-> Word32 -> IO ()
-pokeWord32 = writeOffAddr
-{-# INLINE pokeWord32 #-}
-
-pokeInt16 :: Addr -> Int-> Int16 -> IO ()
-pokeInt16 = writeOffAddr
-{-# INLINE pokeInt16 #-}
-
-pokeInt32 :: Addr -> Int-> Int32 -> IO ()
-pokeInt32 = writeOffAddr
-{-# INLINE pokeInt32 #-}
-
-pokeReal32 :: Addr -> Int-> Float -> IO ()
-pokeReal32  = writeOffAddr
-{-# INLINE pokeReal32 #-}
-
-pokeReal64 :: Addr -> Int-> Double -> IO ()
-pokeReal64 = writeOffAddr
-{-# INLINE pokeReal64 #-}
-
-pokeCInt16 :: Addr -> Int-> Complex Int16 -> IO ()
-pokeCInt16 p i (a:+b) = pokeInt16 p (i*2) a >> pokeInt16 p (i*2+1) b
-{-# INLINE pokeCInt16 #-}
-
-pokeCInt32 :: Addr -> Int-> Complex Int32 -> IO ()
-pokeCInt32 p i (a:+b) = pokeInt32 p (i*2) a >> pokeInt32 p (i*2+1) b
-{-# INLINE pokeCInt32 #-}
-
-pokeCReal32 :: Addr -> Int-> Complex Float -> IO ()
-pokeCReal32 p i (a:+b) = pokeReal32 p (i*2) a >> pokeReal32 p (i*2+1) b
-{-# INLINE pokeCReal32 #-}
-
-pokeCReal64 :: Addr -> Int-> Complex Double -> IO ()
-pokeCReal64 p i (a:+b) = pokeReal64 p (i*2) a >> pokeReal64 p (i*2+1) b
-{-# INLINE pokeCReal64 #-}
+  {-# INLINE gToIntegral       #-}
+  {-# INLINE gFromIntegral     #-}
+  {-# INLINE gToReal           #-}
+  {-# INLINE gFromReal         #-}
+  {-# INLINE gToIntegralPair   #-}
+  {-# INLINE gFromIntegralPair #-}
+  {-# INLINE gToRealPair       #-}
+  {-# INLINE gFromRealPair     #-}

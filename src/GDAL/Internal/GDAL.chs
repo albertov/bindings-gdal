@@ -1007,7 +1007,7 @@ metadataItem domain key o =
   liftIO $
   useAsCString key $ \pKey ->
   withMaybeByteString domain $
-    {#call unsafe GetMetadataItem as ^#} (majorObject o) pKey >=> 
+    {#call unsafe GetMetadataItem as ^#} (majorObject o) pKey >=>
       maybePackCString
 
 setMetadataItem
