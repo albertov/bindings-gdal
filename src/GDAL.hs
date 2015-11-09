@@ -92,6 +92,7 @@ module GDAL (
   , setBandNodataValue
   , addBand
   , getBand
+  , isNativeBand
   , readBand
   , createBandMask
   , readBandBlock
@@ -122,9 +123,12 @@ module GDAL (
   , inv
   , composeGeotransforms
   , (|.|)
+
+  , liftIO
 ) where
 
 import Control.Exception (finally)
+import Control.Monad.IO.Class (liftIO)
 
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString

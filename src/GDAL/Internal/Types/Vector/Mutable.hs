@@ -14,6 +14,7 @@ module GDAL.Internal.Types.Vector.Mutable(
   , STVector
 
   , newAs
+  , mkMVector
   , unsafeWithDataType
   , unsafeAsDataType
 ) where
@@ -29,7 +30,6 @@ import Data.Primitive.Types (Prim(..))
 
 import GHC.Word (Word8, Word16, Word32, Word64)
 import GHC.Base (Int(..), (+#))
-import GHC.Exts (inline)
 
 import Data.Primitive.ByteArray
 import Data.Proxy (Proxy(Proxy))
@@ -43,6 +43,8 @@ data MVector s a =
           , mvOff      :: {-# UNPACK #-} !Int
           , mvDataType :: {-# UNPACK #-} !DataType
           , mvData     :: {-# UNPACK #-} !(MutableByteArray s)
+          , mvRead     :: !(Reader s a)
+          , mvWrite    :: !(Writer s a)
           }
   deriving ( Typeable )
 
@@ -50,7 +52,7 @@ type IOVector = MVector RealWorld
 type STVector s = MVector s
 
 instance NFData (MVector s a) where
-  rnf (MVector _ _ _ _) = ()
+  rnf (MVector _ _ _ _ _ _) = ()
 
 instance GDALType a => G.MVector MVector a where
   {-# INLINE basicLength #-}
@@ -84,16 +86,14 @@ instance GDALType a => G.MVector MVector a where
   {-# INLINE basicUnsafeRead #-}
   basicUnsafeRead MVector{ mvData=MutableByteArray arr#
                          , mvOff =I# o#
-                         , mvDataType
-                         } (I# i#) =
-    primitive (inline gRead mvDataType arr# (i# +# o#))
+                         , mvRead
+                         } (I# i#) = primitive (mvRead arr# (i# +# o#))
 
   {-# INLINE basicUnsafeWrite #-}
   basicUnsafeWrite MVector{ mvData=MutableByteArray arr#
                           , mvOff=I# o#
-                          , mvDataType
-                          } (I# i#) x =
-    primitive_ (inline gWrite mvDataType arr# (i# +# o#) x)
+                          , mvWrite
+                          } (I# i#) x = primitive_ (mvWrite arr# (i# +# o#) x)
 
   {-# INLINE basicSet #-}
   basicSet v x = gdalVectorSet v x
@@ -113,22 +113,31 @@ instance GDALType a => G.MVector MVector a where
 
 
 newAs
-  :: (GDALType a, PrimMonad m)
+  :: forall m a. (GDALType a, PrimMonad m)
   => DataType -> Int -> m (MVector (PrimState m) a)
 newAs dt n
   | n < 0 = error $ "GDAL.Vector.new: negative length: " ++ show n
   | n > mx = error $ "GDAL.Vector.new: length too large: " ++ show n
   | otherwise = do
       arr <- newPinnedByteArray (n*size)
-      return MVector { mvLen      = n
-                     , mvOff      = 0
-                     , mvDataType = dt
-                     , mvData     = arr
-                     }
+      return $! mkMVector dt n 0 arr
   where
     size = sizeOfDataType dt
     mx = maxBound `quot` size :: Int
 {-# INLINE newAs #-}
+
+mkMVector
+  :: forall s a. GDALType a
+  => DataType -> Int -> Int -> MutableByteArray s -> MVector s a
+mkMVector dt len off arr =
+  MVector { mvLen      = len
+          , mvOff      = off
+          , mvDataType = dt
+          , mvData     = arr
+          , mvRead     = gRead dt
+          , mvWrite    = gWrite dt
+          }
+{-# INLINE mkMVector #-}
 
 gdalVectorSet
   :: forall m a. (GDALType a, PrimMonad m)

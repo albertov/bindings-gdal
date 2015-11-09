@@ -83,6 +83,7 @@ module GDAL.Internal.GDAL (
   , bandNodataValue
   , setBandNodataValue
   , getBand
+  , isNativeBand
   , addBand
   , fillBand
   , readBand
@@ -233,8 +234,15 @@ nullBandH = RasterBandH nullPtr
 
 deriving instance Eq RasterBandH
 
-newtype Band s a (t::AccessMode) =
-  Band { unBand :: RasterBandH }
+newtype Band s a (t::AccessMode) = Band (RasterBandH, DataType)
+
+unBand :: Band s a t -> RasterBandH
+unBand (Band (p,_)) = p
+{-# INLINE unBand #-}
+
+bandDataType :: Band s a t -> DataType
+bandDataType (Band (_,t)) = t
+{-# INLINE bandDataType #-}
 
 bandTypedAs :: Band s a t -> a -> Band s a t
 bandTypedAs = const . id
@@ -579,15 +587,19 @@ datasetBandCount =
   liftM fromIntegral . liftIO . {#call unsafe GetRasterCount as ^#} . unDataset
 
 getBand :: Int -> Dataset s t -> GDAL s (Band s a t)
-getBand b ds =
-  liftIO $
-  liftM Band $
-  checkGDALCall checkit $
-  {#call GetRasterBand as ^#} (unDataset ds) (fromIntegral b)
+getBand b ds = liftIO $ do
+  pB <- checkGDALCall checkit $
+         {#call GetRasterBand as ^#} (unDataset ds) (fromIntegral b)
+  dt <- liftM toEnumC ({#call unsafe GetRasterDataType as ^#} pB)
+  return (Band (pB, dt))
   where
     checkit exc p
       | p == nullBandH = Just (fromMaybe (GDALBindingException NullBand) exc)
       | otherwise      = Nothing
+
+isNativeBand :: forall s a t. GDALType a => Band s a t -> Bool
+isNativeBand = (==dataType (Proxy :: Proxy a)) . bandDataType
+{-# INLINE isNativeBand #-}
 
 addBand
   :: forall s a. GDALType a
@@ -602,9 +614,6 @@ addBand ds options = do
   where dt = dataType (Proxy :: Proxy a)
 
 
-
-bandDataType :: Band s a t -> DataType
-bandDataType = toEnumC . {#call pure unsafe GetRasterDataType as ^#} . unBand
 
 bandBlockSize :: (Band s a t) -> Size
 bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
@@ -729,7 +738,8 @@ noDataOrFail = liftM (fromMaybe err) . bandNodataValue
                  "not  return a nodata value")
 
 bandMask :: Band s a t -> GDAL s (Band s Word8 t)
-bandMask = liftIO . liftM Band . {#call GetMaskBand as ^#} . unBand
+bandMask =
+  liftIO . liftM (\p -> Band (p,gdtByte)) . {#call GetMaskBand as ^#} . unBand
 
 data MaskType
   = MaskNoData
@@ -826,15 +836,13 @@ foldlM' f = ifoldlM' (\acc _ -> f acc)
 ifoldlM'
   :: forall s t a b. GDALType a
   => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
-ifoldlM' f initialAcc band = do
-  (load, vec) <- mkBlockLoader band
-  ifoldlM_loop load vec
+ifoldlM' f initialAcc band = mkBlockLoader band >>= ifoldlM_loop
   where
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
     {-# INLINE ifoldlM_loop #-}
-    ifoldlM_loop loadBlock vec = goB SPEC 0 0 initialAcc
+    ifoldlM_loop (loadBlock, vec) = goB SPEC 0 0 initialAcc
       where
         goB !sPEC !iB !jB !acc
           | iB < nx = do loadBlock (XY iB jB)

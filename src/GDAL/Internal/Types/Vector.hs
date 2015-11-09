@@ -18,7 +18,9 @@ module GDAL.Internal.Types.Vector (
 
 import qualified Data.Vector.Generic          as G
 import qualified Data.Vector.Generic.Mutable  as GM
-import           GDAL.Internal.Types.Vector.Mutable ( MVector(..), newAs)
+import           GDAL.Internal.Types.Vector.Mutable ( MVector(..), newAs
+                                                    , mkMVector
+                                                    )
 
 import Foreign.Ptr (Ptr)
 
@@ -60,20 +62,16 @@ instance GDALType a => G.Vector Vector a where
   {-# INLINE basicUnsafeFreeze #-}
   basicUnsafeFreeze MVector{mvLen, mvOff, mvDataType, mvData} = do
     arr <- unsafeFreezeByteArray mvData
-    return Vector { vLen      = mvLen
-                  , vOff      = mvOff
-                  , vDataType = mvDataType
-                  , vData     = arr
-                  }
+    return $! Vector { vLen      = mvLen
+                     , vOff      = mvOff
+                     , vDataType = mvDataType
+                     , vData     = arr
+                     }
 
   {-# INLINE basicUnsafeThaw #-}
   basicUnsafeThaw Vector{vLen, vOff, vDataType, vData} = do
     arr <- unsafeThawByteArray vData
-    return MVector { mvLen      = vLen
-                   , mvOff      = vOff
-                   , mvDataType = vDataType
-                   , mvData     = arr
-                   }
+    return $! mkMVector vDataType vLen vOff arr
 
   {-# INLINE basicLength #-}
   basicLength v = vLen v
