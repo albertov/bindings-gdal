@@ -96,8 +96,8 @@ instance Num a => Num (Value a) where
   {-# INLINE (-) #-}
 
   Value a * Value b = Value (a*b)
-  Value a * NoData  = Value a
-  NoData  * Value a = Value a
+  Value _ * NoData  = NoData
+  NoData  * Value _ = NoData
   NoData  * NoData  = NoData
   {-# INLINE (*) #-}
 
@@ -115,8 +115,8 @@ instance Num a => Num (Value a) where
 
 instance Fractional a => Fractional (Value a) where
   Value a / Value b = Value (a/b)
-  Value a / NoData  = Value a
-  NoData  / Value a = Value a
+  Value _ / NoData  = NoData
+  NoData  / Value _ = NoData
   NoData  / NoData  = NoData
   {-# INLINE (/) #-}
 
@@ -213,18 +213,6 @@ toGVec (V_Value (Mask m, v))
   | otherwise               = Just ( v)
 
 instance GDALType a => M.MVector U.MVector (Value a) where
-  {-
-  {-# SPECIALIZE instance M.MVector U.MVector (Value Word8) #-}
-  {-# SPECIALIZE instance M.MVector U.MVector (Value Word16) #-}
-  {-# SPECIALIZE instance M.MVector U.MVector (Value Word32) #-}
-  {-# SPECIALIZE instance M.MVector U.MVector (Value Int8) #-}
-  {-# SPECIALIZE instance M.MVector U.MVector (Value Int16) #-}
-  {-# SPECIALIZE instance M.MVector U.MVector (Value Int32) #-}
-  {-# SPECIALIZE instance M.MVector U.MVector (Value Float) #-}
-  {-# SPECIALIZE instance M.MVector U.MVector (Value Double) #-}
-  {-# SPECIALIZE instance M.MVector U.MVector (Value (Complex Float)) #-}
-  {-# SPECIALIZE instance M.MVector U.MVector (Value (Complex Double)) #-}
-  -}
 
   basicLength (MV_Value (_,v)) = M.basicLength v
   {-# INLINE basicLength #-}
@@ -278,25 +266,13 @@ instance GDALType a => M.MVector U.MVector (Value a) where
 
 #if MIN_VERSION_vector(0,11,0)
   basicInitialize (MV_Value (Mask x,v)) = do
-    M.basicInitialize x
-    M.basicInitialize v
-  basicInitialize (MV_Value (_,v)) = M.basicInitialize v
+    M.basicSet x maskNoData
+  basicInitialize (MV_Value (AllValid,v)) = M.basicInitialize v
+  basicInitialize (MV_Value (UseNoData nd ,v)) = M.basicSet v nd
   {-# INLINE basicInitialize #-}
 #endif
 
 instance GDALType a => G.Vector U.Vector (Value a) where
-  {-
-  {-# SPECIALIZE instance G.Vector U.Vector (Value Word8) #-}
-  {-# SPECIALIZE instance G.Vector U.Vector (Value Word16) #-}
-  {-# SPECIALIZE instance G.Vector U.Vector (Value Word32) #-}
-  {-# SPECIALIZE instance G.Vector U.Vector (Value Int8) #-}
-  {-# SPECIALIZE instance G.Vector U.Vector (Value Int16) #-}
-  {-# SPECIALIZE instance G.Vector U.Vector (Value Int32) #-}
-  {-# SPECIALIZE instance G.Vector U.Vector (Value Float) #-}
-  {-# SPECIALIZE instance G.Vector U.Vector (Value Double) #-}
-  {-# SPECIALIZE instance G.Vector U.Vector (Value (Complex Float)) #-}
-  {-# SPECIALIZE instance G.Vector U.Vector (Value (Complex Double)) #-}
-  -}
 
   basicUnsafeFreeze (MV_Value (Mask x,v)) =
     liftM2 (\x' v' -> V_Value (Mask x',v'))
@@ -336,5 +312,5 @@ instance GDALType a => G.Vector U.Vector (Value a) where
      liftM Value (G.basicUnsafeIndexM v i)
   basicUnsafeIndexM (V_Value (UseNoData nd,v)) i = do
     val <- G.basicUnsafeIndexM v i
-    return (if val==nd then NoData else Value val)
+    return $! (if val==nd then NoData else Value val)
   {-# INLINE basicUnsafeIndexM #-}
