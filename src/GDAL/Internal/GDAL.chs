@@ -118,7 +118,7 @@ module GDAL.Internal.GDAL (
 
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.Exception (Exception(..))
-import Control.Monad (liftM, liftM2, when, (>=>))
+import Control.Monad (liftM, liftM2, when, void, (>=>))
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Bits ((.&.))
@@ -943,7 +943,7 @@ mkBlockLoader band = do
       loadBlock blockIx
       liftIO $ do
         gUnsafeWithDataTypeM maskBuf $ \dt pVec ->
-          checkCPLError "RasterIO" $
+          void $ --checkCPLError "RasterIO" $
           {#call RasterIO as ^#}
             (unBand mask)
             (fromEnumC GF_Read)
@@ -967,7 +967,7 @@ mkBlockLoader band = do
 
     blockLoader buf blockIx = liftIO $ do
       gUnsafeWithDataTypeM buf $ \_ pVec ->
-        checkCPLError "ReadBlock" $
+        void $ --checkCPLError "ReadBlock" $
         {#call ReadBlock as ^#}
           (unBand band)
           (px bi)

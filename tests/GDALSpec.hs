@@ -2,6 +2,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
+
 module GDALSpec (main, spec) where
 
 import Control.Monad (void, liftM, forM_)
@@ -266,12 +268,15 @@ spec = setupAndTeardown $ do
       vec2 <- readBandBlock band 0
       vec `shouldBe` vec2
 
-    it "cannnot write and read block with automatic conversion without DynType" $ do
+    it "cannot write and read block with automatic conversion without DynType" $ do
       ds <- createMem (XY 100 100) 1 gdtInt16 []
       band <- getBand 1 ds
       let vec :: U.Vector (Value Double)
           vec = U.generate (bandBlockLen band) (Value . fromIntegral)
-      writeBandBlock band 0 vec `shouldThrow` (\(e::SomeException)->True)
+      writeBandBlock band 0 vec `shouldThrow` \case
+        DataTypeMismatch{expectedDt,rasterDt}
+          | rasterDt==gdtInt16, expectedDt==gdtFloat64 -> True
+        _                                              -> False
 
     let fWord8 = (Value . fromIntegral) :: Int -> Value Word8
     it_can_write_and_read_band  fWord8

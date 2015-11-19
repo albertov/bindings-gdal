@@ -24,6 +24,7 @@ module GDAL (
 
   , GDALException (..)
   , GDALRasterException (..)
+  , DataTypeMismatch (..)
   , ProgressException (..)
   , ErrorType (..)
   , ErrorNum (..)
@@ -137,6 +138,7 @@ import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
 import GDAL.Internal.CPLProgress
 import GDAL.Internal.GCP
+import GDAL.Internal.DataType.Instances ()
 import GDAL.Internal.GDAL as GDAL
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value

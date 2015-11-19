@@ -13,11 +13,11 @@ import GDAL.Internal.Types.Pair (Pair(..))
 import GDAL.Internal.DataType
 
 import Control.Arrow ((&&&))
+import Control.Exception (throw)
 import Control.Monad.Primitive (PrimMonad(PrimState), RealWorld)
 
 import Data.Int (Int8, Int16, Int32)
 import Data.Proxy (Proxy(Proxy))
-import Data.Typeable (Typeable, typeOf)
 import qualified Data.Vector.Storable         as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import Data.Word (Word8, Word16, Word32)
@@ -39,16 +39,12 @@ imagPart (_ :+ a) = a
 
 
 unsafeAsDataType
-  :: forall a b. (GDALType a, Storable a, Typeable a)
+  :: forall a b. (GDALType a, Storable a)
   => DataType -> St.Vector a  -> (Ptr () -> IO b) -> IO b
 unsafeAsDataType dt v f
   | dt == dt' = St.unsafeWith v (f . castPtr)
-  | otherwise =
-      error $ concat [ "gUnsafeAsDataType (St.Vector ", tyStr
-                     , ") invalid datatype. Got '", show dt
-                     , "', expected '", show dt', "'"]
+  | otherwise = throw (DataTypeMismatch{rasterDt=dt, expectedDt=dt'})
   where dt' = dataType (Proxy :: Proxy a)
-        tyStr = show (typeOf (undefined :: a))
 {-# INLINE unsafeAsDataType #-}
 
 unsafeWithDataType
@@ -60,15 +56,12 @@ unsafeWithDataType v f = St.unsafeWith v (f dt . castPtr)
 
 
 newAs
-  :: forall m a. (GDALType a, Storable a, Typeable a, PrimMonad m)
+  :: forall m a. (GDALType a, Storable a, PrimMonad m)
   => DataType -> Int  -> m (St.MVector (PrimState m) a)
 newAs dt i
   | dt == dt' = Stm.new i
-  | otherwise =
-      error $ concat [ "gNewAs (St.MVector ", tyStr, ") invalid datatype. "
-                     , "Got '", show dt, "', expected '", show dt', "'"]
+  | otherwise = throw (DataTypeMismatch{rasterDt=dt, expectedDt=dt'})
   where dt' = dataType (Proxy :: Proxy a)
-        tyStr = show (typeOf (undefined :: a))
 {-# INLINE newAs #-}
 
 unsafeWithDataTypeM
@@ -401,7 +394,13 @@ instance GDALType (Complex Float) where
   {-# INLINE gFromIntegralPair #-}
   {-# INLINE gToRealPair       #-}
   {-# INLINE gFromRealPair     #-}
+#if MIN_VERSION_base(4,8,0)
 maskedStVec(Complex Float)
+#else
+instance Masked (Complex Float) where
+  type BaseMVector (Complex Float) = GV.MVector
+  type BaseVector (Complex Float)  = GV.Vector
+#endif
 dynGType(Complex Float)
 
 instance GDALType (Complex Double) where
@@ -423,5 +422,11 @@ instance GDALType (Complex Double) where
   {-# INLINE gFromIntegralPair #-}
   {-# INLINE gToRealPair       #-}
   {-# INLINE gFromRealPair     #-}
+#if MIN_VERSION_base(4,8,0)
 maskedStVec(Complex Double)
+#else
+instance Masked (Complex Double) where
+  type BaseMVector (Complex Double) = GV.MVector
+  type BaseVector (Complex Double)  = GV.Vector
+#endif
 dynGType(Complex Double)

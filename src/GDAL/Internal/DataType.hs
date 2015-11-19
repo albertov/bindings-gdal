@@ -10,10 +10,12 @@
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module GDAL.Internal.DataType (
     GDALType (..)
   , DataType
+  , DataTypeMismatch (..)
   , DynType (..)
   , Vector (..)
   , MVector (..)
@@ -44,13 +46,14 @@ module GDAL.Internal.DataType (
 
 #include "bindings.h"
 
+import Control.Exception (Exception(..))
 import Control.Monad.Primitive
 import Control.Monad.ST (runST)
 
 import Data.Primitive.ByteArray
 import Data.Primitive.Types
 import Data.Primitive.MachDeps
-
+import Data.Typeable (Typeable)
 import Data.Int (Int16, Int32)
 import Data.Proxy (Proxy(..))
 import Data.Word (Word8, Word16, Word32)
@@ -58,14 +61,26 @@ import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Generic          as G
 import qualified Data.Vector.Generic.Mutable  as M
 
+import Language.Haskell.TH.Syntax (Lift)
+
 import Foreign.Ptr (Ptr)
-import Foreign.Storable (Storable)
 
 import GHC.Base
 
+import GDAL.Internal.CPLError (
+    bindingExceptionFromException
+  , bindingExceptionToException
+  )
 import GDAL.Internal.Types.Pair (Pair)
 import GDAL.Internal.Types.Value (Masked(..))
 
+data DataTypeMismatch =
+  DataTypeMismatch { rasterDt :: !DataType, expectedDt :: !DataType}
+  deriving (Typeable, Show, Eq)
+
+instance Exception DataTypeMismatch where
+  toException   = bindingExceptionToException
+  fromException = bindingExceptionFromException
 
 
 newtype DataType = DataType Int
@@ -254,11 +269,10 @@ convertGType a = runST $ do
   MutableByteArray arr# <- newByteArray (sizeOfDataType bdt)
   primitive_ (gWrite bdt arr# 0# a)
   primitive  (gRead  bdt arr# 0#)
-  where adt = dataType (Proxy :: Proxy a)
-        bdt = dataType (Proxy :: Proxy b)
+  where bdt = dataType (Proxy :: Proxy b)
 {-# INLINE convertGType #-}
 
 
 newtype DynType a = DynType { unDynType :: a}
-  deriving ( Eq, Show, Enum, Real, Num, Ord, Integral, Fractional, RealFrac
-           , Functor)
+  deriving ( Eq, Show, Enum, Bounded, Real, Num, Ord, Integral, Fractional
+           , RealFrac , RealFloat, Floating, Lift, Functor)
