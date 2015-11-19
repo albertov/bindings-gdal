@@ -22,7 +22,6 @@ import qualified Data.Vector.Storable         as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import Data.Word (Word8, Word16, Word32)
 
-import Foreign.C.Types
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (Storable)
 
@@ -294,28 +293,6 @@ instance GDALType Double where
   {-# INLINE gFromRealPair     #-}
 maskedStVec(Double)
 dynGType(Double)
-
-instance GDALType CDouble where
-  dataType          _ = gdtFloat64
-  gToIntegral         = truncate
-  gFromIntegral       = fromIntegral
-  gToReal             = realToFrac
-  gFromReal           = realToFrac
-  gToIntegralPair   v = Pair (truncate v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (realToFrac v, 0)
-  gFromRealPair       = realToFrac . fst . unPair
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-maskedStVec(CDouble)
-dynGType(CDouble)
 
 instance GDALType (Complex Int16) where
   dataType _          = gdtCInt16

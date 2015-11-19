@@ -309,7 +309,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
         tArg bValue opts pFun nullPtr
     liftM (mkValueUVector nodataValue) (G.unsafeFreeze vec)
   where
-    bValue    = convertGType burnValue
+    bValue    = gToReal burnValue
     XY nx ny  = fmap fromIntegral size
 
 

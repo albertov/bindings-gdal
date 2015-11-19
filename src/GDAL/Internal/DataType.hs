@@ -3,11 +3,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE MagicHash #-}
-{-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveDataTypeable #-}
@@ -20,15 +17,7 @@ module GDAL.Internal.DataType (
   , Vector (..)
   , MVector (..)
 
-  , Reader
-  , Writer
-  , Indexer
-
-  , convertGType
   , sizeOfDataType
-  , gIndex
-  , gWrite
-  , gRead
 
   , gdtByte
   , gdtUInt16
@@ -47,16 +36,11 @@ module GDAL.Internal.DataType (
 #include "bindings.h"
 
 import Control.Exception (Exception(..))
-import Control.Monad.Primitive
-import Control.Monad.ST (runST)
+import Control.Monad.Primitive (PrimMonad(PrimState), RealWorld)
 
-import Data.Primitive.ByteArray
-import Data.Primitive.Types
 import Data.Primitive.MachDeps
 import Data.Typeable (Typeable)
-import Data.Int (Int16, Int32)
 import Data.Proxy (Proxy(..))
-import Data.Word (Word8, Word16, Word32)
 
 import qualified Data.Vector.Generic          as G
 import qualified Data.Vector.Generic.Mutable  as M
@@ -65,7 +49,6 @@ import Language.Haskell.TH.Syntax (Lift)
 
 import Foreign.Ptr (Ptr)
 
-import GHC.Base
 
 import GDAL.Internal.CPLError (
     bindingExceptionFromException
@@ -94,8 +77,9 @@ instance Show DataType where
 
 instance Enum DataType where
   toEnum = DataType
-
   fromEnum (DataType a) = a
+  {-# INLINE toEnum #-}
+  {-# INLINE fromEnum #-}
 
 instance Bounded DataType where
   minBound = gdtByte
@@ -157,18 +141,6 @@ sizeOfDataType dt
 ------------------------------------------------------------------------------
 -- GDALType
 ------------------------------------------------------------------------------
-{-
-data family MVector s a
-data family Vector    a
-
-type IOVector a = MVector RealWorld a
-
-type instance G.Mutable Vector = MVector
--}
-
-type Reader s a = MutableByteArray# s -> Int# -> State# s -> (# State# s, a #)
-type Writer s a = MutableByteArray# s -> Int# -> a -> State# s -> State# s
-type Indexer a  = ByteArray# -> Int# -> a
 
 class (Masked a, Vector (BaseVector a) a) => GDALType a where
   dataType :: Proxy a -> DataType
@@ -197,80 +169,6 @@ class M.MVector v a => MVector v a where
   gNewAs :: PrimMonad m => DataType -> Int  -> m (v (PrimState m) a)
   gUnsafeWithDataTypeM :: v RealWorld a -> (DataType -> Ptr () -> IO b) -> IO b
 
-
-
-gWrite :: forall s a. GDALType a => DataType -> Writer s a
-gWrite !dt p# i# v s#
-  | dt == gdtByte     = writeWith (undefined :: Word8) gToIntegral
-  | dt == gdtUInt16   = writeWith (undefined :: Word16) gToIntegral
-  | dt == gdtUInt32   = writeWith (undefined :: Word32) gToIntegral
-  | dt == gdtInt16    = writeWith (undefined :: Int16) gToIntegral
-  | dt == gdtInt32    = writeWith (undefined :: Int32) gToIntegral
-  | dt == gdtFloat32  = writeWith (undefined :: Float) gToReal
-  | dt == gdtFloat64  = writeWith (undefined :: Double) gToReal
-  | dt == gdtCInt16   = writeWith (undefined :: Pair Int16) gToIntegralPair
-  | dt == gdtCInt32   = writeWith (undefined :: Pair Int32) gToIntegralPair
-  | dt == gdtCFloat32 = writeWith (undefined :: Pair Float) gToRealPair
-  | dt == gdtCFloat64 = writeWith (undefined :: Pair Double) gToRealPair
-  | otherwise         = error "gWrite: Invalid GType"
-  where
-    {-# INLINE writeWith #-}
-    writeWith :: Prim b => b -> (a -> b) -> State# s
-    writeWith y f = inline writeByteArray# p# i# (inline f v `asTypeOf` y) s#
-{-# INLINE gWrite #-}
-
-gRead :: forall s a. GDALType a => DataType -> Reader s a
-gRead !dt p# i# s#
-  | dt == gdtByte     = readWith (undefined :: Word8) gFromIntegral
-  | dt == gdtByte     = readWith (undefined :: Word8) gFromIntegral
-  | dt == gdtUInt16   = readWith (undefined :: Word16) gFromIntegral
-  | dt == gdtUInt32   = readWith (undefined :: Word32) gFromIntegral
-  | dt == gdtInt16    = readWith (undefined :: Int16) gFromIntegral
-  | dt == gdtInt32    = readWith (undefined :: Int32) gFromIntegral
-  | dt == gdtFloat32  = readWith (undefined :: Float) gFromReal
-  | dt == gdtFloat64  = readWith (undefined :: Double) gFromReal
-  | dt == gdtCInt16   = readWith (undefined :: Pair Int16) gFromIntegralPair
-  | dt == gdtCInt32   = readWith (undefined :: Pair Int32) gFromIntegralPair
-  | dt == gdtCFloat32 = readWith (undefined :: Pair Float) gFromRealPair
-  | dt == gdtCFloat64 = readWith (undefined :: Pair Double) gFromRealPair
-  | otherwise         = error "gRead: Invalid GType"
-  where
-    {-# INLINE readWith #-}
-    readWith :: Prim b => b -> (b -> a) -> (# State# s, a #)
-    readWith y f =
-      case inline readByteArray# p# i# s# of
-        (# s1#, v #) -> (# s1#, inline f (v `asTypeOf` y) #)
-{-# INLINE gRead #-}
-
-gIndex :: forall a. GDALType a => DataType -> Indexer a
-gIndex !dt p# i#
-  | dt == gdtByte     = indexWith (undefined :: Word8) gFromIntegral
-  | dt == gdtUInt16   = indexWith (undefined :: Word16) gFromIntegral
-  | dt == gdtUInt32   = indexWith (undefined :: Word32) gFromIntegral
-  | dt == gdtInt16    = indexWith (undefined :: Int16) gFromIntegral
-  | dt == gdtInt32    = indexWith (undefined :: Int32) gFromIntegral
-  | dt == gdtFloat32  = indexWith (undefined :: Float) gFromReal
-  | dt == gdtFloat64  = indexWith (undefined :: Double) gFromReal
-  | dt == gdtCInt16   = indexWith (undefined :: Pair Int16) gFromIntegralPair
-  | dt == gdtCInt32   = indexWith (undefined :: Pair Int32) gFromIntegralPair
-  | dt == gdtCFloat32 = indexWith (undefined :: Pair Float) gFromRealPair
-  | dt == gdtCFloat64 = indexWith (undefined :: Pair Double) gFromRealPair
-  | otherwise         = error "gIndex: Invalid GType"
-  where
-    {-# INLINE indexWith #-}
-    indexWith :: Prim b => b -> (b -> a) -> a
-    indexWith y f = inline f (inline indexByteArray# p# i# `asTypeOf` y)
-{-# INLINE gIndex #-}
-
-
-
-convertGType :: forall a b. (GDALType a, GDALType b) => a -> b
-convertGType a = runST $ do
-  MutableByteArray arr# <- newByteArray (sizeOfDataType bdt)
-  primitive_ (gWrite bdt arr# 0# a)
-  primitive  (gRead  bdt arr# 0#)
-  where bdt = dataType (Proxy :: Proxy b)
-{-# INLINE convertGType #-}
 
 
 newtype DynType a = DynType { unDynType :: a}

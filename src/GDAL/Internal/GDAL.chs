@@ -619,6 +619,7 @@ bandBlockSize :: (Band s a t) -> Size
 bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    {#call unsafe GetBlockSize as ^#} (unBand band) xPtr yPtr
    liftM (fmap fromIntegral) (liftM2 XY (peek xPtr) (peek yPtr))
+{-# NOINLINE bandBlockSize #-}
 
 bandBlockLen :: Band s a t -> Int
 bandBlockLen = (\(XY x y) -> x*y) . bandBlockSize
@@ -628,6 +629,7 @@ bandSize band =
   fmap fromIntegral $
     XY ({#call pure unsafe GetRasterBandXSize as ^#} (unBand band))
        ({#call pure unsafe GetRasterBandYSize as ^#} (unBand band))
+{-# NOINLINE bandSize #-}
 
 allBand :: Band s a t -> Envelope Int
 allBand = Envelope (pure 0) . bandSize
@@ -647,7 +649,7 @@ bandNodataValue b =
   alloca $ \p -> do
     value <- {#call unsafe GetRasterNoDataValue as ^#} (unBand b) p
     hasNodata <- liftM toBool $ peek p
-    return (if hasNodata then Just (convertGType value) else Nothing)
+    return (if hasNodata then Just (gFromReal value) else Nothing)
 {-# INLINE bandNodataValue #-}
 
 
@@ -655,7 +657,7 @@ setBandNodataValue :: GDALType a => RWBand s a -> a -> GDAL s ()
 setBandNodataValue b v =
   liftIO $
   checkCPLError "SetRasterNoDataValue" $
-  {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (convertGType v)
+  {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (gToReal v)
 
 createBandMask :: RWBand s a -> MaskType -> GDAL s ()
 createBandMask band maskType = liftIO $

@@ -28,16 +28,21 @@ import Control.Monad.Primitive
 import Data.Primitive.Types (Prim(..))
 import Data.Primitive.Addr
 
-import GHC.Word (Word8, Word16, Word32, Word64)
-import GHC.Base (Int(..), (+#))
+import GHC.Base
+import GHC.Int
 import GHC.Ptr (Ptr(..))
+import GHC.Word
 
 import Data.Primitive.ByteArray
 import Data.Proxy (Proxy(Proxy))
 import Data.Typeable (Typeable)
 
+import GDAL.Internal.Types.Pair (Pair)
 import GDAL.Internal.DataType hiding (Vector(..), MVector(..))
 import qualified GDAL.Internal.DataType as DT
+
+type Reader s a = MutableByteArray# s -> Int# -> State# s -> (# State# s, a #)
+type Writer s a = MutableByteArray# s -> Int# -> a -> State# s -> State# s
 
 -- | Mutable 'GDALType'-based vectors
 data MVector s a =
@@ -45,8 +50,8 @@ data MVector s a =
           , mvOff      :: {-# UNPACK #-} !Int
           , mvDataType :: {-# UNPACK #-} !DataType
           , mvData     :: {-# UNPACK #-} !(MutableByteArray s)
-          , mvRead     :: !(Reader s a)
-          , mvWrite    :: !(Writer s a)
+          , mvRead     ::                !(Reader s a)
+          , mvWrite    ::                !(Writer s a)
           }
   deriving ( Typeable )
 
@@ -120,6 +125,49 @@ instance GDALType a => G.MVector MVector a where
     | dDt == sDt = moveByteArray dst (i*sz) src (j*sz) (n * sz)
     | otherwise  = G.basicUnsafeCopy dVec sVec
     where sz = sizeOfDataType dDt
+
+gWrite :: forall s a. GDALType a => DataType -> Writer s a
+gWrite !dt p# i# v s#
+  | dt == gdtByte     = writeWith (undefined :: Word8) gToIntegral
+  | dt == gdtUInt16   = writeWith (undefined :: Word16) gToIntegral
+  | dt == gdtUInt32   = writeWith (undefined :: Word32) gToIntegral
+  | dt == gdtInt16    = writeWith (undefined :: Int16) gToIntegral
+  | dt == gdtInt32    = writeWith (undefined :: Int32) gToIntegral
+  | dt == gdtFloat32  = writeWith (undefined :: Float) gToReal
+  | dt == gdtFloat64  = writeWith (undefined :: Double) gToReal
+  | dt == gdtCInt16   = writeWith (undefined :: Pair Int16) gToIntegralPair
+  | dt == gdtCInt32   = writeWith (undefined :: Pair Int32) gToIntegralPair
+  | dt == gdtCFloat32 = writeWith (undefined :: Pair Float) gToRealPair
+  | dt == gdtCFloat64 = writeWith (undefined :: Pair Double) gToRealPair
+  | otherwise         = error "gWrite: Invalid GType"
+  where
+    {-# INLINE writeWith #-}
+    writeWith :: Prim b => b -> (a -> b) -> State# s
+    writeWith y f = inline writeByteArray# p# i# (inline f v `asTypeOf` y) s#
+{-# INLINE gWrite #-}
+
+gRead :: forall s a. GDALType a => DataType -> Reader s a
+gRead !dt p# i# s#
+  | dt == gdtByte     = readWith (undefined :: Word8) gFromIntegral
+  | dt == gdtByte     = readWith (undefined :: Word8) gFromIntegral
+  | dt == gdtUInt16   = readWith (undefined :: Word16) gFromIntegral
+  | dt == gdtUInt32   = readWith (undefined :: Word32) gFromIntegral
+  | dt == gdtInt16    = readWith (undefined :: Int16) gFromIntegral
+  | dt == gdtInt32    = readWith (undefined :: Int32) gFromIntegral
+  | dt == gdtFloat32  = readWith (undefined :: Float) gFromReal
+  | dt == gdtFloat64  = readWith (undefined :: Double) gFromReal
+  | dt == gdtCInt16   = readWith (undefined :: Pair Int16) gFromIntegralPair
+  | dt == gdtCInt32   = readWith (undefined :: Pair Int32) gFromIntegralPair
+  | dt == gdtCFloat32 = readWith (undefined :: Pair Float) gFromRealPair
+  | dt == gdtCFloat64 = readWith (undefined :: Pair Double) gFromRealPair
+  | otherwise         = error "gRead: Invalid GType"
+  where
+    {-# INLINE readWith #-}
+    readWith :: Prim b => b -> (b -> a) -> (# State# s, a #)
+    readWith y f =
+      case inline readByteArray# p# i# s# of
+        (# s1#, v #) -> (# s1#, inline f (v `asTypeOf` y) #)
+{-# INLINE gRead #-}
 
 
 
