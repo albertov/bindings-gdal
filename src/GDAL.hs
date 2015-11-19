@@ -139,6 +139,7 @@ import GDAL.Internal.GDAL as GDAL
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value
 import GDAL.Internal.Common
+import OGR (Envelope(..))
 
 import qualified GDAL.Internal.OGR as OGR
 import qualified GDAL.Internal.OSR as OSR

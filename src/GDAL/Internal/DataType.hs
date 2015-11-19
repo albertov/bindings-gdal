@@ -30,63 +30,48 @@ module GDAL.Internal.DataType (
   , gdtCFloat32
   , gdtCFloat64
   , gdtUnknown
-
-  , gWithMutableByteArray
-  , gUnsafeWithByteArray
-  , gCopyMutableByteArray
 ) where
 
-#include "gdal.h"
-
-{#context lib = "gdal" prefix = "GDAL" #}
+#include "bindings.h"
 
 import Control.Arrow ((&&&))
-import Control.Monad (liftM, liftM2)
 import Control.Monad.Primitive
 import Control.Monad.ST (runST)
 
 import Data.Primitive.ByteArray
-import Data.Primitive.Addr
 import Data.Primitive.Types
 import Data.Primitive.MachDeps
 
 import Data.Int (Int8, Int16, Int32)
-import Data.Complex (Complex(..), realPart, imagPart)
 import Data.Proxy (Proxy(..))
 import Data.Word (Word8, Word16, Word32)
 
-import Foreign.C.String (peekCString)
 import Foreign.C.Types
 
 import GHC.Base
-import GHC.Ptr (Ptr(..))
 
 import Unsafe.Coerce (unsafeCoerce)
 
-import GDAL.Internal.Util (fromEnumC)
 import GDAL.Internal.Types.Pair (Pair(..))
 
-newtype DataType = DataType Int
-  deriving Eq
 
+#if MIN_VERSION_base(4,8,0)
+import Data.Complex (Complex((:+)), realPart, imagPart)
+#else
+import Data.Complex (Complex((:+)))
+realPart, imagPart :: Complex t -> t
+realPart (a :+ _) = a
+imagPart (_ :+ a) = a
+#endif
+
+newtype DataType = DataType Int
+  deriving (Eq, Show) -- FIXME: implement a better Show instance
+
+{-
 instance Show DataType where
   show (DataType d) = unsafeInlineIO $
     {#call unsafe GetDataTypeName as ^#} (fromIntegral d) >>= peekCString
-
-#c
-#define GDT_Unknown   0
-#define GDT_Byte      1
-#define GDT_UInt16    2
-#define GDT_Int16     3
-#define GDT_UInt32    4
-#define GDT_Int32     5
-#define GDT_Float32   6
-#define GDT_Float64   7
-#define GDT_CInt16    8
-#define GDT_CInt32    9
-#define GDT_CFloat32  10
-#define GDT_CFloat64  11
-#endc
+-}
 
 instance Enum DataType where
   toEnum = DataType
@@ -98,52 +83,52 @@ instance Bounded DataType where
   maxBound = gdtCFloat64
 
 gdtByte :: DataType
-gdtByte = DataType {#const GDT_Byte#}
+gdtByte = DataType GDT_BYTE
 
 gdtUInt16 :: DataType
-gdtUInt16 = DataType {#const GDT_UInt16#}
+gdtUInt16 = DataType GDT_UINT16
 
 gdtUInt32 :: DataType
-gdtUInt32 = DataType {#const GDT_UInt32#}
+gdtUInt32 = DataType GDT_UINT32
 
 gdtInt16 :: DataType
-gdtInt16 = DataType {#const GDT_Int16#}
+gdtInt16 = DataType GDT_INT16
 
 gdtInt32 :: DataType
-gdtInt32 = DataType {#const GDT_Int32#}
+gdtInt32 = DataType GDT_INT32
 
 gdtFloat32 :: DataType
-gdtFloat32 = DataType {#const GDT_Float32#}
+gdtFloat32 = DataType GDT_FLOAT32
 
 gdtFloat64 :: DataType
-gdtFloat64 = DataType {#const GDT_Float64#}
+gdtFloat64 = DataType GDT_FLOAT64
 
 gdtCInt16 :: DataType
-gdtCInt16 = DataType {#const GDT_CInt16#}
+gdtCInt16 = DataType GDT_CINT16
 
 gdtCInt32 :: DataType
-gdtCInt32 = DataType {#const GDT_CInt32#}
+gdtCInt32 = DataType GDT_CINT32
 
 gdtCFloat32 :: DataType
-gdtCFloat32 = DataType {#const GDT_CFloat32#}
+gdtCFloat32 = DataType GDT_CFLOAT32
 
 gdtCFloat64 :: DataType
-gdtCFloat64 = DataType {#const GDT_CFloat64#}
+gdtCFloat64 = DataType GDT_CFLOAT64
 
 gdtUnknown :: DataType
-gdtUnknown = DataType {#const GDT_Unknown#}
+gdtUnknown = DataType GDT_UNKNOWN
 
 sizeOfDataType :: DataType -> Int
 sizeOfDataType dt
-  | dt == gdtByte     = {#sizeof GByte   #}
-  | dt == gdtUInt16   = {#sizeof GUInt16 #}
-  | dt == gdtUInt32   = {#sizeof GUInt32 #}
-  | dt == gdtInt16    = {#sizeof GInt16  #}
-  | dt == gdtInt32    = {#sizeof GInt32  #}
+  | dt == gdtByte     = sIZEOF_WORD8
+  | dt == gdtUInt16   = sIZEOF_WORD16
+  | dt == gdtUInt32   = sIZEOF_WORD32
+  | dt == gdtInt16    = sIZEOF_INT16
+  | dt == gdtInt32    = sIZEOF_INT32
   | dt == gdtFloat32  = sIZEOF_FLOAT
   | dt == gdtFloat64  = sIZEOF_DOUBLE
-  | dt == gdtCInt16   = {#sizeof GInt16  #} * 2
-  | dt == gdtCInt32   = {#sizeof GInt32  #} * 2
+  | dt == gdtCInt16   = sIZEOF_INT16 * 2
+  | dt == gdtCInt32   = sIZEOF_INT32 * 2
   | dt == gdtCFloat32 = sIZEOF_FLOAT * 2
   | dt == gdtCFloat64 = sIZEOF_DOUBLE * 2
   | otherwise         = error "sizeOfDataType: GDT_Unknown"
@@ -234,58 +219,7 @@ class Eq a  => GDALType a where
   gFromIntegralPair :: Integral b => Pair b -> a
 
 
-gWithMutableByteArray
-  :: PrimMonad m
-  => DataType
-  -> Int
-  -> MutableByteArray (PrimState m)
-  -> (Ptr () -> m a)
-  -> m a
-gWithMutableByteArray dt off a f = do
-  r <- f (Ptr addr)
-  touch a
-  return r
-  where !(Addr addr) = mutableByteArrayContents a `plusAddr` byteOff
-        !byteOff     = off * sizeOfDataType dt
-{-# INLINE gWithMutableByteArray #-}
 
-gUnsafeWithByteArray
-  :: PrimMonad m
-  => DataType
-  -> Int
-  -> ByteArray
-  -> (Ptr () -> m a)
-  -> m a
-gUnsafeWithByteArray dt off a f = do
-  r <- f (Ptr addr)
-  touch a
-  return r
-  where !(Addr addr) = byteArrayContents a `plusAddr` byteOff
-        !byteOff     = off * sizeOfDataType dt
-{-# INLINE gUnsafeWithByteArray #-}
-
-gCopyMutableByteArray
-  :: PrimMonad m
-  => MutableByteArray (PrimState m)
-  -> DataType
-  -> Int
-  -> MutableByteArray (PrimState m)
-  -> DataType
-  -> Int
-  -> Int
-  -> m ()
-gCopyMutableByteArray dArr dDt dOff sArr sDt sOff count
-  | dDt == sDt
-  = copyMutableByteArray dArr dOff sArr sOff (count * sizeOfDataType dDt)
-  | otherwise =
-      gWithMutableByteArray dDt dOff dArr$ \dPtr ->
-      gWithMutableByteArray sDt sOff sArr$ \sPtr ->
-      unsafePrimToPrim $
-      {#call unsafe GDALCopyWords as ^#}
-        sPtr (fromEnumC sDt) (fromIntegral (sizeOfDataType sDt))
-        dPtr (fromEnumC dDt) (fromIntegral (sizeOfDataType dDt))
-        (fromIntegral count)
-{-# INLINE gCopyMutableByteArray #-}
 
 convertGType :: forall a b. (GDALType a, GDALType b) => a -> b
 convertGType a

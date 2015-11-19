@@ -43,9 +43,9 @@ import qualified GDAL.Internal.Types.Vector as GV
 
 
 data Value a
-  = Value {unValue :: {-# UNPACK #-} !a}
+  = Value {unValue :: !a}
   | NoData
-  deriving (Eq, Ord, Show, Read, Typeable)
+  deriving (Eq, Ord, Show, Typeable)
 
 instance NFData a => NFData (Value a) where
   rnf (Value a) = rnf a `seq` ()

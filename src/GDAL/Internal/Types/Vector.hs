@@ -18,14 +18,18 @@ module GDAL.Internal.Types.Vector (
 
 import qualified Data.Vector.Generic          as G
 import qualified Data.Vector.Generic.Mutable  as GM
-import           GDAL.Internal.Types.Vector.Mutable ( MVector(..), newAs
+import           GDAL.Internal.Types.Vector.Mutable ( MVector(..)
+                                                    , newAs
                                                     , mkMVector
+                                                    , gWithMutableByteArray
                                                     )
 
 import Foreign.Ptr (Ptr)
 
 import Control.DeepSeq ( NFData(rnf) )
+import Control.Monad.Primitive (PrimMonad, touch)
 
+import Data.Primitive.Addr
 import Data.Primitive.ByteArray
 --import Data.Proxy (Proxy(Proxy))
 import Data.Typeable (Typeable)
@@ -34,6 +38,7 @@ import Text.Read     ( Read(..), readListPrecDefault )
 
 import GHC.Base (Int(..))
 import GHC.Exts (inline)
+import GHC.Ptr (Ptr(..))
 import GDAL.Internal.DataType
 
 -- | 'GDALType'-based vectors
@@ -107,3 +112,18 @@ unsafeAsDataType dt v@Vector{vDataType=dt', vOff=off, vData=arr, vLen=n} f
       G.unsafeCopy copy v
       gWithMutableByteArray dt (mvOff copy) (mvData copy) f
 {-# INLINE unsafeAsDataType #-}
+
+gUnsafeWithByteArray
+  :: PrimMonad m
+  => DataType
+  -> Int
+  -> ByteArray
+  -> (Ptr () -> m a)
+  -> m a
+gUnsafeWithByteArray dt off a f = do
+  r <- f (Ptr addr)
+  touch a
+  return r
+  where !(Addr addr) = byteArrayContents a `plusAddr` byteOff
+        !byteOff     = off * sizeOfDataType dt
+{-# INLINE gUnsafeWithByteArray #-}

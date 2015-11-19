@@ -17,6 +17,7 @@ module GDAL.Internal.Types.Vector.Mutable(
   , mkMVector
   , unsafeWithDataType
   , unsafeAsDataType
+  , gWithMutableByteArray
 ) where
 
 import Control.DeepSeq ( NFData(rnf) )
@@ -27,9 +28,11 @@ import Foreign.Ptr (Ptr)
 
 import Control.Monad.Primitive
 import Data.Primitive.Types (Prim(..))
+import Data.Primitive.Addr
 
 import GHC.Word (Word8, Word16, Word32, Word64)
 import GHC.Base (Int(..), (+#))
+import GHC.Ptr (Ptr(..))
 
 import Data.Primitive.ByteArray
 import Data.Proxy (Proxy(Proxy))
@@ -99,15 +102,24 @@ instance GDALType a => G.MVector MVector a where
   basicSet v x = gdalVectorSet v x
 
   {-# INLINE basicUnsafeCopy #-}
-  basicUnsafeCopy MVector{mvOff=dOff, mvLen=dLen, mvData=dArr, mvDataType=dDt}
-                  MVector{mvOff=sOff, mvData=sArr, mvDataType=sDt} =
-    gCopyMutableByteArray dArr dDt dOff sArr sDt sOff dLen
+  basicUnsafeCopy dVec@MVector{mvOff=i, mvLen=n, mvData=dArr, mvDataType=dDt}
+                  sVec@MVector{mvOff=j, mvData=sArr, mvDataType=sDt}
+    | dDt == sDt
+    = copyMutableByteArray dArr (i*sz) sArr (j*sz) (n * sz)
+    | otherwise = loop 0
+    where
+      loop !ix
+        | ix < n = do
+            G.basicUnsafeRead sVec ix >>= G.basicUnsafeWrite dVec ix
+            loop (ix+1)
+        | otherwise = return ()
+      sz = sizeOfDataType dDt
 
   {-# INLINE basicUnsafeMove #-}
-  basicUnsafeMove MVector{mvOff=i, mvLen=n, mvData=dst, mvDataType=dDt}
-                  MVector{mvOff=j, mvData=src, mvDataType=sDt}
+  basicUnsafeMove dVec@MVector{mvOff=i, mvLen=n, mvData=dst, mvDataType=dDt}
+                  sVec@MVector{mvOff=j, mvData=src, mvDataType=sDt}
     | dDt == sDt = moveByteArray dst (i*sz) src (j*sz) (n * sz)
-    | otherwise  = gCopyMutableByteArray dst dDt i src sDt j n
+    | otherwise  = G.basicUnsafeCopy dVec sVec
     where sz = sizeOfDataType dDt
 
 
@@ -179,3 +191,18 @@ unsafeAsDataType dt v@MVector{mvDataType=dt', mvOff=off, mvData=arr, mvLen=n} f
       G.unsafeCopy copy v
       gWithMutableByteArray dt (mvOff copy) (mvData copy) f
 {-# INLINE unsafeAsDataType #-}
+
+gWithMutableByteArray
+  :: PrimMonad m
+  => DataType
+  -> Int
+  -> MutableByteArray (PrimState m)
+  -> (Ptr () -> m a)
+  -> m a
+gWithMutableByteArray dt off a f = do
+  r <- f (Ptr addr)
+  touch a
+  return r
+  where !(Addr addr) = mutableByteArrayContents a `plusAddr` byteOff
+        !byteOff     = off * sizeOfDataType dt
+{-# INLINE gWithMutableByteArray #-}
