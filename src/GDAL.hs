@@ -16,6 +16,7 @@ module GDAL (
   , gdtCFloat64
   , gdtUnknown
   , XY (..)
+  , Envelope (..)
   , Size
   , BlockIx
 
