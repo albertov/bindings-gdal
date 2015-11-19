@@ -11,6 +11,7 @@
 
 module GDAL.Internal.Types.Value (
     Value(..)
+  , Masked (..)
   , isNoData
   , fromValue
 
@@ -37,9 +38,6 @@ import Data.Word
 import qualified Data.Vector.Generic.Mutable as M
 import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Unboxed.Base as U
-
-import GDAL.Internal.DataType
-import qualified GDAL.Internal.Types.Vector as GV
 
 
 data Value a
@@ -145,56 +143,67 @@ maskValid, maskNoData :: Word8
 maskValid  = 255
 maskNoData = 0
 
+class ( G.Vector (BaseVector a) a
+      , M.MVector (BaseMVector a) a
+      , G.Vector (BaseVector a) Word8
+      , M.MVector (BaseMVector a) Word8
+      , G.Mutable (BaseVector a) ~ BaseMVector a
+      , Eq a
+      ) => Masked a where
+  type BaseMVector a :: * -> * -> *
+  type BaseVector  a :: * -> *
+
+
 newtype instance U.Vector    (Value a) =
-    V_Value (Mask GV.Vector a, GV.Vector a)
+    V_Value (Mask (BaseVector a) a, (BaseVector a) a)
 newtype instance U.MVector s (Value a) =
-  MV_Value (Mask (GV.MVector s) a, GV.MVector s a)
-instance GDALType a => U.Unbox (Value a)
+  MV_Value (Mask ((BaseMVector a) s) a, (BaseMVector a) s a)
+instance Masked a => U.Unbox (Value a)
 
 
 mkMaskedValueUVector
-  :: GDALType a
-  => GV.Vector Word8 -> GV.Vector a
+  :: Masked a
+  => BaseVector a Word8 -> BaseVector a a
   -> U.Vector (Value a)
 mkMaskedValueUVector mask values =
     V_Value (Mask (mask), values)
 
 mkAllValidValueUVector
-  :: GDALType a
-  => GV.Vector a -> U.Vector (Value a)
+  :: Masked a
+  => BaseVector a a -> U.Vector (Value a)
 mkAllValidValueUVector values = V_Value (AllValid, values)
 
 mkValueUVector
-  :: GDALType a
-  => a -> GV.Vector a -> U.Vector (Value a)
+  :: Masked a
+  => a -> BaseVector a a -> U.Vector (Value a)
 mkValueUVector nd values = V_Value (UseNoData nd, values)
 
 mkMaskedValueUMVector
-  :: GDALType a
-  => GV.MVector s Word8 -> GV.MVector s a -> U.MVector s (Value a)
+  :: Masked a
+  => BaseMVector a s Word8 -> BaseMVector a s a -> U.MVector s (Value a)
 mkMaskedValueUMVector mask values = MV_Value (Mask mask, values)
 
 mkAllValidValueUMVector
-  :: GDALType a
-  => GV.MVector s a -> U.MVector s (Value a)
+  :: Masked a
+  => BaseMVector a s a -> U.MVector s (Value a)
 mkAllValidValueUMVector values = MV_Value (AllValid, values)
 
 mkValueUMVector
-  :: GDALType a => a -> GV.MVector s a -> U.MVector s (Value a)
+  :: Masked a => a -> BaseMVector a s a -> U.MVector s (Value a)
 mkValueUMVector nd values = MV_Value (UseNoData nd, values)
 
 
 
 toGVecWithNodata
-  :: GDALType a
-  => a -> U.Vector (Value a) -> GV.Vector a
+  :: Masked a
+  => a -> U.Vector (Value a) -> BaseVector a a
 toGVecWithNodata nd v =
    (G.generate (G.length v) (fromValue nd . G.unsafeIndex v))
 
 toGVecWithMask
-  :: GDALType a
+  :: Masked a
   => U.Vector (Value a)
-  -> (GV.Vector Word8, GV.Vector a)
+  -> (BaseVector a Word8, BaseVector a a)
 toGVecWithMask (V_Value (Mask m  , vs)) = ( m, vs)
 toGVecWithMask (V_Value (AllValid, vs)) =
   ( (G.replicate (G.length vs) maskValid), vs)
@@ -203,7 +212,7 @@ toGVecWithMask (V_Value (UseNoData nd, vs)) =
   ,  vs)
 
 
-toGVec :: GDALType a => U.Vector (Value a) -> Maybe (GV.Vector a)
+toGVec :: Masked a => U.Vector (Value a) -> Maybe ((BaseVector a) a)
 toGVec (V_Value (AllValid, v)) = Just ( v)
 toGVec (V_Value (UseNoData nd, v))
   | G.any (==nd) v = Nothing
@@ -212,7 +221,7 @@ toGVec (V_Value (Mask m, v))
   | G.any (==maskNoData) m = Nothing
   | otherwise               = Just ( v)
 
-instance GDALType a => M.MVector U.MVector (Value a) where
+instance Masked a => M.MVector U.MVector (Value a) where
 
   basicLength (MV_Value (_,v)) = M.basicLength v
   {-# INLINE basicLength #-}
@@ -272,7 +281,7 @@ instance GDALType a => M.MVector U.MVector (Value a) where
   {-# INLINE basicInitialize #-}
 #endif
 
-instance GDALType a => G.Vector U.Vector (Value a) where
+instance Masked a => G.Vector U.Vector (Value a) where
 
   basicUnsafeFreeze (MV_Value (Mask x,v)) =
     liftM2 (\x' v' -> V_Value (Mask x',v'))

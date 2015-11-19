@@ -16,7 +16,6 @@ module GDAL.Internal.Types.Vector.Mutable(
   , newAs
   , mkMVector
   , unsafeWithDataType
-  , unsafeAsDataType
   , gWithMutableByteArray
 ) where
 
@@ -181,16 +180,6 @@ unsafeWithDataType MVector{mvDataType, mvOff, mvData} f =
   gWithMutableByteArray mvDataType mvOff mvData (f mvDataType)
 {-# INLINE unsafeWithDataType #-}
 
-unsafeAsDataType
-  :: GDALType a
-  => DataType -> IOVector a -> (Ptr () -> IO b) -> IO b
-unsafeAsDataType dt v@MVector{mvDataType=dt', mvOff=off, mvData=arr, mvLen=n} f
-  | dt == dt' = gWithMutableByteArray dt off arr f
-  | otherwise = do
-      copy <- newAs dt n
-      G.unsafeCopy copy v
-      gWithMutableByteArray dt (mvOff copy) (mvData copy) f
-{-# INLINE unsafeAsDataType #-}
 
 gWithMutableByteArray
   :: PrimMonad m

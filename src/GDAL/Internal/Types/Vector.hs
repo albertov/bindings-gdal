@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -40,6 +41,7 @@ import GHC.Base (Int(..))
 import GHC.Exts (inline)
 import GHC.Ptr (Ptr(..))
 import GDAL.Internal.DataType
+import GDAL.Internal.Types.Value
 
 -- | 'GDALType'-based vectors
 
@@ -127,3 +129,8 @@ gUnsafeWithByteArray dt off a f = do
   where !(Addr addr) = byteArrayContents a `plusAddr` byteOff
         !byteOff     = off * sizeOfDataType dt
 {-# INLINE gUnsafeWithByteArray #-}
+
+
+instance GDALType a => Masked a where
+  type BaseMVector a = MVector
+  type BaseVector a  = Vector
