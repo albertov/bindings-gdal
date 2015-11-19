@@ -97,7 +97,8 @@ before_install:
 - gdal-config --version
 
 script:
-- stack $ARGS --no-terminal test --haddock
+  - stack $ARGS --no-terminal build
+  - stack $ARGS --no-terminal test --ghc-options="-O0"
 
 cache:
   apt: true

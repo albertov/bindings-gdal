@@ -12,8 +12,6 @@
 module GDAL.Internal.Types.Vector (
     Vector (..)
   , MVector(..)
-  , unsafeWithDataType
-  , unsafeAsDataType
 ) where
 
 import qualified Data.Vector.Generic          as G
@@ -39,7 +37,9 @@ import Text.Read     ( Read(..), readListPrecDefault )
 import GHC.Base (Int(..))
 import GHC.Exts (inline)
 import GHC.Ptr (Ptr(..))
-import GDAL.Internal.DataType
+
+import GDAL.Internal.DataType hiding (Vector(..), MVector(..))
+import qualified GDAL.Internal.DataType as DT
 
 -- | 'GDALType'-based vectors
 
@@ -128,7 +128,7 @@ gUnsafeWithByteArray dt off a f = do
         !byteOff     = off * sizeOfDataType dt
 {-# INLINE gUnsafeWithByteArray #-}
 
-instance GDALType a => GDALVector Vector a where
+instance GDALType a => DT.Vector Vector a where
   gUnsafeAsDataType = unsafeAsDataType
   gUnsafeWithDataType = unsafeWithDataType
   {-# INLINE gUnsafeWithDataType #-}

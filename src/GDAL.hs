@@ -2,7 +2,9 @@ module GDAL (
     GDAL
   , GDALType
   , ApproxOK (..)
+  , Masked (..)
   , DataType
+  , DynType (..)
   , gdtByte
   , gdtUInt16
   , gdtUInt32

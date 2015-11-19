@@ -6,6 +6,7 @@ module GDALSpec (main, spec) where
 
 import Control.Monad (void, liftM, forM_)
 import Control.Monad.IO.Class (MonadIO(liftIO))
+import Control.Exception (SomeException)
 
 import Data.Maybe (isNothing)
 import Data.Complex (Complex(..))
@@ -256,14 +257,21 @@ spec = setupAndTeardown $ do
         fillBand (NoData :: Value Int16) band
           `shouldThrow` (==BandDoesNotAllowNoData)
 
-    it "can write and read block with automatic conversion" $ do
+    it "can write and read block with automatic conversion with DynType" $ do
       ds <- createMem (XY 100 100) 1 gdtInt16 []
       band <- getBand 1 ds
-      let vec :: U.Vector (Value Double)
+      let vec :: U.Vector (Value (DynType Double))
           vec = U.generate (bandBlockLen band) (Value . fromIntegral)
       writeBandBlock band 0 vec
       vec2 <- readBandBlock band 0
       vec `shouldBe` vec2
+
+    it "cannnot write and read block with automatic conversion without DynType" $ do
+      ds <- createMem (XY 100 100) 1 gdtInt16 []
+      band <- getBand 1 ds
+      let vec :: U.Vector (Value Double)
+          vec = U.generate (bandBlockLen band) (Value . fromIntegral)
+      writeBandBlock band 0 vec `shouldThrow` (\(e::SomeException)->True)
 
     let fWord8 = (Value . fromIntegral) :: Int -> Value Word8
     it_can_write_and_read_band  fWord8

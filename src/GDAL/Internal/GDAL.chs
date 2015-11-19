@@ -111,7 +111,7 @@ module GDAL.Internal.GDAL (
   , newDatasetHandle
   , openDatasetCount
 
-  , module GDAL.Internal.DataType
+  , module DT
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
@@ -131,11 +131,11 @@ import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
-import Data.Vector.Unboxed (Vector)
 import qualified Data.Vector.Generic         as G
 import qualified Data.Vector.Storable        as St
 import qualified Data.Vector.Generic.Mutable as GM
 import qualified Data.Vector.Unboxed.Mutable as UM
+import qualified Data.Vector.Unboxed         as U
 import Data.Word (Word8)
 
 import Foreign.C.String (withCString, CString)
@@ -152,7 +152,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value
-import GDAL.Internal.DataType
+import GDAL.Internal.DataType as DT
 import GDAL.Internal.DataType.Instances ()
 import GDAL.Internal.Common
 import GDAL.Internal.Util
@@ -667,7 +667,7 @@ readBand :: forall s t a. GDALType a
   => (Band s a t)
   -> Envelope Int
   -> Size
-  -> GDAL s (Vector (Value a))
+  -> GDAL s (U.Vector (Value a))
 readBand band win (XY bx by) =
   bandMaskType band >>= \case
     MaskNoData ->
@@ -679,7 +679,7 @@ readBand band win (XY bx by) =
   where
     XY sx sy     = envelopeSize win
     XY xoff yoff = envelopeMin win
-    read_ :: forall v a'. GDALVector v a' => Band s a' t -> GDAL s (v a')
+    read_ :: forall v a'. DT.Vector v a' => Band s a' t -> GDAL s (v a')
     read_ b = liftIO $ do
       vec <- GM.new (bx*by)
       gUnsafeWithDataTypeM vec $ \dtype ptr -> do
@@ -717,7 +717,7 @@ writeMasked
   => RWBand s a
   -> (RWBand s a -> BaseVector a a -> GDAL s ())
   -> (RWBand s Word8 -> St.Vector Word8 -> GDAL s ())
-  -> Vector (Value a)
+  -> U.Vector (Value a)
   -> GDAL s ()
 writeMasked band writer maskWriter uvec =
   bandMaskType band >>= \case
@@ -775,11 +775,11 @@ writeBand
   => RWBand s a
   -> Envelope Int
   -> Size
-  -> Vector (Value a)
+  -> U.Vector (Value a)
   -> GDAL s ()
 writeBand band win sz@(XY bx by) = writeMasked band write write
   where
-    write :: forall v a'. GDALVector v a' => RWBand s a' -> v a' -> GDAL s ()
+    write :: forall v a'. DT.Vector v a' => RWBand s a' -> v a' -> GDAL s ()
     write band' vec = do
       let XY sx sy     = envelopeSize win
           XY xoff yoff = envelopeMin win
@@ -866,7 +866,7 @@ ifoldlM' f initialAcc band = mkBlockLoader band >>= ifoldlM_loop
 
 writeBandBlock
   :: forall s a. GDALType a
-  => RWBand s a -> BlockIx  -> Vector (Value a) -> GDAL s ()
+  => RWBand s a -> BlockIx  -> U.Vector (Value a) -> GDAL s ()
 writeBandBlock band blockIx uvec = do
   when (bandBlockLen band /= len) $
     throwBindingException (InvalidBlockSize len)
@@ -911,7 +911,7 @@ writeBandBlock band blockIx uvec = do
 
 readBandBlock
   :: forall s t a. GDALType a
-  => Band s a t -> BlockIx -> GDAL s (Vector (Value a))
+  => Band s a t -> BlockIx -> GDAL s (U.Vector (Value a))
 readBandBlock band blockIx = do
   (load, vec) <- mkBlockLoader band
   load blockIx
@@ -963,6 +963,7 @@ mkBlockLoader band = do
         rs  = fmap fromIntegral (bandSize band)
         off = bi * bs
         win = liftA2 min bs (rs  - off)
+    {-# INLINE maskedBlockLoader #-}
 
     blockLoader buf blockIx = liftIO $ do
       gUnsafeWithDataTypeM buf $ \_ pVec ->
@@ -974,6 +975,7 @@ mkBlockLoader band = do
           pVec
       where
         bi  = fmap fromIntegral blockIx
+    {-# INLINE blockLoader #-}
 {-# INLINE mkBlockLoader #-}
 
 openDatasetCount :: IO Int

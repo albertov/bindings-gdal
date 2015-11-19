@@ -15,7 +15,6 @@ module GDAL.Internal.Types.Vector.Mutable(
 
   , newAs
   , mkMVector
-  , unsafeWithDataType
   , gWithMutableByteArray
 ) where
 
@@ -37,7 +36,8 @@ import Data.Primitive.ByteArray
 import Data.Proxy (Proxy(Proxy))
 import Data.Typeable (Typeable)
 
-import GDAL.Internal.DataType
+import GDAL.Internal.DataType hiding (Vector(..), MVector(..))
+import qualified GDAL.Internal.DataType as DT
 
 -- | Mutable 'GDALType'-based vectors
 data MVector s a =
@@ -196,7 +196,7 @@ gWithMutableByteArray dt off a f = do
         !byteOff     = off * sizeOfDataType dt
 {-# INLINE gWithMutableByteArray #-}
 
-instance GDALType a => GDALMVector MVector a where
+instance GDALType a => DT.MVector MVector a where
   gNewAs = newAs
   gUnsafeWithDataTypeM = unsafeWithDataType
   {-# INLINE gUnsafeWithDataTypeM #-}

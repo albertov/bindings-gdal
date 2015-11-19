@@ -143,9 +143,9 @@ maskValid, maskNoData :: Word8
 maskValid  = 255
 maskNoData = 0
 
-class ( G.Vector (BaseVector a) a
+class ( G.Vector  (BaseVector  a) a
       , M.MVector (BaseMVector a) a
-      , G.Mutable (BaseVector a) ~ BaseMVector a
+      , G.Mutable (BaseVector  a) ~ BaseMVector a
       , Eq a
       ) => Masked a where
   type BaseMVector a :: * -> * -> *

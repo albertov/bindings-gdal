@@ -15,8 +15,8 @@ module GDAL.Internal.DataType (
     GDALType (..)
   , DataType
   , DynType (..)
-  , GDALVector (..)
-  , GDALMVector (..)
+  , Vector (..)
+  , MVector (..)
 
   , Reader
   , Writer
@@ -57,15 +57,11 @@ import Data.Word (Word8, Word16, Word32)
 
 import qualified Data.Vector.Generic          as G
 import qualified Data.Vector.Generic.Mutable  as M
-import qualified Data.Vector.Storable         as St
-import qualified Data.Vector.Storable.Mutable as Stm
 
-import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Ptr (Ptr)
 import Foreign.Storable (Storable)
 
 import GHC.Base
-
-import Unsafe.Coerce (unsafeCoerce)
 
 import GDAL.Internal.Types.Pair (Pair)
 import GDAL.Internal.Types.Value (Masked(..))
@@ -159,12 +155,8 @@ type Reader s a = MutableByteArray# s -> Int# -> State# s -> (# State# s, a #)
 type Writer s a = MutableByteArray# s -> Int# -> a -> State# s -> State# s
 type Indexer a  = ByteArray# -> Int# -> a
 
-class (Masked a, GDALVector (BaseVector a) a) => GDALType a where
+class (Masked a, Vector (BaseVector a) a) => GDALType a where
   dataType :: Proxy a -> DataType
-
-  type PrimType a :: *
-  type instance PrimType a = a
-
 
   gToIntegral   :: Integral b => a -> b
   gFromIntegral :: Integral b => b -> a
@@ -181,36 +173,14 @@ class (Masked a, GDALVector (BaseVector a) a) => GDALType a where
 
 
 
-class (GDALMVector (G.Mutable v) a, G.Vector v a) => GDALVector v a where
+class (MVector (G.Mutable v) a, G.Vector v a) => Vector v a where
   gUnsafeAsDataType   :: DataType -> v a  -> (Ptr () -> IO b) -> IO b
   gUnsafeWithDataType :: v a -> (DataType -> Ptr () -> IO b) -> IO b
 
 
-class M.MVector v a => GDALMVector v a where
+class M.MVector v a => MVector v a where
   gNewAs :: PrimMonad m => DataType -> Int  -> m (v (PrimState m) a)
   gUnsafeWithDataTypeM :: v RealWorld a -> (DataType -> Ptr () -> IO b) -> IO b
-
-instance (GDALType a, Storable a) => GDALVector St.Vector a where
-  gUnsafeAsDataType = error "gUnsafeWithDataType (St.Vector a) not implemented"
-  gUnsafeWithDataType v f =
-    St.unsafeWith v (\p -> f (dataType (Proxy :: Proxy a)) (castPtr p))
-  {-# INLINE gUnsafeWithDataType #-}
-  {-# INLINE gUnsafeAsDataType #-}
-
-instance (Storable a, GDALType a) => GDALMVector St.MVector a where
-  gNewAs dt
-    | dt == dataType (Proxy :: Proxy a) = Stm.new
-    | otherwise = error "gNewAs (St.MVector a) invalid datatype"
-
-  gUnsafeWithDataTypeM v f =
-    Stm.unsafeWith v (\p -> f (dataType (Proxy :: Proxy a)) (castPtr p))
-  {-# INLINE gUnsafeWithDataTypeM #-}
-  {-# INLINE gNewAs #-}
-
-{-
-instance (GDALType a, PrimType a ~ a) => G.Vector Vector a where
-instance (GDALType a, PrimType a ~ a) => M.MVector MVector a where
--}
 
 
 
@@ -280,12 +250,10 @@ gIndex !dt p# i#
 
 
 convertGType :: forall a b. (GDALType a, GDALType b) => a -> b
-convertGType a
-  | adt == bdt = unsafeCoerce a
-  | otherwise  = runST $ do
-      MutableByteArray arr# <- newByteArray (sizeOfDataType bdt)
-      primitive_ (gWrite bdt arr# 0# a)
-      primitive  (gRead  bdt arr# 0#)
+convertGType a = runST $ do
+  MutableByteArray arr# <- newByteArray (sizeOfDataType bdt)
+  primitive_ (gWrite bdt arr# 0# a)
+  primitive  (gRead  bdt arr# 0#)
   where adt = dataType (Proxy :: Proxy a)
         bdt = dataType (Proxy :: Proxy b)
 {-# INLINE convertGType #-}
