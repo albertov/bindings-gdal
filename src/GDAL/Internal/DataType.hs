@@ -15,6 +15,8 @@ module GDAL.Internal.DataType (
     GDALType (..)
   , DataType
   , DynType (..)
+  , GDALVector (..)
+  , GDALMVector (..)
 
   , Reader
   , Writer
@@ -42,7 +44,6 @@ module GDAL.Internal.DataType (
 
 #include "bindings.h"
 
-import Control.Arrow ((&&&))
 import Control.Monad.Primitive
 import Control.Monad.ST (runST)
 
@@ -50,31 +51,26 @@ import Data.Primitive.ByteArray
 import Data.Primitive.Types
 import Data.Primitive.MachDeps
 
-import Data.Int (Int8, Int16, Int32)
+import Data.Int (Int16, Int32)
 import Data.Proxy (Proxy(..))
 import Data.Word (Word8, Word16, Word32)
 
-import qualified Data.Vector.Generic         as G
-import qualified Data.Vector.Generic.Mutable as M
+import qualified Data.Vector.Generic          as G
+import qualified Data.Vector.Generic.Mutable  as M
+import qualified Data.Vector.Storable         as St
+import qualified Data.Vector.Storable.Mutable as Stm
 
-import Foreign.C.Types
-import Foreign.Ptr (Ptr)
+import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Storable (Storable)
 
 import GHC.Base
 
 import Unsafe.Coerce (unsafeCoerce)
 
-import GDAL.Internal.Types.Pair (Pair(..))
+import GDAL.Internal.Types.Pair (Pair)
+import GDAL.Internal.Types.Value (Masked(..))
 
 
-#if MIN_VERSION_base(4,8,0)
-import Data.Complex (Complex((:+)), realPart, imagPart)
-#else
-import Data.Complex (Complex((:+)))
-realPart, imagPart :: Complex t -> t
-realPart (a :+ _) = a
-imagPart (_ :+ a) = a
-#endif
 
 newtype DataType = DataType Int
   deriving (Eq, Show) -- FIXME: implement a better Show instance
@@ -163,7 +159,7 @@ type Reader s a = MutableByteArray# s -> Int# -> State# s -> (# State# s, a #)
 type Writer s a = MutableByteArray# s -> Int# -> a -> State# s -> State# s
 type Indexer a  = ByteArray# -> Int# -> a
 
-class Eq a  => GDALType a where
+class (Masked a, GDALVector (BaseVector a) a) => GDALType a where
   dataType :: Proxy a -> DataType
 
   type PrimType a :: *
@@ -182,13 +178,34 @@ class Eq a  => GDALType a where
   gToIntegralPair   :: Integral b => a -> Pair b
   gFromIntegralPair :: Integral b => Pair b -> a
 
-class G.Vector v a => GDALVector v a where
+
+
+
+class (GDALMVector (G.Mutable v) a, G.Vector v a) => GDALVector v a where
   gUnsafeAsDataType   :: DataType -> v a  -> (Ptr () -> IO b) -> IO b
   gUnsafeWithDataType :: v a -> (DataType -> Ptr () -> IO b) -> IO b
+
 
 class M.MVector v a => GDALMVector v a where
   gNewAs :: PrimMonad m => DataType -> Int  -> m (v (PrimState m) a)
   gUnsafeWithDataTypeM :: v RealWorld a -> (DataType -> Ptr () -> IO b) -> IO b
+
+instance (GDALType a, Storable a) => GDALVector St.Vector a where
+  gUnsafeAsDataType = error "gUnsafeWithDataType (St.Vector a) not implemented"
+  gUnsafeWithDataType v f =
+    St.unsafeWith v (\p -> f (dataType (Proxy :: Proxy a)) (castPtr p))
+  {-# INLINE gUnsafeWithDataType #-}
+  {-# INLINE gUnsafeAsDataType #-}
+
+instance (Storable a, GDALType a) => GDALMVector St.MVector a where
+  gNewAs dt
+    | dt == dataType (Proxy :: Proxy a) = Stm.new
+    | otherwise = error "gNewAs (St.MVector a) invalid datatype"
+
+  gUnsafeWithDataTypeM v f =
+    Stm.unsafeWith v (\p -> f (dataType (Proxy :: Proxy a)) (castPtr p))
+  {-# INLINE gUnsafeWithDataTypeM #-}
+  {-# INLINE gNewAs #-}
 
 {-
 instance (GDALType a, PrimType a ~ a) => G.Vector Vector a where
@@ -277,287 +294,3 @@ convertGType a
 newtype DynType a = DynType { unDynType :: a}
   deriving ( Eq, Show, Enum, Real, Num, Ord, Integral, Fractional, RealFrac
            , Functor)
-
-instance GDALType a => GDALType (DynType a) where
-  type PrimType (DynType a) = a
-  dataType _        = dataType (Proxy :: Proxy a)
-  gToIntegral       = gToIntegral . unDynType
-  gToIntegralPair   = gToIntegralPair . unDynType
-  gToReal           = gToReal . unDynType
-  gToRealPair       = gToRealPair . unDynType
-  gFromIntegral     = DynType . gFromIntegral
-  gFromIntegralPair = DynType . gFromIntegralPair
-  gFromReal         = DynType . gFromReal
-  gFromRealPair     = DynType . gFromRealPair
-  {-# INLINE dataType          #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType Word8 where
-  dataType _          = gdtByte
-  gToIntegral         = fromIntegral
-  gFromIntegral       = fromIntegral
-  gToReal             = fromIntegral
-  gFromReal           = truncate
-  gToIntegralPair   v = Pair (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst . unPair
-  {-# INLINE dataType          #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType Word16 where
-  dataType          _ = gdtUInt16
-  gToIntegral         = fromIntegral
-  gFromIntegral       = fromIntegral
-  gToReal             = fromIntegral
-  gFromReal           = truncate
-  gToIntegralPair   v = Pair (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst . unPair
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType Word32 where
-  dataType          _ = gdtUInt32
-  gToIntegral         = fromIntegral
-  gFromIntegral       = fromIntegral
-  gToReal             = fromIntegral
-  gFromReal           = truncate
-  gToIntegralPair   v = Pair (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst . unPair
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType Int8 where
-  dataType          _ = gdtByte
-  gToIntegral         = fromIntegral
-  gFromIntegral       = fromIntegral
-  gToReal             = fromIntegral
-  gFromReal           = truncate
-  gToIntegralPair   v = Pair (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst . unPair
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType Int16 where
-  dataType          _ = gdtInt16
-  gToIntegral         = fromIntegral
-  gFromIntegral       = fromIntegral
-  gToReal             = fromIntegral
-  gFromReal           = truncate
-  gToIntegralPair   v = Pair (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst . unPair
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType Int32 where
-  dataType          _ = gdtInt32
-  gToIntegral         = fromIntegral
-  gFromIntegral       = fromIntegral
-  gToReal             = fromIntegral
-  gFromReal           = truncate
-  gToIntegralPair   v = Pair (fromIntegral v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (fromIntegral v, 0)
-  gFromRealPair       = truncate . fst . unPair
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType Float where
-  dataType          _ = gdtFloat32
-  gToIntegral         = truncate
-  gFromIntegral       = fromIntegral
-  gToReal             = realToFrac
-  gFromReal           = realToFrac
-  gToIntegralPair   v = Pair (truncate v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (realToFrac v, 0)
-  gFromRealPair       = realToFrac . fst . unPair
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType Double where
-  dataType          _ = gdtFloat64
-  gToIntegral         = truncate
-  gFromIntegral       = fromIntegral
-  gToReal             = realToFrac
-  gFromReal           = realToFrac
-  gToIntegralPair   v = Pair (truncate v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (realToFrac v, 0)
-  gFromRealPair       = realToFrac . fst . unPair
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType CDouble where
-  dataType          _ = gdtFloat64
-  gToIntegral         = truncate
-  gFromIntegral       = fromIntegral
-  gToReal             = realToFrac
-  gFromReal           = realToFrac
-  gToIntegralPair   v = Pair (truncate v, 0)
-  gFromIntegralPair   = fromIntegral . fst . unPair
-  gToRealPair       v = Pair (realToFrac v, 0)
-  gFromRealPair       = realToFrac . fst . unPair
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-
-instance GDALType (Complex Int16) where
-  dataType _          = gdtCInt16
-  gToIntegral         = fromIntegral . realPart
-  gFromIntegral     v = fromIntegral v :+ 0
-  gToReal             = fromIntegral . realPart
-  gFromReal         v = truncate v :+ 0
-  gToIntegralPair     = fmap fromIntegral . Pair . (realPart &&& imagPart)
-  gFromIntegralPair   = uncurry (:+) . unPair . fmap fromIntegral
-  gToRealPair         = fmap fromIntegral . Pair . (realPart &&& imagPart)
-  gFromRealPair       = uncurry (:+) . unPair . fmap truncate
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-
-
-instance GDALType (Complex Int32) where
-  dataType          _ = gdtCInt32
-  gToIntegral         = fromIntegral . realPart
-  gFromIntegral     v = fromIntegral v :+ 0
-  gToReal             = fromIntegral . realPart
-  gFromReal         v = truncate v :+ 0
-  gToIntegralPair     = fmap fromIntegral . Pair . (realPart &&& imagPart)
-  gFromIntegralPair   = uncurry (:+) . unPair . fmap fromIntegral
-  gToRealPair         = fmap fromIntegral . Pair . (realPart &&& imagPart)
-  gFromRealPair       = uncurry (:+) . unPair . fmap truncate
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType (Complex Float) where
-  dataType          _ = gdtCFloat32
-  gToIntegral         = truncate . realPart
-  gFromIntegral     v = fromIntegral v :+ 0
-  gToReal             = realToFrac . realPart
-  gFromReal         v = realToFrac v :+ 0
-  gToIntegralPair     = fmap truncate . Pair . (realPart &&& imagPart)
-  gFromIntegralPair   = uncurry (:+) . unPair . fmap fromIntegral
-  gToRealPair         = fmap realToFrac . Pair . (realPart &&& imagPart)
-  gFromRealPair       = uncurry (:+) . unPair . fmap realToFrac
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}
-
-instance GDALType (Complex Double) where
-  dataType          _ = gdtCFloat64
-  gToIntegral         = truncate . realPart
-  gFromIntegral     v = fromIntegral v :+ 0
-  gToReal             = realToFrac . realPart
-  gFromReal         v = realToFrac v :+ 0
-  gToIntegralPair     = fmap truncate . Pair . (realPart &&& imagPart)
-  gFromIntegralPair   = uncurry (:+) . unPair . fmap fromIntegral
-  gToRealPair         = fmap realToFrac . Pair . (realPart &&& imagPart)
-  gFromRealPair       = uncurry (:+) . unPair . fmap realToFrac
-  {-# INLINE dataType #-}
-  {-# INLINE gToIntegral       #-}
-  {-# INLINE gFromIntegral     #-}
-  {-# INLINE gToReal           #-}
-  {-# INLINE gFromReal         #-}
-  {-# INLINE gToIntegralPair   #-}
-  {-# INLINE gFromIntegralPair #-}
-  {-# INLINE gToRealPair       #-}
-  {-# INLINE gFromRealPair     #-}

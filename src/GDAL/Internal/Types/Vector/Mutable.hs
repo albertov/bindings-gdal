@@ -195,3 +195,9 @@ gWithMutableByteArray dt off a f = do
   where !(Addr addr) = mutableByteArrayContents a `plusAddr` byteOff
         !byteOff     = off * sizeOfDataType dt
 {-# INLINE gWithMutableByteArray #-}
+
+instance GDALType a => GDALMVector MVector a where
+  gNewAs = newAs
+  gUnsafeWithDataTypeM = unsafeWithDataType
+  {-# INLINE gUnsafeWithDataTypeM #-}
+  {-# INLINE gNewAs #-}

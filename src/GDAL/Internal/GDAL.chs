@@ -132,7 +132,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import Data.Vector.Unboxed (Vector)
-import qualified Data.Vector.Generic as G
+import qualified Data.Vector.Generic         as G
+import qualified Data.Vector.Storable        as St
 import qualified Data.Vector.Generic.Mutable as GM
 import qualified Data.Vector.Unboxed.Mutable as UM
 import Data.Word (Word8)
@@ -151,9 +152,8 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value
-import qualified GDAL.Internal.Types.Vector as GV
-import qualified GDAL.Internal.Types.Vector.Mutable as GVM
 import GDAL.Internal.DataType
+import GDAL.Internal.DataType.Instances ()
 import GDAL.Internal.Common
 import GDAL.Internal.Util
 {#import GDAL.Internal.GCP#}
@@ -679,10 +679,10 @@ readBand band win (XY bx by) =
   where
     XY sx sy     = envelopeSize win
     XY xoff yoff = envelopeMin win
-    read_ :: forall a'. GDALType a' => Band s a' t -> GDAL s (GV.Vector a')
+    read_ :: forall v a'. GDALVector v a' => Band s a' t -> GDAL s (v a')
     read_ b = liftIO $ do
       vec <- GM.new (bx*by)
-      GVM.unsafeWithDataType vec $ \dtype ptr -> do
+      gUnsafeWithDataTypeM vec $ \dtype ptr -> do
         checkCPLError "RasterAdviseRead" $
           {#call unsafe RasterAdviseRead as ^#}
             (unBand b)
@@ -715,8 +715,8 @@ readBand band win (XY bx by) =
 writeMasked
   :: GDALType a
   => RWBand s a
-  -> (RWBand s a -> GV.Vector a -> GDAL s ())
-  -> (RWBand s Word8 -> GV.Vector Word8 -> GDAL s ())
+  -> (RWBand s a -> BaseVector a a -> GDAL s ())
+  -> (RWBand s Word8 -> St.Vector Word8 -> GDAL s ())
   -> Vector (Value a)
   -> GDAL s ()
 writeMasked band writer maskWriter uvec =
@@ -779,15 +779,14 @@ writeBand
   -> GDAL s ()
 writeBand band win sz@(XY bx by) = writeMasked band write write
   where
-    write :: forall a'. GDALType a'
-         => RWBand s a' -> GV.Vector a' -> GDAL s ()
+    write :: forall v a'. GDALVector v a' => RWBand s a' -> v a' -> GDAL s ()
     write band' vec = do
       let XY sx sy     = envelopeSize win
           XY xoff yoff = envelopeMin win
       if sizeLen sz /= G.length vec
         then throwBindingException (InvalidRasterSize sz)
         else liftIO $
-             GV.unsafeWithDataType vec $ \dt ptr ->
+             gUnsafeWithDataType vec $ \dt ptr ->
              checkCPLError "RasterIO" $
                {#call RasterIO as ^#}
                  (unBand band')
@@ -878,7 +877,7 @@ writeBandBlock band blockIx uvec = do
 
     write band' vec =
       liftIO $
-      GV.unsafeAsDataType (bandDataType band') vec $ \pVec ->
+      gUnsafeAsDataType (bandDataType band') vec $ \pVec ->
       checkCPLError "WriteBlock" $
       {#call WriteBlock as ^#}
         (unBand band')
@@ -894,7 +893,7 @@ writeBandBlock band blockIx uvec = do
     writeMask band' vec =
       liftIO $
       checkCPLError "WriteBlock" $
-      GV.unsafeWithDataType vec $ \dt pVec ->
+      gUnsafeWithDataType vec $ \dt pVec ->
         {#call RasterIO as ^#}
           (unBand band')
           (fromEnumC GF_Write)
@@ -925,7 +924,7 @@ mkBlockLoader
   => Band s a t
   -> GDAL s (BlockIx -> GDAL s (), UM.IOVector (Value a))
 mkBlockLoader band = do
-  buf <- liftIO $ GVM.newAs (bandDataType band) len
+  buf <- liftIO $ gNewAs (bandDataType band) len
   bandMaskType band >>= \case
     MaskNoData -> do
       noData <- noDataOrFail band
@@ -943,7 +942,7 @@ mkBlockLoader band = do
     maskedBlockLoader mask maskBuf loadBlock blockIx = do
       loadBlock blockIx
       liftIO $ do
-        GVM.unsafeWithDataType maskBuf $ \dt pVec ->
+        gUnsafeWithDataTypeM maskBuf $ \dt pVec ->
           checkCPLError "RasterIO" $
           {#call RasterIO as ^#}
             (unBand mask)
@@ -966,7 +965,7 @@ mkBlockLoader band = do
         win = liftA2 min bs (rs  - off)
 
     blockLoader buf blockIx = liftIO $ do
-      GVM.unsafeWithDataType buf $ \_ pVec ->
+      gUnsafeWithDataTypeM buf $ \_ pVec ->
         checkCPLError "ReadBlock" $
         {#call ReadBlock as ^#}
           (unBand band)

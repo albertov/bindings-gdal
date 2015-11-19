@@ -78,7 +78,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import GDAL.Internal.Util (fromEnumC)
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value
-import GDAL.Internal.Types.Vector.Mutable (unsafeWithDataType)
+import GDAL.Internal.DataType
 {#import GDAL.Internal.CPLString#}
 {#import GDAL.Internal.OSR #}
 {#import GDAL.Internal.CPLProgress#}
@@ -301,7 +301,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
   withTransformerAndArg mTransformer (Just geotransform) $ \trans tArg ->
   with geotransform $ \gt -> do
     vec <- GM.replicate (sizeLen size) nodataValue
-    unsafeWithDataType vec $ \dt vecPtr ->
+    gUnsafeWithDataTypeM vec $ \dt vecPtr ->
       checkCPLError "RasterizeLayersBuf" $
       {#call GDALRasterizeLayersBuf as ^#}
         (castPtr vecPtr) nx ny (fromEnumC dt) 0 0 (fromIntegral len)
@@ -347,7 +347,7 @@ createGridIO options noDataVal progressFun points envelope size =
       Stm.unsafeWith xs $ \pXs ->
       Stm.unsafeWith ys $ \pYs ->
       Stm.unsafeWith zs $ \pZs ->
-      unsafeWithDataType out $ \gtype pOut ->
+      gUnsafeWithDataTypeM out $ \gtype pOut ->
       {#call GDALGridCreate as ^#}
         (fromEnumC (gridAlgorithm options))
         (castPtr opts)

@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -31,10 +32,9 @@ import Control.DeepSeq (NFData(rnf))
 import Control.Monad (liftM, liftM2)
 
 import Data.Typeable (Typeable)
-import Data.Complex
-import Data.Int
-import Data.Word
+import Data.Word (Word8)
 
+import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Generic.Mutable as M
 import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Unboxed.Base as U
@@ -145,8 +145,6 @@ maskNoData = 0
 
 class ( G.Vector (BaseVector a) a
       , M.MVector (BaseMVector a) a
-      , G.Vector (BaseVector a) Word8
-      , M.MVector (BaseMVector a) Word8
       , G.Mutable (BaseVector a) ~ BaseMVector a
       , Eq a
       ) => Masked a where
@@ -155,15 +153,15 @@ class ( G.Vector (BaseVector a) a
 
 
 newtype instance U.Vector    (Value a) =
-    V_Value (Mask (BaseVector a) a, (BaseVector a) a)
+    V_Value (Mask St.Vector a, (BaseVector a) a)
 newtype instance U.MVector s (Value a) =
-  MV_Value (Mask ((BaseMVector a) s) a, (BaseMVector a) s a)
+  MV_Value (Mask (St.MVector s) a, (BaseMVector a) s a)
 instance Masked a => U.Unbox (Value a)
 
 
 mkMaskedValueUVector
   :: Masked a
-  => BaseVector a Word8 -> BaseVector a a
+  => St.Vector Word8 -> BaseVector a a
   -> U.Vector (Value a)
 mkMaskedValueUVector mask values =
     V_Value (Mask (mask), values)
@@ -180,7 +178,7 @@ mkValueUVector nd values = V_Value (UseNoData nd, values)
 
 mkMaskedValueUMVector
   :: Masked a
-  => BaseMVector a s Word8 -> BaseMVector a s a -> U.MVector s (Value a)
+  => St.MVector s Word8 -> BaseMVector a s a -> U.MVector s (Value a)
 mkMaskedValueUMVector mask values = MV_Value (Mask mask, values)
 
 mkAllValidValueUMVector
@@ -203,23 +201,26 @@ toGVecWithNodata nd v =
 toGVecWithMask
   :: Masked a
   => U.Vector (Value a)
-  -> (BaseVector a Word8, BaseVector a a)
+  -> (St.Vector Word8, BaseVector a a)
 toGVecWithMask (V_Value (Mask m  , vs)) = ( m, vs)
 toGVecWithMask (V_Value (AllValid, vs)) =
   ( (G.replicate (G.length vs) maskValid), vs)
 toGVecWithMask (V_Value (UseNoData nd, vs)) =
-  (  (G.map (\v->if v==nd then maskNoData else maskValid) vs)
-  ,  vs)
+  ( (G.generate (G.length vs) genMask) ,  vs)
+  where
+    genMask !i
+      | vs `G.unsafeIndex` i == nd = maskNoData
+      | otherwise                  = maskValid
 
 
 toGVec :: Masked a => U.Vector (Value a) -> Maybe ((BaseVector a) a)
 toGVec (V_Value (AllValid, v)) = Just ( v)
 toGVec (V_Value (UseNoData nd, v))
   | G.any (==nd) v = Nothing
-  | otherwise       = Just ( v)
+  | otherwise      = Just v
 toGVec (V_Value (Mask m, v))
   | G.any (==maskNoData) m = Nothing
-  | otherwise               = Just ( v)
+  | otherwise              = Just v
 
 instance Masked a => M.MVector U.MVector (Value a) where
 

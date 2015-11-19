@@ -34,6 +34,7 @@ library
                    , GDAL.Internal.Types.Vector
                    , GDAL.Internal.Types.Vector.Mutable
                    , GDAL.Internal.DataType
+                   , GDAL.Internal.DataType.Instances
                    , GDAL.Internal.Util
                    , GDAL.Internal.Common
                    , GDAL.Internal.CPLString
