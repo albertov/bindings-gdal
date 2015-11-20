@@ -4,6 +4,8 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module GDAL.Internal.DataType.Instances () where
 
@@ -91,27 +93,7 @@ instance MVector St.MVector (ty) where {\
 ; {-# INLINE gNewAs #-}\
 };
 
-#define dynGType(ty)\
-instance GDALType (DynType (ty)) where {\
-  dataType _        = dataType (Proxy :: Proxy (ty))\
-; gToIntegral       = gToIntegral . unDynType\
-; gToIntegralPair   = gToIntegralPair . unDynType\
-; gToReal           = gToReal . unDynType\
-; gToRealPair       = gToRealPair . unDynType\
-; gFromIntegral     = DynType . gFromIntegral\
-; gFromIntegralPair = DynType . gFromIntegralPair\
-; gFromReal         = DynType . gFromReal\
-; gFromRealPair     = DynType . gFromRealPair\
-; {-# INLINE dataType          #-}\
-; {-# INLINE gToIntegral       #-}\
-; {-# INLINE gFromIntegral     #-}\
-; {-# INLINE gToReal           #-}\
-; {-# INLINE gFromReal         #-}\
-; {-# INLINE gToIntegralPair   #-}\
-; {-# INLINE gFromIntegralPair #-}\
-; {-# INLINE gToRealPair       #-}\
-; {-# INLINE gFromRealPair     #-}\
-};\
+#define dynGType(ty) deriving instance GDALType (DynType (ty));\
 instance Masked (DynType (ty)) where {\
   type BaseMVector (DynType (ty)) = GV.MVector\
 ; type BaseVector (DynType (ty))  = GV.Vector\
