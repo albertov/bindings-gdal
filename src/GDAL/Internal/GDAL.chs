@@ -120,13 +120,16 @@ module GDAL.Internal.GDAL (
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when, void, (>=>))
+import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Bits ((.&.))
 import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Coerce (coerce)
-import Data.Maybe (fromMaybe)
+import qualified Data.Conduit.List as CL
+import Data.Conduit
+import Data.Maybe (fromMaybe, fromJust)
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -822,13 +825,33 @@ copyBand src dst options progressFun =
 foldl'
   :: forall s t a b. GDALType a
   => (b -> Value a -> b) -> b -> Band s a t -> GDAL s b
-foldl' f = foldlM' (\acc -> return . f acc)
+foldl' f = ifoldl' (\z _ v -> f z v)
 {-# INLINE foldl' #-}
 
 ifoldl'
   :: forall s t a b. GDALType a
   => (b -> BlockIx -> Value a -> b) -> b -> Band s a t -> GDAL s b
-ifoldl' f = ifoldlM' (\acc ix -> return . f acc ix)
+ifoldl' f z band =
+  runConduit (allBlocks band =$= unsafeBlockConduit band =$= CL.fold folder z)
+  where
+    !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
+    !(XY nx ny) = bandBlockCount band
+    !(XY sx sy) = bandBlockSize band
+    {-# INLINE folder #-}
+    folder !acc (!(XY iB jB), !vec) = go SPEC 0 0 acc
+      where
+        go !_ !i !j !acc'
+          | i   < stopx = go SPEC (i+1) j
+                          (f acc' ix (vec `G.unsafeIndex` (j*sx+i)))
+          | j+1 < stopy = go SPEC 0 (j+1) acc'
+          | otherwise   = acc'
+          where ix = XY (iB*sx+i) (jB*sy+j)
+        !stopx
+          | mx /= 0 && iB==nx-1 = mx
+          | otherwise           = sx
+        !stopy
+          | my /= 0 && jB==ny-1 = my
+          | otherwise           = sy
 {-# INLINE ifoldl' #-}
 
 foldlM'
@@ -840,33 +863,28 @@ foldlM' f = ifoldlM' (\acc _ -> f acc)
 ifoldlM'
   :: forall s t a b. GDALType a
   => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
-ifoldlM' f initialAcc band = mkBlockLoader band >>= ifoldlM_loop
+ifoldlM' f z band = runConduit $
+  allBlocks band =$= unsafeBlockConduitM band =$= CL.foldM folder z
   where
     !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
-    {-# INLINE ifoldlM_loop #-}
-    ifoldlM_loop (loadBlock, vec) = goB SPEC 0 0 initialAcc
+    {-# INLINE folder #-}
+    folder !acc (!(XY iB jB), !vec) = go SPEC 0 0 acc
       where
-        goB !sPEC !iB !jB !acc
-          | iB < nx = do loadBlock (XY iB jB)
-                         go SPEC 0 0 acc >>= goB sPEC (iB+1) jB
-          | jB+1 < ny = goB sPEC 0 (jB+1) acc
-          | otherwise = return acc
-          where
-            go !sPEC2 !i !j !acc'
-              | i   < stopx = do
-                  !v <- liftIO (M.unsafeRead vec (j*sx+i))
-                  f acc' ix v >>= go sPEC2 (i+1) j
-              | j+1 < stopy = go sPEC2 0 (j+1) acc'
-              | otherwise   = return acc'
-              where ix = XY (iB*sx+i) (jB*sy+j)
-            !stopx
-              | mx /= 0 && iB==nx-1 = mx
-              | otherwise           = sx
-            !stopy
-              | my /= 0 && jB==ny-1 = my
-              | otherwise           = sy
+        go !_ !i !j !acc'
+          | i   < stopx = do
+             !v <- liftIO (M.unsafeRead vec (j*sx+i))
+             f acc' ix v >>= go SPEC (i+1) j
+          | j+1 < stopy = go SPEC 0 (j+1) acc'
+          | otherwise   = return acc'
+          where ix = XY (iB*sx+i) (jB*sy+j)
+        !stopx
+          | mx /= 0 && iB==nx-1 = mx
+          | otherwise           = sx
+        !stopy
+          | my /= 0 && jB==ny-1 = my
+          | otherwise           = sy
 {-# INLINE ifoldlM' #-}
 
 writeBandBlock
@@ -940,100 +958,119 @@ writeBandBlock band blockIx uvec = do
 readBandBlock
   :: forall s t a. GDALType a
   => Band s a t -> BlockIx -> GDAL s (U.Vector (Value a))
-readBandBlock band blockIx = do
-  (load, vec) <- mkBlockLoader band
-  load blockIx
-  liftIO $ G.unsafeFreeze vec
+readBandBlock band blockIx = liftM (snd . fromJust) $ runConduit $
+  yield blockIx =$= unsafeBlockConduit band =$= CL.head
 {-# INLINE readBandBlock #-}
 
 
-mkBlockLoader
-  :: forall s t a. GDALType a
-  => Band s a t
-  -> GDAL s (BlockIx -> GDAL s (), UM.IOVector (Value a))
-mkBlockLoader band = do
-  buf <- liftIO $ M.new len
-  blockLoader <- if dtBuf == dtBand
-                   then return (blockLoaderNative buf)
-                   else do
-                      work <- liftIO $
-                                mallocForeignPtrBytes
-                                (len*sizeOfDataType(dtBand))
-                      return (blockLoaderTrans buf work)
-  bandMaskType band >>= \case
-    MaskNoData -> do
-      noData <- noDataOrFail band
-      return (blockLoader, mkValueUMVector noData buf)
-    MaskAllValid ->
-      return (blockLoader, mkAllValidValueUMVector buf)
-    _ -> do
-      maskBuf <- liftIO $ M.replicate len 0
-      mask <- bandMask band
-      return ( maskedBlockLoader mask maskBuf blockLoader
-             , mkMaskedValueUMVector maskBuf buf)
+allBlocks :: Monad m => Band s a t -> Producer m BlockIx
+allBlocks band = CL.sourceList [XY x y | y <- [0..ny-1], x <- [0..nx-1]]
   where
-    len = bandBlockLen band
-    dtBand = bandDataType band
-    dtBuf = dataType (undefined :: a)
+    !(XY nx ny) = bandBlockCount band
+{-# INLINE allBlocks #-}
 
-    maskedBlockLoader mask maskBuf loadBlock blockIx = do
-      loadBlock blockIx
-      liftIO $ do
-        Stm.unsafeWith maskBuf $ \pVec ->
-          void $ --checkCPLError "RasterIO" $
-          {#call RasterIO as ^#}
-            (unBand mask)
-            (fromEnumC GF_Read)
-            (px off)
-            (py off)
-            (px win)
-            (py win)
-            (castPtr pVec)
-            (px win)
-            (py win)
-            (fromEnumC GDT_Byte)
-            0
-            (px bs * fromIntegral (sizeOfDataType GDT_Byte))
+blockConduit
+  :: forall s a t. GDALType a
+  => Band s a t
+  -> Conduit BlockIx (GDAL s) (BlockIx, U.Vector (Value a))
+blockConduit band =
+       unsafeBlockConduitM band
+  =$=  CL.mapM (\(i,v) -> liftIO (U.freeze v >>= \v' -> return (i,v')))
+{-# INLINE blockConduit #-}
+
+unsafeBlockConduit
+  :: forall s a t. GDALType a
+  => Band s a t
+  -> Conduit BlockIx (GDAL s) (BlockIx, U.Vector (Value a))
+unsafeBlockConduit band = unsafeBlockConduitM band =$= awaitForever go
+  where go (ix, v) = liftIO (U.unsafeFreeze v) >>= (\v' -> yield (ix, v'))
+{-# INLINE unsafeBlockConduit #-}
+
+unsafeBlockConduitM
+  :: forall s a t. GDALType a
+  => Band s a t
+  -> Conduit BlockIx (GDAL s) (BlockIx, UM.IOVector (Value a))
+unsafeBlockConduitM band = do
+  buf <- liftIO (M.new len)
+  maskType <- lift $ bandMaskType band
+  case maskType of
+    MaskNoData -> do
+      noData <- lift $ noDataOrFail band
+      blockReader (mkValueUMVector noData buf) buf (const (return ()))
+    MaskAllValid ->
+      blockReader (mkAllValidValueUMVector buf) buf (const (return ()))
+    _ -> do
+      mBuf <- liftIO $ M.replicate len 0
+      mask <- lift $ bandMask band
+      blockReader (mkMaskedValueUMVector mBuf buf) buf (readMask mask mBuf)
+  where
+    isNative = dtBand == dtBuf
+    len      = bandBlockLen band
+    dtBand   = bandDataType band
+    dtBuf    = dataType (undefined :: a)
+
+    {-# INLINE blockReader #-}
+    blockReader vec buf extra
+      | isNative = awaitForever $ \ix -> do
+          liftIO (Stm.unsafeWith buf (loadBlock ix))
+          extra ix
+          yield (ix, vec)
+      | otherwise = do
+          temp <- liftIO $ mallocForeignPtrBytes (len*szBand)
+          awaitForever $ \ix -> do
+            liftIO $ withForeignPtr temp $ \pTemp -> do
+              loadBlock ix pTemp
+              Stm.unsafeWith buf (translateBlock pTemp)
+            extra ix
+            yield (ix, vec)
+
+    {-# INLINE loadBlock #-}
+    loadBlock ix pBuf = 
+      void $
+      {#call ReadBlock as ^#}
+        (unBand band)
+        (fromIntegral (px ix))
+        (fromIntegral (py ix))
+        (castPtr pBuf)
+
+    {-# INLINE translateBlock #-}
+    translateBlock pTemp pBuf  = 
+      {#call unsafe CopyWords as ^#}
+        (castPtr pTemp)
+        (fromEnumC dtBand)
+        (fromIntegral szBand)
+        (castPtr pBuf)
+        (fromEnumC dtBuf)
+        (fromIntegral szBuf)
+        (fromIntegral len)
+    szBand = sizeOfDataType dtBand
+    szBuf = sizeOfDataType dtBuf
+
+    {-# INLINE readMask #-}
+    readMask mask vMask ix =
+      liftIO $
+      Stm.unsafeWith vMask $ \pMask ->
+      checkCPLError "RasterIO" $
+      {#call RasterIO as ^#}
+        (unBand mask)
+        (fromEnumC GF_Read)
+        (px off)
+        (py off)
+        (px win)
+        (py win)
+        (castPtr pMask)
+        (px win)
+        (py win)
+        (fromEnumC GDT_Byte)
+        0
+        (px bs)
       where
-        bi  = fmap fromIntegral blockIx
-        bs  = fmap fromIntegral (bandBlockSize band)
-        rs  = fmap fromIntegral (bandSize band)
+        bi  = fmap fromIntegral ix
         off = bi * bs
         win = liftA2 min bs (rs  - off)
-    {-# INLINE maskedBlockLoader #-}
-
-    blockLoaderTrans buf work blockIx =
-      liftIO $
-      Stm.unsafeWith buf $ \pBuf ->
-      withForeignPtr work $ \pWork -> do
-        void $ --checkCPLError "ReadBlock" $
-          {#call ReadBlock as ^#}
-            (unBand band)
-            (px bi)
-            (py bi)
-            (castPtr pWork)
-        {#call unsafe CopyWords as ^#}
-          pWork
-          (fromEnumC dtBand)
-          (fromIntegral (sizeOfDataType dtBand))
-          (castPtr pBuf)
-          (fromEnumC dtBuf)
-          (fromIntegral (sizeOfDataType dtBuf))
-          (fromIntegral len)
-      where
-        bi  = fmap fromIntegral blockIx
-    blockLoaderNative buf blockIx =
-      liftIO $
-      Stm.unsafeWith buf $ \pBuf ->
-        void $ --checkCPLError "ReadBlock" $
-          {#call ReadBlock as ^#}
-            (unBand band)
-            (px bi)
-            (py bi)
-            (castPtr pBuf)
-      where
-        bi  = fmap fromIntegral blockIx
-{-# INLINE mkBlockLoader #-}
+    bs  = fmap fromIntegral (bandBlockSize band)
+    rs  = fmap fromIntegral (bandSize band)
+{-# INLINE unsafeBlockConduitM #-}
 
 openDatasetCount :: IO Int
 openDatasetCount =

@@ -3,10 +3,11 @@
 {-# LANGUAGE RecordWildCards #-}
 module Main (main) where
 import System.Environment (getArgs)
-import Data.Int (Int16)
+import Data.Int (Int16, Int32)
 
 import GDAL
 
+{-
 type BandType = Int16
 type SummaryType = Int
 
@@ -19,6 +20,21 @@ toDouble = fromIntegral
 
 toSummaryType :: BandType -> SummaryType
 toSummaryType = fromIntegral
+
+-}
+
+type BandType = Double
+type SummaryType = Double
+
+sumTypeInf, sumTypeNegInf :: SummaryType
+sumTypeInf = 1/0
+sumTypeNegInf = (-1/0)
+
+toDouble :: SummaryType -> Double
+toDouble = id
+
+toSummaryType :: BandType -> SummaryType
+toSummaryType = id
 
 main :: IO ()
 main = withGDAL $ do
