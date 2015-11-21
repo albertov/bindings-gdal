@@ -76,7 +76,7 @@ data WarpOptions s =
       woResampleAlg      :: ResampleAlg
     , woWarpOptions      :: OptionList
     , woMemoryLimit      :: Double
-    , woWorkingDataType  :: DataType
+    , woWorkingDataType  :: DataTypeK
     , woBands            :: [BandOptions]
     , woTransfomer       :: SomeTransformer s
     , woCutline          :: Maybe Geometry
@@ -90,7 +90,7 @@ instance Default (WarpOptions s) where
           woResampleAlg      = NearestNeighbour
         , woWarpOptions      = []
         , woMemoryLimit      = 0
-        , woWorkingDataType  = GDT_Unknown
+        , woWorkingDataType  = GUnknown
         , woBands            = []
         , woTransfomer       = def
         , woCutline          = Nothing
@@ -208,7 +208,7 @@ createWarpedVRT
   -> Geotransform
   -> WarpOptions s
   -> GDAL s (RODataset s)
-createWarpedVRT srcDs (XY nPixels nLines) geotransform wo = do
+createWarpedVRT srcDs (nPixels :+: nLines) geotransform wo = do
   options <- setOptionDefaults srcDs Nothing (setWarpedVRTDefaultTransformer wo)
   oDs <- newDatasetHandle $
          with geotransform $ \gt ->

@@ -14,7 +14,9 @@
 
 module GDAL.Internal.Types (
     GDAL
-  , XY (..)
+  , Pair (..)
+  , pFst
+  , pSnd
   , Size
   , BlockIx
   , ReleaseKey
@@ -67,38 +69,44 @@ data AccessMode = ReadOnly | ReadWrite
 type ReadOnly  = 'ReadOnly
 type ReadWrite = 'ReadWrite
 
-data XY a =
-  XY { px :: {-# UNPACK #-} !a
-     , py :: {-# UNPACK #-} !a
-     } deriving (Eq, Ord, Show, Read, Typeable)
+infixl 2 :+:
 
-instance NFData a => NFData (XY a) where
-  rnf (XY a b) = rnf a `seq` rnf b `seq` ()
+data Pair a = !a :+: !a
+  deriving (Eq, Ord, Show, Read, Typeable)
 
-type Size    = XY Int
+pFst, pSnd :: Pair a -> a
+pFst (a :+: _) = a
+pSnd (_ :+: a) = a
+{-# INLINE pFst #-}
+{-# INLINE pSnd #-}
+
+instance NFData a => NFData (Pair a) where
+  rnf (_ :+: _) = ()
+
+type Size    = Pair Int
 
 sizeLen :: Size -> Int
-sizeLen (XY x y) = x*y
+sizeLen (x :+: y) = x*y
 {-# INLINE sizeLen #-}
 
-type BlockIx = XY Int
+type BlockIx = Pair Int
 
 
-instance Functor XY where
-  fmap f (XY a b) = XY (f a) (f b)
+instance Functor Pair where
+  fmap f (a :+: b) = f a :+: f b
   {-# INLINE fmap #-}
 #if MIN_VERSION_base(4,8,0)
-  a <$ _ = XY a a
+  a <$ _ = (a :+: a)
   {-# INLINE (<$) #-}
 #endif
 
-instance Applicative XY where
-  pure a = XY a a
+instance Applicative Pair where
+  pure a = (a :+: a)
   {-# INLINE pure #-}
-  XY a b <*> XY d e = XY (a d) (b e)
+  (a :+: b) <*> (d :+: e) = a d :+: b e
   {-# INLINE (<*>) #-}
 
-instance Num a => Num (XY a) where
+instance Num a => Num (Pair a) where
   (+) = liftA2 (+)
   {-# INLINE (+) #-}
   (-) = liftA2 (-)
@@ -114,7 +122,7 @@ instance Num a => Num (XY a) where
   fromInteger = pure . fromInteger
   {-# INLINE fromInteger #-}
 
-instance Fractional a => Fractional (XY a) where
+instance Fractional a => Fractional (Pair a) where
   recip = fmap recip
   {-# INLINE recip #-}
   (/) = liftA2 (/)
@@ -122,7 +130,7 @@ instance Fractional a => Fractional (XY a) where
   fromRational = pure . fromRational
   {-# INLINE fromRational #-}
 
-instance Floating a => Floating (XY a) where
+instance Floating a => Floating (Pair a) where
     pi = pure pi
     {-# INLINE pi #-}
     exp = fmap exp
@@ -160,15 +168,15 @@ instance Floating a => Floating (XY a) where
     acosh = fmap acosh
     {-# INLINE acosh #-}
 
-instance Storable a => Storable (XY a) where
+instance Storable a => Storable (Pair a) where
   sizeOf _ = 2 * sizeOf (undefined::a)
   {-# INLINE sizeOf #-}
   alignment _ = alignment (undefined::a)
   {-# INLINE alignment #-}
-  poke ptr (XY x y) = poke ptr' x >> pokeElemOff ptr' 1 y
+  poke ptr (x :+: y) = poke ptr' x >> pokeElemOff ptr' 1 y
     where ptr' = castPtr ptr
   {-# INLINE poke #-}
-  peek ptr = XY <$> peek ptr' <*> peekElemOff ptr' 1
+  peek ptr = (:+:) <$> peek ptr' <*> peekElemOff ptr' 1
     where ptr' = castPtr ptr
   {-# INLINE peek #-}
 

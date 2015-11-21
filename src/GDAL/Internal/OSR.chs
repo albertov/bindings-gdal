@@ -276,16 +276,16 @@ foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
 class Projectable a where
   transformWith :: a -> CoordinateTransformation -> Maybe a
 
-instance Projectable (St.Vector (XY Double)) where
+instance Projectable (St.Vector (Pair Double)) where
   transformWith = flip transformPoints
 
 transformPoints
   :: CoordinateTransformation
-  -> St.Vector (XY Double)
-  -> Maybe (St.Vector (XY Double))
+  -> St.Vector (Pair Double)
+  -> Maybe (St.Vector (Pair Double))
 transformPoints ct v = unsafePerformIO $ withQuietErrorHandler $ do
-  xs <- St.unsafeThaw (St.unsafeCast (St.map px v))
-  ys <- St.unsafeThaw (St.unsafeCast (St.map py v))
+  xs <- St.unsafeThaw (St.unsafeCast (St.map pFst v))
+  ys <- St.unsafeThaw (St.unsafeCast (St.map pSnd v))
   zs <- Stm.replicate len 0
   ok <- liftM toBool $
         withCoordinateTransformation ct $ \pCt ->
@@ -298,7 +298,7 @@ transformPoints ct v = unsafePerformIO $ withQuietErrorHandler $ do
     else do
       fXs <- liftM St.unsafeCast (St.unsafeFreeze xs)
       fYs <- liftM St.unsafeCast (St.unsafeFreeze ys)
-      return (Just (St.zipWith XY fXs fYs))
+      return (Just (St.zipWith (:+:) fXs fYs))
   where len = St.length v
 
 

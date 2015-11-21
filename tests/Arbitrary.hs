@@ -2,18 +2,18 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module Arbitrary (InversibleGeotransform(..), positiveXY) where
+module Arbitrary (InversibleGeotransform(..), positivePair) where
 
 import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (liftM)
 
 import Test.QuickCheck
 
-import GDAL (XY(XY), Geotransform(Geotransform))
+import GDAL (Pair(..), Geotransform(Geotransform))
 import OGR (Envelope(Envelope))
 
-instance Arbitrary a => Arbitrary (XY a) where
-  arbitrary = XY <$> arbitrary <*> arbitrary
+instance Arbitrary a => Arbitrary (Pair a) where
+  arbitrary = (:+:) <$> arbitrary <*> arbitrary
 
 newtype InversibleGeotransform =
   InversibleGeotransform { getInversible :: Geotransform }
@@ -40,8 +40,8 @@ instance Arbitrary Geotransform where
       <*> arbitrary
       <*> arbitrary
 
-positiveXY :: Arbitrary (Positive a) => Gen (XY a)
-positiveXY = liftM (fmap getPositive) arbitrary
+positivePair :: Arbitrary (Positive a) => Gen (Pair a)
+positivePair = liftM (fmap getPositive) arbitrary
 
 instance (
     Num a
@@ -49,5 +49,5 @@ instance (
   , Arbitrary (Positive a)
   ) => Arbitrary (Envelope a) where
   arbitrary = do eMin <- arbitrary
-                 sz   <- positiveXY
+                 sz   <- positivePair
                  return (Envelope eMin (eMin+sz))

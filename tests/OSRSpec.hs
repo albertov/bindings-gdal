@@ -8,7 +8,7 @@ import qualified Data.Vector.Storable as St
 import TestUtils
 
 import OSR
-import GDAL (XY(XY))
+import GDAL (Pair(..))
 
 spec :: Spec
 spec = do
@@ -37,9 +37,8 @@ spec = do
       let Right ct = do src <- srsFromEPSG 23030
                         dst <- srsFromEPSG 4326
                         coordinateTransformation src dst
-          points :: St.Vector (XY Double)
-          points   = [ XY 10000 10000
-                     , XY 20000 20000]
-          expected = [ XY (-7.399954586233987) 8.910802667504762e-2
-                     , XY (-7.31036658723297)  0.17933194077993758]
+          points :: St.Vector (Pair Double)
+          points   = [ 10000 :+: 10000 , 20000 :+: 20000]
+          expected = [ (-7.399954586233987) :+: 8.910802667504762e-2
+                     , (-7.31036658723297)  :+: 0.17933194077993758]
       (points `transformWith` ct) `shouldBe` Just expected

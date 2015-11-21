@@ -131,14 +131,14 @@ type EnvelopeReal = Envelope Double
 
 data Envelope a =
   Envelope {
-    envelopeMin :: !(XY a)
-  , envelopeMax :: !(XY a)
+    envelopeMin :: !(Pair a)
+  , envelopeMax :: !(Pair a)
   } deriving (Eq, Show, Read, Functor, Typeable)
 
 instance NFData a => NFData (Envelope a) where
   rnf (Envelope a b) = rnf a `seq` rnf b `seq` ()
 
-envelopeSize :: Num a => Envelope a -> XY a
+envelopeSize :: Num a => Envelope a -> Pair a
 envelopeSize w = liftA2 (-) (envelopeMax w) (envelopeMin w)
 {-# INLINE envelopeSize #-}
 
@@ -146,11 +146,11 @@ instance Storable EnvelopeReal where
   sizeOf _    = {#sizeof OGREnvelope#}
   alignment _ = {#alignof OGREnvelope#}
   peek p =
-    Envelope <$> (XY <$> liftM realToFrac ({#get OGREnvelope->MinX#} p)
-                     <*> liftM realToFrac ({#get OGREnvelope->MinY#} p))
-             <*> (XY <$> liftM realToFrac ({#get OGREnvelope->MaxX#} p)
-                     <*> liftM realToFrac ({#get OGREnvelope->MaxY#} p))
-  poke p (Envelope (XY eMinX eMinY) (XY eMaxX eMaxY))= do
+    Envelope <$> ((:+:) <$> liftM realToFrac ({#get OGREnvelope->MinX#} p)
+                        <*> liftM realToFrac ({#get OGREnvelope->MinY#} p))
+             <*> ((:+:) <$> liftM realToFrac ({#get OGREnvelope->MaxX#} p)
+                        <*> liftM realToFrac ({#get OGREnvelope->MaxY#} p))
+  poke p (Envelope (eMinX :+: eMinY) (eMaxX :+: eMaxY))= do
     {#set OGREnvelope->MinX#} p (realToFrac eMinX)
     {#set OGREnvelope->MinY#} p (realToFrac eMinY)
     {#set OGREnvelope->MaxX#} p (realToFrac eMaxX)
@@ -158,7 +158,7 @@ instance Storable EnvelopeReal where
 
 instance Projectable EnvelopeReal where
   transformWith (Envelope e0 e1) ct = do
-    [e0', e1'] <- ([e0, e1] :: St.Vector (XY Double)) `transformWith` ct
+    [e0', e1'] <- ([e0, e1] :: St.Vector (Pair Double)) `transformWith` ct
     return (Envelope e0' e1')
 
 {#enum OGRwkbGeometryType as GeometryType {upcaseFirstLetter}

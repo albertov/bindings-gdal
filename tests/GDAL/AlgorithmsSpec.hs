@@ -33,7 +33,7 @@ spec = setupAndTeardown $ do
      ds <- OGR.createMem []
      let fDef = featureDef (Proxy :: Proxy (TestFeature Double Double))
          size = 100
-         env  = Envelope (XY (-3) 42) (XY (-2) 43)
+         env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
          mkLayer = liftM unsafeToReadOnlyLayer $
                      createLayerWithDef ds fDef StrictOK []
      v <- runOGR $
@@ -57,7 +57,7 @@ spec = setupAndTeardown $ do
            g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
            geomBuffer 0.05 10 g
          feat = TestFeature geom (0 :: Double) (0 :: Double)
-         env  = Envelope (XY (-3) 42) (XY (-2) 43)
+         env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
      l <- createLayer ds StrictOK []
      createFeature_ l feat
      syncLayerToDisk l
@@ -82,7 +82,7 @@ spec = setupAndTeardown $ do
            g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
            geomBuffer 0.05 10 g
          feat = TestFeature geom (15 :: Double) (0 :: Double)
-         env  = Envelope (XY (-3) 42) (XY (-2) 43)
+         env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
      l <- createLayer ds StrictOK []
      createFeature_ l feat
      syncLayerToDisk l
@@ -109,7 +109,7 @@ spec = setupAndTeardown $ do
            geomBuffer 0.05 10 g
          feat = TestFeature geom (0 :: Double) (0 :: Double)
          Right ct = coordinateTransformation srs4326 srs23030
-         env4326  = Envelope (XY (-3) 42) (XY (-2) 43)
+         env4326  = Envelope ((-3) :+: 42) ((-2) :+: 43)
          Just env23030 = env4326 `transformWith` ct
      l <- createLayer ds StrictOK []
      createFeature_ l feat
@@ -157,7 +157,7 @@ spec = setupAndTeardown $ do
                  Nothing
                  []
                  (Envelope (-500) 500)
-                 (XY 100 100)
+                 (100 :+: 100)
         vec `shouldSatisfy` U.all (==(Value 0 :: Value Double))
 
       itIO "produces a vector with some values > 0" $ do
@@ -165,9 +165,9 @@ spec = setupAndTeardown $ do
                  opts
                  (-1)
                  Nothing
-                 [GP (XY 0 0) 10]
+                 [GP (0 :+: 0) 10]
                  (Envelope (-500) 500)
-                 (XY 100 100)
+                 (100 :+: 100)
         vec `shouldSatisfy` U.any (>(Value 0 :: Value Double))
 
 
@@ -180,7 +180,7 @@ spec = setupAndTeardown $ do
                  Nothing
                  []
                  (Envelope (-500) 500)
-                 (XY 100 100)
+                 (100 :+: 100)
         vec `shouldSatisfy` U.all (==(NoData :: Value Double))
 
       itIO "produces a vector that contains the maximum value" $ do
@@ -188,10 +188,10 @@ spec = setupAndTeardown $ do
                  opts
                  (-1)
                  Nothing
-                 [ GP (XY 2 2) 10
-                 , GP (XY 0 0) 2]
+                 [ GP (2 :+: 2) 10
+                 , GP (0 :+: 0) 2]
                  (Envelope (-500) 500)
-                 (XY 100 100)
+                 (100 :+: 100)
         vec `shouldSatisfy` U.any (==(Value 10 :: Value Double))
         vec `shouldSatisfy` U.all (/=(Value 2 :: Value Double))
 
@@ -204,7 +204,7 @@ spec = setupAndTeardown $ do
                  Nothing
                  []
                  (Envelope (-500) 500)
-                 (XY 100 100)
+                 (100 :+: 100)
         vec `shouldSatisfy` U.all (==(NoData :: Value Double))
 
       itIO "produces a vector that contains the minimum value" $ do
@@ -212,10 +212,10 @@ spec = setupAndTeardown $ do
                  opts
                  (-1)
                  Nothing
-                 [ GP (XY 2 2) 10
-                 , GP (XY 0 0) 2]
+                 [ GP (2 :+: 2) 10
+                 , GP (0 :+: 0) 2]
                  (Envelope (-500) 500)
-                 (XY 100 100)
+                 (100 :+: 100)
         vec `shouldSatisfy` U.any (==(Value 2 :: Value Double))
         vec `shouldSatisfy` U.all (/=(Value 10 :: Value Double))
 
@@ -236,25 +236,25 @@ spec = setupAndTeardown $ do
       length contours `shouldBe` 0
 
     itIO "produces contours if vector has data" $ do
-      let vec    = St.generate (sizeLen sz) (distance center . toXY)
+      let vec    = St.generate (sizeLen sz) (distance center . toPair)
           noData = 0
           center = fmap fromIntegral (div <$> sz <*> 2)
-          toXY   = fmap fromIntegral . uncurry XY . flip divMod (px sz)
+          toPair   = fmap fromIntegral . uncurry (:+:) . flip divMod (pFst sz)
           sz     = 100
-          distance (XY x y) (XY x' y') = sqrt (sq (x-x') + sq (y-y'))
+          distance (x :+: y) (x' :+: y') = sqrt (sq (x-x') + sq (y-y'))
           sq     = (^ (2::Int))
       contours <- contourGenerateVectorIO 10 0 (Just noData) sz vec
       length contours `shouldBe` 13
       sum (map cLevel contours) `shouldBe` 650
       sum (map (St.length . cPoints) contours) `shouldBe` 1300
-      minimum (map (St.minimum . St.map px . cPoints) contours)
+      minimum (map (St.minimum . St.map pFst . cPoints) contours)
         `shouldSatisfy` (>=0)
-      minimum (map (St.minimum . St.map py . cPoints) contours)
+      minimum (map (St.minimum . St.map pSnd . cPoints) contours)
         `shouldSatisfy` (>=0)
-      maximum (map (St.maximum . St.map px . cPoints) contours)
-        `shouldSatisfy` (<=fromIntegral (px sz))
-      maximum (map (St.maximum . St.map py . cPoints) contours)
-        `shouldSatisfy` (<=fromIntegral (py sz))
+      maximum (map (St.maximum . St.map pFst . cPoints) contours)
+        `shouldSatisfy` (<=fromIntegral (pFst sz))
+      maximum (map (St.maximum . St.map pSnd . cPoints) contours)
+        `shouldSatisfy` (<=fromIntegral (pSnd sz))
 
 
 describeWith :: Show a => a -> (a -> SpecWith ()) -> SpecWith ()
@@ -275,7 +275,7 @@ createGridIOSpec (SGA opts) = do
                Nothing
                []
                (Envelope (-500) 500)
-               (XY 100 100)
+               (100 :+: 100)
       vec `shouldSatisfy` U.all (==(NoData :: Value Double))
 
     itIO "produces a vector with values when some points" $ do
@@ -283,9 +283,9 @@ createGridIOSpec (SGA opts) = do
                opts
                (-1)
                Nothing
-               [GP (XY 0 0) 10]
+               [GP (0 :+: 0) 10]
                (Envelope (-500) 500)
-               (XY 100 100)
+               (100 :+: 100)
       vec `shouldSatisfy` U.any (/=(NoData :: Value Double))
 
 

@@ -12,108 +12,118 @@
 
 module GDAL.Internal.DataType (
     DataType (..)
-  , GDataType (..)
   , GDALType (..)
+  , DataTypeK (..)
+  , HsType
+  , GDT_Byte
+  , GDT_UInt16
+  , GDT_UInt32
+  , GDT_Int16
+  , GDT_Int32
+  , GDT_Float32
+  , GDT_Float64
+  , GDT_CInt16
+  , GDT_CInt32
+  , GDT_CFloat32
+  , GDT_CFloat64
 
   , sizeOfDataType
-  , dataType
+  , hsDataTypeK
 ) where
 
-import GDAL.Internal.DataType.Internal (DataType(..))
+import GDAL.Internal.Types (Pair(..), pFst)
+import GDAL.Internal.DataType.Internal
 import Data.Word
 import Data.Int
 
-import Foreign.Storable (Storable(..))
+import Foreign.Storable (Storable(sizeOf))
 import Foreign.C.Types (CDouble(..))
 
-#if MIN_VERSION_base(4,8,0)
-import Data.Complex (Complex((:+)), realPart)
-#else
-import Data.Complex (Complex((:+)))
-import Foreign.Ptr (castPtr)
 
-realPart :: Complex a -> a
-realPart (a :+ _) = a
-{-# INLINE realPart #-}
-#endif
+data DataType :: DataTypeK -> * where
+  GDT_Byte     :: DataType GDT_Byte
+  GDT_UInt16   :: DataType GDT_UInt16
+  GDT_UInt32   :: DataType GDT_UInt32
+  GDT_Int16    :: DataType GDT_Int16
+  GDT_Int32    :: DataType GDT_Int32
+  GDT_Float32  :: DataType GDT_Float32
+  GDT_Float64  :: DataType GDT_Float64
+  GDT_CInt16   :: DataType GDT_CInt16
+  GDT_CInt32   :: DataType GDT_CInt32
+  GDT_CFloat32 :: DataType GDT_CFloat32
+  GDT_CFloat64 :: DataType GDT_CFloat64
 
+instance Show (DataType a) where
+  show = show . dataTypeK
 
-data GDataType :: DataType -> * where
-  GByte     :: GDataType 'GDT_Byte
-  GUInt16   :: GDataType 'GDT_UInt16
-  GUInt32   :: GDataType 'GDT_UInt32
-  GInt16    :: GDataType 'GDT_Int16
-  GInt32    :: GDataType 'GDT_Int32
-  GFloat32  :: GDataType 'GDT_Float32
-  GFloat64  :: GDataType 'GDT_Float64
-  GCInt16   :: GDataType 'GDT_CInt16
-  GCInt32   :: GDataType 'GDT_CInt32
-  GCFloat32 :: GDataType 'GDT_CFloat32
-  GCFloat64 :: GDataType 'GDT_CFloat64
+instance Enum (DataType a) where
+  fromEnum = fromEnum . dataTypeK
+  toEnum   = error "toEnum (DataType a) is not implemented"
 
-instance Show (GDataType a) where
-  show = show . gDataType
+dataTypeK :: DataType a -> DataTypeK
+dataTypeK GDT_Byte = GByte
+dataTypeK GDT_UInt16 = GUInt16
+dataTypeK GDT_UInt32 = GUInt32
+dataTypeK GDT_Int16 = GInt16
+dataTypeK GDT_Int32 = GInt32
+dataTypeK GDT_Float32 = GFloat32
+dataTypeK GDT_Float64 = GFloat64
+dataTypeK GDT_CInt16 = GCInt16
+dataTypeK GDT_CInt32 = GCInt32
+dataTypeK GDT_CFloat32 = GCFloat32
+dataTypeK GDT_CFloat64 = GCFloat64
 
-
-gDataType :: GDataType a -> DataType
-gDataType GByte = GDT_Byte
-gDataType GUInt16 = GDT_UInt16
-gDataType GUInt32 = GDT_UInt32
-gDataType GInt16 = GDT_Int16
-gDataType GInt32 = GDT_Int32
-gDataType GFloat32 = GDT_Float32
-gDataType GFloat64 = GDT_Float64
-gDataType GCInt16 = GDT_CInt16
-gDataType GCInt32 = GDT_CInt32
-gDataType GCFloat32 = GDT_CFloat32
-gDataType GCFloat64 = GDT_CFloat64
-
-unDataType
-  :: DataType
-  -> (forall d. GDALType (HsType d) => GDataType d -> b)
+reifyDataTypeK
+  :: DataTypeK
+  -> (forall d. GDALType (HsType d) => DataType d -> b)
   -> b
-unDataType GDT_Byte     f = f GByte
-unDataType GDT_UInt16   f = f GUInt16
-unDataType GDT_UInt32   f = f GUInt32
-unDataType GDT_Int16    f = f GInt16
-unDataType GDT_Int32    f = f GInt32
-unDataType GDT_Float32  f = f GFloat32
-unDataType GDT_Float64  f = f GFloat64
-unDataType GDT_CInt16   f = f GCInt16
-unDataType GDT_CInt32   f = f GCInt32
-unDataType GDT_CFloat32 f = f GCFloat32
-unDataType GDT_CFloat64 f = f GCFloat64
-unDataType GDT_Unknown  _ = error "GDAL.DataType.unDataType: GDT_Unknown"
+reifyDataTypeK GByte     f = f GDT_Byte
+reifyDataTypeK GUInt16   f = f GDT_UInt16
+reifyDataTypeK GUInt32   f = f GDT_UInt32
+reifyDataTypeK GInt16    f = f GDT_Int16
+reifyDataTypeK GInt32    f = f GDT_Int32
+reifyDataTypeK GFloat32  f = f GDT_Float32
+reifyDataTypeK GFloat64  f = f GDT_Float64
+reifyDataTypeK GCInt16   f = f GDT_CInt16
+reifyDataTypeK GCInt32   f = f GDT_CInt32
+reifyDataTypeK GCFloat32 f = f GDT_CFloat32
+reifyDataTypeK GCFloat64 f = f GDT_CFloat64
+reifyDataTypeK GUnknown  _ = error "GDAL.DataType.reifyDataTypeK: GDT_Unknown"
 
-hsType :: GDALType (HsType d) => GDataType d -> HsType d
+hsType :: GDALType (HsType d) => DataType d -> HsType d
 hsType = const undefined
 
-dataType :: GDALType a => a -> DataType
-dataType = gDataType . dataType'
-{-# INLINE dataType #-}
+hsDataTypeK :: GDALType a => a -> DataTypeK
+hsDataTypeK = dataTypeK . dataType
+{-# INLINE hsDataTypeK #-}
 
-class (Storable a, Eq a, HsType (GType a) ~ a) => GDALType a where
-  type GType a :: DataType
-  dataType'     :: a -> GDataType (GType a)
+class ( Storable a
+      , Eq a
+      , Show a
+      , Num a
+      , HsType (TypeK a) ~ a
+      ) => GDALType a where
+  type TypeK a  :: DataTypeK
+  dataType      :: a -> DataType (TypeK a)
   toCDouble     :: a -> CDouble
   fromCDouble   :: CDouble -> a
 
 
-type family HsType (a :: DataType) where
-  HsType 'GDT_Byte = Word8
-  HsType 'GDT_UInt16 = Word16
-  HsType 'GDT_UInt32 = Word32
-  HsType 'GDT_Int16 = Int16
-  HsType 'GDT_Int32 = Int32
-  HsType 'GDT_Float32 = Float
-  HsType 'GDT_Float64 = Double
-  HsType 'GDT_CInt16 = Complex Int16
-  HsType 'GDT_CInt32 = Complex Int32
-  HsType 'GDT_CFloat32 = Complex Float
-  HsType 'GDT_CFloat64 = Complex Double
+type family HsType (a :: DataTypeK) where
+  HsType GDT_Byte = Word8
+  HsType GDT_UInt16 = Word16
+  HsType GDT_UInt32 = Word32
+  HsType GDT_Int16 = Int16
+  HsType GDT_Int32 = Int32
+  HsType GDT_Float32 = Float
+  HsType GDT_Float64 = Double
+  HsType GDT_CInt16 = Pair Int16
+  HsType GDT_CInt32 = Pair Int32
+  HsType GDT_CFloat32 = Pair Float
+  HsType GDT_CFloat64 = Pair Double
 
-sizeOfDataType :: DataType -> Int
-sizeOfDataType dt = unDataType dt (sizeOf . hsType)
+sizeOfDataType :: DataTypeK -> Int
+sizeOfDataType dt = reifyDataTypeK dt (sizeOf . hsType)
 {-# INLINE sizeOfDataType #-}
 
 ------------------------------------------------------------------------------
@@ -121,116 +131,101 @@ sizeOfDataType dt = unDataType dt (sizeOf . hsType)
 ------------------------------------------------------------------------------
 
 instance GDALType Word8 where
-  type GType Word8 = 'GDT_Byte
-  dataType' _ = GByte
+  type TypeK Word8 = GDT_Byte
+  dataType _  = GDT_Byte
   toCDouble   = fromIntegral
   fromCDouble = truncate
-  {-# INLINE dataType' #-}
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word16 where
-  type GType Word16 = 'GDT_UInt16
-  dataType' _ = GUInt16
+  type TypeK Word16 = GDT_UInt16
+  dataType _  = GDT_UInt16
   toCDouble   = fromIntegral
   fromCDouble = truncate
-  {-# INLINE dataType' #-}
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word32 where
-  type GType Word32 = 'GDT_UInt32
-  dataType' _ = GUInt32
+  type TypeK Word32 = GDT_UInt32
+  dataType _  = GDT_UInt32
   toCDouble   = fromIntegral
   fromCDouble = truncate
-  {-# INLINE dataType' #-}
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int16 where
-  type GType Int16 = 'GDT_Int16
-  dataType' _ = GInt16
+  type TypeK Int16 = GDT_Int16
+  dataType _  = GDT_Int16
   toCDouble   = fromIntegral
   fromCDouble = truncate
-  {-# INLINE dataType' #-}
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int32 where
-  type GType Int32 = 'GDT_Int32
-  dataType' _ = GInt32
+  type TypeK Int32 = GDT_Int32
+  dataType _  = GDT_Int32
   toCDouble   = fromIntegral
   fromCDouble = truncate
-  {-# INLINE dataType' #-}
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Float where
-  type GType Float = 'GDT_Float32
-  dataType' _ = GFloat32
+  type TypeK Float = GDT_Float32
+  dataType _  = GDT_Float32
   toCDouble   = realToFrac
   fromCDouble = realToFrac
-  {-# INLINE dataType' #-}
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Double where
-  type GType Double = 'GDT_Float64
-  dataType' _ = GFloat64
+  type TypeK Double = GDT_Float64
+  dataType _  = GDT_Float64
   toCDouble   = realToFrac
   fromCDouble = realToFrac
-  {-# INLINE dataType' #-}
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
-instance GDALType (Complex Int16) where
-  type GType (Complex Int16) = 'GDT_CInt16
-  dataType' _ = GCInt16
-  toCDouble   = fromIntegral . realPart
-  fromCDouble = (:+ 0) . truncate
-  {-# INLINE dataType' #-}
+instance GDALType (Pair Int16) where
+  type TypeK (Pair Int16) = GDT_CInt16
+  dataType _  = GDT_CInt16
+  toCDouble   = fromIntegral . pFst
+  fromCDouble = (:+: 0) . truncate
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 
-instance GDALType (Complex Int32) where
-  type GType (Complex Int32) = 'GDT_CInt32
-  dataType' _ = GCInt32
-  toCDouble   = fromIntegral . realPart
-  fromCDouble = (:+ 0) . truncate
-  {-# INLINE dataType' #-}
+instance GDALType (Pair Int32) where
+  type TypeK (Pair Int32) = GDT_CInt32
+  dataType _  = GDT_CInt32
+  toCDouble   = fromIntegral . pFst
+  fromCDouble = (:+: 0) . truncate
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
-instance GDALType (Complex Float) where
-  type GType (Complex Float) = 'GDT_CFloat32
-  dataType' _ = GCFloat32
-  toCDouble   = realToFrac . realPart
-  fromCDouble = (:+ 0) . realToFrac
-  {-# INLINE dataType' #-}
+instance GDALType (Pair Float) where
+  type TypeK (Pair Float) = GDT_CFloat32
+  dataType _  = GDT_CFloat32
+  toCDouble   = realToFrac . pFst
+  fromCDouble = (:+: 0) . realToFrac
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
-instance GDALType (Complex Double) where
-  type GType (Complex Double) = 'GDT_CFloat64
-  dataType' _ = GCFloat64
-  toCDouble   = realToFrac . realPart
-  fromCDouble = (:+ 0) . realToFrac
-  {-# INLINE dataType' #-}
+instance GDALType (Pair Double) where
+  type TypeK (Pair Double) = GDT_CFloat64
+  dataType _  = GDT_CFloat64
+  toCDouble   = realToFrac . pFst
+  fromCDouble = (:+: 0) . realToFrac
+  {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
-
-#if !MIN_VERSION_base(4,8,0)
-instance Storable a => Storable (Complex a) where
-  sizeOf a       = 2 * sizeOf (realPart a)
-  alignment a    = alignment (realPart a)
-  peek p           = do
-                      q <- return $ castPtr p
-                      r <- peek q
-                      i <- peekElemOff q 1
-                      return (r :+ i)
-  poke p (r :+ i)  = do
-                      q <-return $  (castPtr p)
-                      poke q r
-                      pokeElemOff q 1 i
-#endif

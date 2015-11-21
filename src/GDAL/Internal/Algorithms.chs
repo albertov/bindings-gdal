@@ -311,7 +311,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
   where
     dt = dataType (undefined :: a)
     bValue    = toCDouble burnValue
-    XY nx ny  = fmap fromIntegral size
+    nx :+: ny  = fmap fromIntegral size
 
 
 -- ############################################################################
@@ -340,8 +340,8 @@ createGridIO options noDataVal progressFun points envelope size =
   withErrorHandler $
   with options $ \opts -> do
     setNodata opts (realToFrac noDataVal)
-    xs <- G.unsafeThaw (St.unsafeCast (St.map (px . gpXY) points))
-    ys <- G.unsafeThaw (St.unsafeCast (St.map (py . gpXY) points))
+    xs <- G.unsafeThaw (St.unsafeCast (St.map (pFst . gpXY) points))
+    ys <- G.unsafeThaw (St.unsafeCast (St.map (pSnd . gpXY) points))
     zs <- G.unsafeThaw (St.unsafeCast (St.map gpZ         points))
     out <- GM.unsafeNew (sizeLen size)
     checkCPLError "GDALGridCreate" $
@@ -362,14 +362,14 @@ createGridIO options noDataVal progressFun points envelope size =
         y1
         nx
         ny
-        (fromEnumC GDT_Float64)
+        (fromEnumC GFloat64)
         (castPtr pOut)
         pFun
         nullPtr
     liftM (mkValueUVector noDataVal) (G.unsafeFreeze out)
   where
-    XY nx ny                       = fmap fromIntegral size
-    Envelope (XY x0 y0) (XY x1 y1) = fmap realToFrac envelope
+    nx :+: ny                       = fmap fromIntegral size
+    Envelope (x0 :+: y0) (x1 :+: y1) = fmap realToFrac envelope
 {-# INLINE createGridIO #-}
 
 
@@ -390,21 +390,21 @@ createGrid options noDataVal points envelope =
 
 data GridPoint =
   GP {
-    gpXY :: {-# UNPACK #-} !(XY Double)
+    gpXY :: {-# UNPACK #-} !(Pair Double)
   , gpZ  :: {-# UNPACK #-} !Double
   } deriving (Eq, Show, Read)
 
 instance Storable GridPoint where
-  sizeOf _ = sizeOf (undefined::XY Double) + sizeOf (undefined::Double)
+  sizeOf _ = sizeOf (undefined::Pair Double) + sizeOf (undefined::Double)
   {-# INLINE sizeOf #-}
   alignment _ = alignment (undefined::Double)
   {-# INLINE alignment #-}
   poke ptr (GP xy z) = poke ptr' xy >> poke (castPtr (ptr' `advancePtr` 1)) z
-    where ptr' = castPtr ptr :: Ptr (XY Double)
+    where ptr' = castPtr ptr :: Ptr (Pair Double)
   {-# INLINE poke #-}
   peek ptr = GP <$> peek ptr'
                 <*> peek (castPtr (ptr' `advancePtr` 1))
-    where ptr' = castPtr ptr :: Ptr (XY Double)
+    where ptr' = castPtr ptr :: Ptr (Pair Double)
   {-# INLINE peek #-}
 
 -- ############################################################################
@@ -627,13 +627,13 @@ computeProximity srcBand prxBand options progressFun =
 data Contour =
   Contour {
     cLevel  :: {-# UNPACK #-} !Double
-  , cPoints :: {-# UNPACK #-} !(St.Vector (XY Double))
+  , cPoints :: {-# UNPACK #-} !(St.Vector (Pair Double))
   } deriving (Eq, Show)
 
 {#pointer ContourList #}
-{#pointer *Point->XYDouble #}
+{#pointer *Point->PairDouble #}
 
-type XYDouble = XY Double
+type PairDouble = Pair Double
 
 contourGenerateVectorIO
   :: Double
@@ -645,7 +645,7 @@ contourGenerateVectorIO
 contourGenerateVectorIO _ _ _ size vector
   | St.length vector /= sizeLen size =
       throwBindingException (InvalidRasterSize size)
-contourGenerateVectorIO interval base nodataVal (XY nx ny) vector =
+contourGenerateVectorIO interval base nodataVal (nx :+: ny) vector =
   withErrorHandler $
   with nullPtr $ \pList ->
   bracket (alloc pList) (free pList) $ \generator -> do
@@ -698,4 +698,4 @@ foreign import ccall "contourwriter.h &hs_contour_writer"
   c_contourWriter :: FunPtr CContourWriter
 
 foreign import ccall "contourwriter.h &destroy_points"
-  c_destroyPoints :: FunPtr (Ptr XYDouble -> IO ())
+  c_destroyPoints :: FunPtr (Ptr PairDouble -> IO ())

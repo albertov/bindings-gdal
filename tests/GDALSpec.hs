@@ -2,6 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module GDALSpec (main, spec) where
@@ -9,12 +10,8 @@ module GDALSpec (main, spec) where
 import Control.Monad (void, liftM, forM_)
 
 import Data.Maybe (isNothing)
-import Data.Complex (Complex(..))
 import Data.IORef (newIORef, readIORef, modifyIORef')
-import Data.Int (Int16, Int32)
 import Data.String (fromString)
-import Data.Typeable (Typeable, typeOf)
-import Data.Word (Word8, Word16, Word32)
 import qualified Data.Vector.Unboxed as U
 
 import System.FilePath (joinPath)
@@ -35,10 +32,6 @@ spec = setupAndTeardown $ do
 
   it "cannot open non-existent file" $ do
     openReadOnly "foo.tif" `shouldThrow` ((==OpenFailed) . gdalErrNum)
-
-  it "cannot create GDT_Unknown dataset" $
-    createMem (XY 100 100) 1 GDT_Unknown []
-      `shouldThrow` (==UnknownRasterDataType)
 
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
@@ -72,7 +65,7 @@ spec = setupAndTeardown $ do
 
   withDir "can create and copy dataset" $ \tmpDir -> do
     let p  = joinPath [tmpDir, "test.tif"]
-    ds <- createMem (XY 100 100) 1 GDT_Int16 []
+    ds <- createMem (100 :+: 100) 1 GDT_Int16 []
     ds2 <- createCopy "GTIFF" p ds True [] Nothing
     flushCache ds2
     p `existsAndSizeIsGreaterThan` 0
@@ -80,14 +73,14 @@ spec = setupAndTeardown $ do
   describe "progress function" $ do
     withDir "can stop copy" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
       let stopIt = Just (\_ _ -> return Stop)
       createCopy "GTIFF" p ds True [] stopIt
         `shouldThrow` isInterruptedException
 
     withDir "can throw exceptions" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
       let crashIt = Just (error msg)
           msg     = "I crashed!"
       createCopy "GTIFF" p ds True [] crashIt
@@ -95,7 +88,7 @@ spec = setupAndTeardown $ do
 
     withDir "can report progress" $ \tmpDir -> do
       let p  = joinPath [tmpDir, "test.tif"]
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
       msgsRef <- liftIO (newIORef [])
       let report pr m = do
             modifyIORef' msgsRef ((pr,m):)
@@ -107,41 +100,41 @@ spec = setupAndTeardown $ do
       msgs `shouldSatisfy` (not . null)
 
   it "can get band count" $ do
-    ds <- createMem (XY 10 10) 5 GDT_Int16 []
+    ds <- createMem (10 :+: 10) 5 GDT_Int16 []
     datasetBandCount ds >>= (`shouldBe` 5)
 
   it "can get existing raster band" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
     void $ getBand 1 ds
 
   it "cannot get non-existing raster band" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
     getBand 2 ds `shouldThrow` ((== IllegalArg) . gdalErrNum)
 
   it "can add raster band" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
     datasetBandCount ds >>= (`shouldBe` 1)
-    void $ liftM (`bandTypedAs` (undefined::Double)) (addBand ds [])
+    void $ liftM (`bandTypedAs` GDT_Float64) (addBand ds [])
     datasetBandCount ds >>= (`shouldBe` 2)
 
   describe "datasetGeotransform" $ do
 
     it "can set and get" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (10 :+: 10) 1 GDT_Int16 []
       let gt = Geotransform 5.0 4.0 3.0 2.0 1.0 0.0
       setDatasetGeotransform ds gt
       gt2 <- datasetGeotransform ds
       Just gt `shouldBe` gt2
 
     it "if not set get returns Nothing" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (10 :+: 10) 1 GDT_Int16 []
       gt <- datasetGeotransform ds
       gt `shouldSatisfy` isNothing
 
   describe "datasetProjection" $ do
 
     it "can set and get" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (10 :+: 10) 1 GDT_Int16 []
       let Right proj = srsFromProj4
                           "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
       setDatasetProjection ds proj
@@ -149,97 +142,92 @@ spec = setupAndTeardown $ do
       Just proj `shouldBe` proj2
 
     it "returns Nothing if dataset has no projection" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (10 :+: 10) 1 GDT_Int16 []
       proj <- datasetProjection ds
       proj `shouldSatisfy` isNothing
 
   describe "datasetGCPs" $ do
 
     it "can set and get with srs" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (10 :+: 10) 1 GDT_Int16 []
       let Right proj = srsFromProj4
                           "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
-          gcps = [gcp "1" (XY 0 0) (XY 45 21)]
+          gcps = [gcp "1" (0 :+: 0) (45 :+: 21)]
       setDatasetGCPs ds gcps (Just proj)
       (gcps2,proj2) <- datasetGCPs ds
       gcps2 `shouldBe` gcps
       Just proj `shouldBe` proj2
 
     it "can set and get with no srs" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
-      let gcps = [gcp "1" (XY 0 0) (XY 45 21)]
+      ds <- createMem (10 :+: 10) 1 GDT_Int16 []
+      let gcps = [gcp "1" (0 :+: 0) (45 :+: 21)]
       setDatasetGCPs ds gcps Nothing
       (gcps2,proj2) <- datasetGCPs ds
       gcps2 `shouldBe` gcps
       proj2 `shouldSatisfy` isNothing
 
     it "returns empty list and Nothing if dataset has no gcps" $ do
-      ds <- createMem (XY 10 10) 1 GDT_Int16 []
+      ds <- createMem (10 :+: 10) 1 GDT_Int16 []
       (gcps2,proj2) <- datasetGCPs ds
       gcps2 `shouldSatisfy` null
       proj2 `shouldSatisfy` isNothing
 
   it "can set and get nodata value" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
     b <- getBand 1 ds
-    (nd :: Maybe Int16) <- bandNodataValue b
+    nd <- bandNodataValue (b `bandTypedAs` GDT_Int16)
     nd `shouldSatisfy` isNothing
-    let nodataValue = (-1) :: Int16
+    let nodataValue = (-1)
     setBandNodataValue b nodataValue
     nodata2 <- bandNodataValue b
     nodata2 `shouldBe` Just nodataValue
 
   it "can get bandBlockSize" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
     b <- getBand 1 ds
-    bandBlockSize b `shouldBe` (XY 10 1)
+    bandBlockSize b `shouldBe` (10 :+: 1)
 
   it "can get bandSize" $ do
-    ds <- createMem (XY 10 10) 1 GDT_Int16 []
+    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
     b <- getBand 1 ds
-    bandSize b `shouldBe` (XY 10 10)
+    bandSize b `shouldBe` (10 :+: 10)
 
   describe "band and block IO" $ do
 
     it "readBandBlock converts type" $ do
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
       band <- getBand 1 ds
       let len = bandBlockLen band
-          vec :: (U.Vector (Value Int16))
           vec = U.generate len (Value . fromIntegral)
           bs  = bandBlockSize band
-      writeBandBlock band 0 vec
-      vec2 <- readBand (band `bandCoercedTo` (undefined::Double))
-                       (Envelope 0 bs) bs
-      vec `shouldBe` U.map (fmap round) (vec2 :: U.Vector (Value Double))
+      writeBandBlock (band `bandTypedAs` GDT_Int16) 0 vec
+      vec2 <- readBand (band `bandCoercedTo` GDT_Float64) (Envelope 0 bs) bs
+      vec `shouldBe` U.map (fmap round) vec2
 
     it "writeBandBlock converts type" $ do
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
       band <- getBand 1 ds
       let len = bandBlockLen band
-          vec :: (U.Vector (Value Double))
           vec = U.generate len (Value . fromIntegral)
           bs  = bandBlockSize band
-      writeBandBlock band 0 vec
-      vec2 <- readBand (band `bandCoercedTo` (undefined::Int16))
-                       (Envelope 0 bs) bs
+      writeBandBlock (band `bandCoercedTo` GDT_Float64) 0 vec
+      vec2 <- readBand (band `bandTypedAs` GDT_Int16) (Envelope 0 bs) bs
       vec2 `shouldBe` U.map (fmap round) vec
 
     it "can write and read band with automatic conversion" $ do
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
-      band <- getBand 1 ds
-      let vec :: U.Vector (Value Double)
-          vec = U.generate 10000 (Value . fromIntegral)
-      writeBand band (allBand band) (bandSize band) vec
-      vec2 <- readBand band (allBand band) (bandSize band)
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
+      b <- getBand 1 ds
+      let vec = U.generate 10000 (Value . fromIntegral)
+      writeBand (b `bandTypedAs` GDT_Float64) (allBand b) (bandSize b) vec
+      vec2 <- readBand b (allBand b) (bandSize b)
       vec `shouldBe` vec2
 
     describe "fillBand" $ do
 
       it "can fill and read band" $ do
-        forM_ ([-10..10] :: [Int16]) $ \value -> do
-          band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
-          fillBand (Value value)  band
+        forM_ ([-10..10]) $ \value -> do
+          band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
+          fillBand (Value value)  (band `bandTypedAs` GDT_Int16)
           v <- readBand band (allBand band) (bandSize band)
           U.length v `shouldBe` 10000
           let allEqual = U.foldl' f True v
@@ -248,8 +236,8 @@ spec = setupAndTeardown $ do
           allEqual `shouldBe` True
 
       it "can fill with NoData if setBandNodataValue" $ do
-        band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
-        setBandNodataValue band (-999 :: Int16)
+        band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
+        setBandNodataValue (band `bandTypedAs` GDT_Int16) (-999)
         fillBand NoData band
         v <- readBand band (allBand band) (bandSize band)
         v `shouldSatisfy` (U.all isNoData)
@@ -258,91 +246,48 @@ spec = setupAndTeardown $ do
         ds <- create "GTIFF" (joinPath [d, "test.tif"]) 100 1 GDT_Int16 []
         band <- getBand 1 ds
         createBandMask band MaskPerDataset
-        fillBand (NoData :: Value Int16) band
+        fillBand NoData (band `bandTypedAs` GDT_Int16)
         v <- readBand band (allBand band) (bandSize band)
         v `shouldSatisfy` (U.all isNoData)
 
       it "cannot fill with NoData if no nodata value or mask has been set" $ do
-        band <- getBand 1 =<< createMem (XY 100 100) 1 GDT_Int16 []
-        fillBand (NoData :: Value Int16) band
+        band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
+        fillBand NoData (band `bandTypedAs` GDT_Int16)
           `shouldThrow` (==BandDoesNotAllowNoData)
 
     it "can write and read block with automatic conversion" $ do
-      ds <- createMem (XY 100 100) 1 GDT_Int16 []
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
       band <- getBand 1 ds
-      let vec :: U.Vector (Value Double)
-          vec = U.generate (bandBlockLen band) (Value . fromIntegral)
-      writeBandBlock band 0 vec
+      let vec = U.generate (bandBlockLen band) (Value . fromIntegral)
+      writeBandBlock (band `bandTypedAs` GDT_Float64) 0 vec
       vec2 <- readBandBlock band 0
       vec `shouldBe` vec2
 
-    let fWord8 = (Value . fromIntegral) :: Int -> Value Word8
-    it_can_write_and_read_band  fWord8
-    it_can_write_and_read_block fWord8
-    it_can_foldl                fWord8 (+) 0
+    describe "RasterBand IO" $ do
+      let genIntegral :: Integral a => Int -> Value a
+          genIntegral = Value . fromIntegral
 
-    let fWord16 = (Value . fromIntegral) :: Int -> Value Word16
-    it_can_write_and_read_band  fWord16
-    it_can_write_and_read_block fWord16
-    it_can_foldl                fWord16 (+) 0
+          genReal :: RealFrac a => Int -> Value a
+          genReal = Value . (*1.1) . fromIntegral
 
-    let fWord32 = (Value . fromIntegral) :: Int -> Value Word32
-    it_can_write_and_read_band  fWord32
-    it_can_write_and_read_block fWord32
-    it_can_foldl                fWord32 (+) 0
+          genCIntegral :: Integral a => Int -> Value (Pair a)
+          genCIntegral i = Value ((fromIntegral i  :+: fromIntegral (i + i)))
 
-    let fInt16 = (Value . fromIntegral) :: Int -> Value Int16
-    it_can_write_and_read_band  fInt16
-    it_can_write_and_read_block fInt16
-    it_can_foldl                fInt16 (+) 0
+          genCReal :: RealFrac a => Int -> Value (Pair a)
+          genCReal i =
+            Value ((fromIntegral i * 1.1) :+: (fromIntegral i * 2.2))
 
-    let fInt32 = (Value . fromIntegral) :: Int -> Value Int32
-    it_can_write_and_read_band  fInt32
-    it_can_write_and_read_block fInt32
-    it_can_foldl                fInt32 (+) 0
-
-    let fFloat = (Value . (*1.1) . fromIntegral) :: Int -> Value Float
-    it_can_write_and_read_band  fFloat
-    it_can_write_and_read_block fFloat
-    it_can_foldl                fFloat (+) 0
-
-    let fDouble = (Value . (*1.1) . fromIntegral) :: Int -> Value Double
-    it_can_write_and_read_band  fDouble
-    it_can_write_and_read_block fDouble
-    it_can_foldl                fDouble (+) 0
-
-
-    let fCInt16 i = Value ((fromIntegral i  :+ fromIntegral (i + i)))
-        fCInt16 :: Int -> Value (Complex Int16)
-        f2C :: Num a
-            => Value (Complex a) -> Value (Complex a) -> Value (Complex a)
-        f2C (Value (ra :+ ia)) (Value (rb :+ ib)) = Value ((ra+rb) :+ (ia+ib))
-        f2C NoData             (Value a)          = Value a
-        f2C (Value a)          NoData             = Value a
-        f2C NoData             NoData             = NoData
-        zC :: Num a => Value (Complex a)
-        zC = Value (0 :+ 0)
-    it_can_write_and_read_block fCInt16
-    it_can_write_and_read_band  fCInt16
-    it_can_foldl                fCInt16 f2C zC
-
-    let fCInt32 i = Value ((fromIntegral i  :+ fromIntegral (i + i)))
-        fCInt32 :: Int -> Value (Complex Int32)
-    it_can_write_and_read_block fCInt32
-    it_can_write_and_read_band  fCInt32
-    it_can_foldl                fCInt32 f2C zC
-
-    let fCFloat i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
-        fCFloat :: Int -> Value (Complex Float)
-    it_can_write_and_read_block fCFloat
-    it_can_write_and_read_band  fCFloat
-    it_can_foldl                fCFloat f2C zC
-
-    let fCDouble i = Value ((fromIntegral i * 1.1) :+ (fromIntegral i * 2.2))
-        fCDouble :: Int -> Value (Complex Double)
-    it_can_write_and_read_block fCDouble
-    it_can_write_and_read_band  fCDouble
-    it_can_foldl                fCDouble f2C zC
+      ioSpec GDT_Byte      genIntegral
+      ioSpec GDT_UInt16    genIntegral
+      ioSpec GDT_UInt32    genIntegral
+      ioSpec GDT_Int16     genIntegral
+      ioSpec GDT_Int32     genIntegral
+      ioSpec GDT_Float32   genReal
+      ioSpec GDT_Float64   genReal
+      ioSpec GDT_CInt16    genCIntegral
+      ioSpec GDT_CInt32    genCIntegral
+      ioSpec GDT_CFloat32  genCReal
+      ioSpec GDT_CFloat64  genCReal
 
   describe "Geotransform" $ do
 
@@ -360,29 +305,29 @@ spec = setupAndTeardown $ do
       prop "pixel (0,0) is upper left corner" $ \(env, size) ->
         let gt = northUpGeotransform sz env
             sz = fmap getPositive size
-            ul = XY (px (envelopeMin env)) (py (envelopeMax env))
+            ul = pFst (envelopeMin env) :+: pSnd (envelopeMax env)
         in gt |$| 0 ~== ul
 
       prop "pixel (sizeX,0) upper right corner" $ \(env, size) ->
         let gt  = northUpGeotransform sz env
             sz  = fmap getPositive size
             sz' = fmap fromIntegral sz
-            ur  = XY (px (envelopeMax env)) (py (envelopeMax env))
-        in gt |$| (XY (px sz') 0) ~== ur
+            ur  = pFst (envelopeMax env) :+: pSnd (envelopeMax env)
+        in gt |$| (pFst sz' :+: 0) ~== ur
 
       prop "pixel (0,sizeY) upper right corner" $ \(env, size) ->
         let gt  = northUpGeotransform sz env
             sz  = fmap getPositive size
             sz' = fmap fromIntegral sz
-            ll  = XY (px (envelopeMin env)) (py (envelopeMin env))
-        in gt |$| (XY 0 (py sz')) ~== ll
+            ll  = pFst (envelopeMin env) :+: pSnd (envelopeMin env)
+        in gt |$| (0  :+: pSnd sz') ~== ll
 
       prop "pixel (sizeX,sizeY) lower right corner" $ \(env, size) ->
         let gt  = northUpGeotransform sz env
             sz  = fmap getPositive size
             sz' = fmap fromIntegral sz
-            lr  = XY (px (envelopeMax env)) (py (envelopeMin env))
-        in gt |$| (XY (px sz') (py sz')) ~== lr
+            lr  = pFst (envelopeMax env) :+: pSnd (envelopeMin env)
+        in gt |$| (pFst sz' :+: pSnd sz') ~== lr
 
 
   describe "metadata stuff" $ do
@@ -466,19 +411,28 @@ spec = setupAndTeardown $ do
         desc <- description b
         desc `shouldBe` someDesc
 
+
+ioSpec
+  :: (GDALType (HsType d), Num (HsType d))
+  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+ioSpec dt f = do
+  it_can_write_and_read_block dt f
+  it_can_write_and_read_band dt f
+  it_can_foldl dt f
+
 it_can_write_and_read_band
-  :: forall a. (Eq a , GDALType a, Show a, Typeable a)
-  => (Int -> Value a) -> SpecWith (Arg (IO ()))
-it_can_write_and_read_band f = do
-  let typeName = show (typeOf (undefined :: a))
+  :: (GDALType (HsType d), Num (HsType d))
+  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+it_can_write_and_read_band dt f = do
+  let typeName = show dt
       name = "can write and read band " ++ typeName
-      sz = XY 300 307
+      sz = 300 :+: 307
       len = sizeLen sz
 
   describe name $ do
 
     it "all valid values" $ do
-      ds <- createMem sz 1 (dataType (undefined :: a)) []
+      ds <- createMem sz 1 dt []
       band <- getBand 1 ds
       let vec = U.generate len f
       writeBand band (allBand band) (bandSize band) vec
@@ -488,7 +442,7 @@ it_can_write_and_read_band f = do
       vec `shouldBe` vec2
 
     it "with nodata value" $ do
-      ds <- createMem sz 1 (dataType (undefined :: a)) []
+      ds <- createMem sz 1 dt []
       band <- getBand 1 ds
       let vec = U.generate len (\i ->
                   if i > len`div`2 && f i /= nd
@@ -504,7 +458,7 @@ it_can_write_and_read_band f = do
 
     withDir "with mask" $ \d -> do
       let path = joinPath [d, "test.tif"]
-      ds <- create "GTIFF" path sz 1 (dataType (undefined :: a)) []
+      ds <- create "GTIFF" path sz 1 dt []
       band <- getBand 1 ds
       let vec = U.generate len (\i -> if i < len`div`2 then f i else NoData)
       createBandMask band MaskPerBand
@@ -516,18 +470,18 @@ it_can_write_and_read_band f = do
 
 
 it_can_write_and_read_block
-  :: forall a. (Eq a , GDALType a, Show a, Typeable a)
-  => (Int -> Value a) -> SpecWith (Arg (IO ()))
-it_can_write_and_read_block f = forM_ [[], [("TILED","YES")]] $ \options -> do
-  let typeName = show (typeOf (undefined :: a))
+  :: (GDALType (HsType d), Num (HsType d))
+  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+it_can_write_and_read_block dt f = forM_ optionsList $ \options -> do
+  let typeName = show dt
       name = "can write and read block "++typeName++" (" ++ show options ++")"
-      sz = XY 300 307
+      sz = 300 :+: 307
 
   describe name $ do
 
     withDir "all valid values" $ \d -> do
       let path = joinPath [d, "test.tif"]
-      ds <- create "GTIFF" path sz 1 (dataType (undefined :: a)) options
+      ds <- create "GTIFF" path sz 1 dt options
       band <- getBand 1 ds
       let vec = U.generate (bandBlockLen band) f
       writeBandBlock band 0 vec
@@ -538,7 +492,7 @@ it_can_write_and_read_block f = forM_ [[], [("TILED","YES")]] $ \options -> do
 
     withDir "with nodata value" $ \d -> do
       let path = joinPath [d, "test.tif"]
-      ds <- create "GTIFF" path sz 1 (dataType (undefined :: a)) options
+      ds <- create "GTIFF" path sz 1 dt options
       band <- getBand 1 ds
       let vec = U.generate len (\i ->
                   if i > len`div`2 && f i /= nd
@@ -555,7 +509,7 @@ it_can_write_and_read_block f = forM_ [[], [("TILED","YES")]] $ \options -> do
 
     withDir "with mask" $ \d -> do
       let path = joinPath [d, "test.tif"]
-      ds <- create "GTIFF" path sz 1 (dataType (undefined :: a)) options
+      ds <- create "GTIFF" path sz 1 dt options
       band <- getBand 1 ds
       let vec = U.generate len (\i -> if i > len`div`2 then f i else NoData)
           len = bandBlockLen band
@@ -565,55 +519,55 @@ it_can_write_and_read_block f = forM_ [[], [("TILED","YES")]] $ \options -> do
       vec2 <- readBandBlock band 0
       U.length vec `shouldBe` U.length vec2
       vec `shouldBe` vec2
+  where optionsList = [[], [("TILED","YES")]]
 
 it_can_foldl
-  :: forall a. (Eq a, GDALType a, Show a, Typeable a)
-  => (Int -> Value a) -> (Value a -> Value a -> Value a) -> Value a
-  -> SpecWith (Arg (IO ()))
-it_can_foldl f f2 z = forM_ [[], [("TILED","YES")]] $ \options -> do
+  :: forall d. (GDALType (HsType d), Num (HsType d))
+  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+it_can_foldl dt f = forM_ [[], [("TILED","YES")]] $ \options -> do
 
   let name = "can foldl with options " ++ show options ++ " " ++ typeName
-      typeName = show (typeOf (undefined :: a))
+      typeName = show dt
 
   describe name $ do
 
     withDir "all valid values" $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
-          sz = XY 200 205
-      ds <- create "GTIFF" p sz 1 (dataType (undefined :: a)) options
+          sz = 200 :+: 205
+      ds <- create "GTIFF" p sz 1 dt options
       let vec = U.generate (sizeLen sz) f
       band <- getBand 1 ds
       writeBand band (allBand band) sz vec
       flushCache ds
-      value <- GDAL.foldl' f2 z band
-      value `shouldBe` U.foldl' f2 z vec
+      value <- GDAL.foldl' (+) 0 band
+      value `shouldBe` U.foldl' (+) 0 vec
 
     withDir "with nodata value" $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
-          sz = XY 200 205
-          Value nodata = z
-      ds <- create "GTIFF" p sz 1 (dataType (undefined :: a)) options
+          sz = 200 :+: 205
+          Value nodata = 0
+      ds <- create "GTIFF" p sz 1 dt options
       let vec = U.imap (\i v -> if i>(sizeLen sz`div`2) then v else NoData)
                        (U.generate (sizeLen sz) f)
       band <- getBand 1 ds
       setBandNodataValue band nodata
       writeBand band (allBand band) sz vec
       flushCache ds
-      value <- GDAL.foldl' f2 z band
-      value `shouldBe` U.foldl' f2 z vec
+      value <- GDAL.foldl' (+) 0 band
+      value `shouldBe` U.foldl' (+) 0 vec
 
     withDir "with mask" $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
-          sz = XY 200 205
-      ds <- create "GTIFF" p sz 1 (dataType (undefined :: a)) options
+          sz = 200 :+: 205
+      ds <- create "GTIFF" p sz 1 dt options
       let vec = U.imap (\i v -> if i>(sizeLen sz`div`2) then v else NoData)
                        (U.generate (sizeLen sz) f)
       band <- getBand 1 ds
       createBandMask band MaskPerBand
       writeBand band (allBand band) sz vec
       flushCache ds
-      value <- GDAL.foldl' f2 z band
-      value `shouldBe` U.foldl' f2 z vec
+      value <- GDAL.foldl' (+) 0 band
+      value `shouldBe` U.foldl' (+) 0 vec
 
 infix 4 ~==
 (~==) :: (Fractional a, Ord a) => a -> a -> Bool

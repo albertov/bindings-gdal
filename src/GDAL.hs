@@ -3,7 +3,10 @@ module GDAL (
   , GDALType
   , ApproxOK (..)
   , DataType (..)
-  , XY (..)
+  , HsType
+  , Pair (..)
+  , pFst
+  , pSnd
   , Envelope (..)
   , Size
   , BlockIx

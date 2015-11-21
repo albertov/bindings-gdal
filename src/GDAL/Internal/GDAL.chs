@@ -32,9 +32,6 @@ module GDAL.Internal.GDAL (
   , Band
   , RasterBandH (..)
   , MaskType (..)
-  , GDALType (..)
-  , DataType (..)
-  , dataType
 
   , northUpGeotransform
   , gcpGeotransform
@@ -113,6 +110,8 @@ module GDAL.Internal.GDAL (
   , version
   , newDatasetHandle
   , openDatasetCount
+
+  , module GDAL.Internal.DataType
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
@@ -184,7 +183,6 @@ data GDALRasterException
   | InvalidBlockSize  !Int
   | InvalidDriverOptions
   | UnknownRasterDataType
-  | UnsupportedRasterDataType !DataType
   | NullDataset
   | NullBand
   | UnknownDriver !ByteString
@@ -238,21 +236,23 @@ nullBandH = RasterBandH nullPtr
 
 deriving instance Eq RasterBandH
 
-newtype Band s a (t::AccessMode) = Band (RasterBandH, DataType)
+newtype Band s a (t::AccessMode) = Band (RasterBandH, DataTypeK)
 
 unBand :: Band s a t -> RasterBandH
 unBand (Band (p,_)) = p
 {-# INLINE unBand #-}
 
-bandDataType :: Band s a t -> DataType
+bandDataType :: Band s a t -> DataTypeK
 bandDataType (Band (_,t)) = t
 {-# INLINE bandDataType #-}
 
-bandTypedAs :: Band s a t -> a -> Band s a t
+bandTypedAs :: Band s (HsType d) t -> DataType d -> Band s (HsType d) t
 bandTypedAs = const . id
+{-# INLINE bandTypedAs #-}
 
-bandCoercedTo :: Band s a t -> b -> Band s b t
+bandCoercedTo :: Band s a t -> DataType d -> Band s (HsType d) t
 bandCoercedTo = const . coerce
+{-# INLINE bandCoercedTo #-}
 
 instance MajorObject (Band s a) t where
   majorObject b =
@@ -287,20 +287,18 @@ validateCreationOptions d o = do
   when (not valid) (throwBindingException InvalidDriverOptions)
 
 create
-  :: Driver -> String -> Size -> Int -> DataType -> OptionList
+  :: Driver -> String -> Size -> Int -> DataType d -> OptionList
   -> GDAL s (Dataset s ReadWrite)
-create drv path (XY nx ny) bands dtype  options
-  | dtype == GDT_Unknown = throwBindingException UnknownRasterDataType
-  | otherwise
-  = newDatasetHandle $ withCString path $ \path' -> do
-      let nx'    = fromIntegral nx
-          ny'    = fromIntegral ny
-          bands' = fromIntegral bands
-          dtype' = fromEnumC dtype
-      d <- driverByName drv
-      withOptionList options $ \opts -> do
-        validateCreationOptions d opts
-        {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' opts
+create drv path (nx :+: ny) bands dtype  options =
+  newDatasetHandle $ withCString path $ \path' -> do
+    let nx'    = fromIntegral nx
+        ny'    = fromIntegral ny
+        bands' = fromIntegral bands
+        dtype' = fromEnumC dtype
+    d <- driverByName drv
+    withOptionList options $ \opts -> do
+      validateCreationOptions d opts
+      {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' opts
 
 delete :: Driver -> String -> GDAL s ()
 delete driver path =
@@ -368,7 +366,7 @@ newDatasetHandle act =
       when (refCount<=0) ({#call GDALClose as ^#} ds)
 
 createMem
-  :: Size -> Int -> DataType -> OptionList -> GDAL s (Dataset s ReadWrite)
+  :: Size -> Int -> DataType d -> OptionList -> GDAL s (Dataset s ReadWrite)
 createMem = create "Mem" ""
 
 flushCache :: forall s. RWDataset s -> GDAL s ()
@@ -384,8 +382,8 @@ datasetDriver ds =
 datasetSize :: Dataset s t -> Size
 datasetSize ds =
   fmap fromIntegral $
-     XY ({#call pure unsafe GetRasterXSize as ^#} (unDataset ds))
-        ({#call pure unsafe GetRasterYSize as ^#} (unDataset ds))
+        ({#call pure unsafe GetRasterXSize as ^#} (unDataset ds))
+    :+: ({#call pure unsafe GetRasterYSize as ^#} (unDataset ds))
 
 datasetFileList :: Dataset s t -> GDAL s [Text]
 datasetFileList =
@@ -481,12 +479,12 @@ data Geotransform
 northUpGeotransform :: Size -> Envelope Double -> Geotransform
 northUpGeotransform size envelope =
   Geotransform {
-      gtXOff   = px (envelopeMin envelope)
-    , gtXDelta = px (envelopeSize envelope / fmap fromIntegral size)
+      gtXOff   = pFst (envelopeMin envelope)
+    , gtXDelta = pFst (envelopeSize envelope / fmap fromIntegral size)
     , gtXRot   = 0
-    , gtYOff   = py (envelopeMax envelope)
+    , gtYOff   = pSnd (envelopeMax envelope)
     , gtYRot   = 0
-    , gtYDelta = negate (py (envelopeSize envelope / fmap fromIntegral size))
+    , gtYDelta = negate (pSnd (envelopeSize envelope / fmap fromIntegral size))
   }
 
 gcpGeotransform :: [GroundControlPoint] -> ApproxOK -> Maybe Geotransform
@@ -502,14 +500,13 @@ gcpGeotransform gcps approxOk =
              (fromEnumC approxOk)
     if ret then liftM Just (peek pGt) else return Nothing
 
-applyGeotransform :: Geotransform -> XY Double -> XY Double
-applyGeotransform Geotransform{..} (XY x y) =
-  XY (gtXOff + gtXDelta*x + gtXRot   * y)
-     (gtYOff + gtYRot  *x + gtYDelta * y)
+applyGeotransform :: Geotransform -> Pair Double -> Pair Double
+applyGeotransform Geotransform{..} (x :+: y) =
+  (gtXOff + gtXDelta*x + gtXRot * y) :+: (gtYOff + gtYRot  *x + gtYDelta * y)
 {-# INLINE applyGeotransform #-}
 
 infixr 5 |$|
-(|$|) :: Geotransform -> XY Double -> XY Double
+(|$|) :: Geotransform -> Pair Double -> Pair Double
 (|$|) = applyGeotransform
 
 invertGeotransform :: Geotransform -> Maybe Geotransform
@@ -602,7 +599,7 @@ getBand b ds = liftIO $ do
       | otherwise      = Nothing
 
 isNativeBand :: forall s a t. GDALType a => Band s a t -> Bool
-isNativeBand = (==dataType (undefined ::  a)) . bandDataType
+isNativeBand = (==hsDataTypeK (undefined ::  a)) . bandDataType
 {-# INLINE isNativeBand #-}
 
 addBand
@@ -622,23 +619,23 @@ addBand ds options = do
 bandBlockSize :: (Band s a t) -> Size
 bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    {#call unsafe GetBlockSize as ^#} (unBand band) xPtr yPtr
-   liftM (fmap fromIntegral) (liftM2 XY (peek xPtr) (peek yPtr))
+   liftM (fmap fromIntegral) (liftM2 (:+:) (peek xPtr) (peek yPtr))
 {-# NOINLINE bandBlockSize #-}
 
 bandBlockLen :: Band s a t -> Int
-bandBlockLen = (\(XY x y) -> x*y) . bandBlockSize
+bandBlockLen = (\(x :+: y) -> x*y) . bandBlockSize
 
 bandSize :: Band s a t -> Size
 bandSize band =
   fmap fromIntegral $
-    XY ({#call pure unsafe GetRasterBandXSize as ^#} (unBand band))
-       ({#call pure unsafe GetRasterBandYSize as ^#} (unBand band))
+        ({#call pure unsafe GetRasterBandXSize as ^#} (unBand band))
+    :+: ({#call pure unsafe GetRasterBandYSize as ^#} (unBand band))
 {-# NOINLINE bandSize #-}
 
 allBand :: Band s a t -> Envelope Int
 allBand = Envelope (pure 0) . bandSize
 
-bandBlockCount :: Band s a t -> XY Int
+bandBlockCount :: Band s a t -> Pair Int
 bandBlockCount b = fmap ceiling $ liftA2 ((/) :: Double -> Double -> Double)
                      (fmap fromIntegral (bandSize b))
                      (fmap fromIntegral (bandBlockSize b))
@@ -674,7 +671,7 @@ readBand :: forall s t a. GDALType a
   -> Envelope Int
   -> Size
   -> GDAL s (U.Vector (Value a))
-readBand band win (XY bx by) =
+readBand band win (bx :+: by) =
   bandMaskType band >>= \case
     MaskNoData ->
       liftM2 mkValueUVector (noDataOrFail band) (read_ band)
@@ -683,8 +680,8 @@ readBand band win (XY bx by) =
     _ ->
       liftM2 mkMaskedValueUVector (read_ =<< bandMask band) (read_ band)
   where
-    XY sx sy     = envelopeSize win
-    XY xoff yoff = envelopeMin win
+    sx :+: sy     = envelopeSize win
+    xoff :+: yoff = envelopeMin win
     read_ :: forall a'. GDALType a' => Band s a' t -> GDAL s (St.Vector a')
     read_ b = liftIO $ do
       vec <- M.new (bx*by)
@@ -745,7 +742,7 @@ noDataOrFail = liftM (fromMaybe err) . bandNodataValue
 
 bandMask :: Band s a t -> GDAL s (Band s Word8 t)
 bandMask =
-  liftIO . liftM (\p -> Band (p,GDT_Byte)) . {#call GetMaskBand as ^#}
+  liftIO . liftM (\p -> Band (p,GByte)) . {#call GetMaskBand as ^#}
          . unBand
 
 data MaskType
@@ -784,13 +781,13 @@ writeBand
   -> Size
   -> U.Vector (Value a)
   -> GDAL s ()
-writeBand band win sz@(XY bx by) = writeMasked band write write
+writeBand band win sz@(bx :+: by) = writeMasked band write write
   where
     write :: forall a'. GDALType a'
           => RWBand s a' -> St.Vector a' -> GDAL s ()
     write band' vec = do
-      let XY sx sy     = envelopeSize win
-          XY xoff yoff = envelopeMin win
+      let sx :+: sy     = envelopeSize win
+          xoff :+: yoff = envelopeMin win
       if sizeLen sz /= G.length vec
         then throwBindingException (InvalidRasterSize sz)
         else liftIO $
@@ -834,18 +831,18 @@ ifoldl'
 ifoldl' f z band =
   runConduit (allBlocks band =$= unsafeBlockConduit band =$= CL.fold folder z)
   where
-    !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
-    !(XY nx ny) = bandBlockCount band
-    !(XY sx sy) = bandBlockSize band
+    !(mx :+: my) = liftA2 mod (bandSize band) (bandBlockSize band)
+    !(nx :+: ny) = bandBlockCount band
+    !(sx :+: sy) = bandBlockSize band
     {-# INLINE folder #-}
-    folder !acc !(!(XY iB jB), !vec) = go SPEC 0 0 acc
+    folder !acc !(!(iB :+: jB), !vec) = go SPEC 0 0 acc
       where
         go !_ !i !j !acc'
           | i   < stopx = go SPEC (i+1) j
                           (f acc' ix (vec `G.unsafeIndex` (j*sx+i)))
           | j+1 < stopy = go SPEC 0 (j+1) acc'
           | otherwise   = acc'
-          where ix = XY (iB*sx+i) (jB*sy+j)
+          where ix = iB*sx+i :+: jB*sy+j
         !stopx
           | mx /= 0 && iB==nx-1 = mx
           | otherwise           = sx
@@ -867,7 +864,7 @@ writeBandBlock band blockIx uvec = do
       | dtBand == dtBuf = writeNative
       | otherwise       = writeTranslated
     dtBand = bandDataType (band)
-    dtBuf  = dataType (undefined :: a)
+    dtBuf  = hsDataTypeK (undefined :: a)
     len = G.length uvec
     bi  = fmap fromIntegral blockIx
 
@@ -877,8 +874,8 @@ writeBandBlock band blockIx uvec = do
       checkCPLError "WriteBlock" $
       {#call WriteBlock as ^#}
         (unBand band)
-        (px bi)
-        (py bi)
+        (pFst bi)
+        (pSnd bi)
         (castPtr pBuf)
 
     writeTranslated _ buf = liftIO $
@@ -895,8 +892,8 @@ writeBandBlock band blockIx uvec = do
         checkCPLError "WriteBlock" $
           {#call WriteBlock as ^#}
             (unBand band)
-            (px bi)
-            (py bi)
+            (pFst bi)
+            (pSnd bi)
             pWork
 
     bs  = fmap fromIntegral (bandBlockSize band)
@@ -911,16 +908,16 @@ writeBandBlock band blockIx uvec = do
         {#call RasterIO as ^#}
           (unBand mBand)
           (fromEnumC GF_Write)
-          (px off)
-          (py off)
-          (px win)
-          (py win)
+          (pFst off)
+          (pSnd off)
+          (pFst win)
+          (pSnd win)
           (castPtr pBuf)
-          (px win)
-          (py win)
-          (fromEnumC GDT_Byte)
+          (pFst win)
+          (pSnd win)
+          (fromEnumC GByte)
           0
-          (px bs * fromIntegral (sizeOfDataType GDT_Byte))
+          (pFst bs * fromIntegral (sizeOfDataType GByte))
 {-# INLINE writeBandBlock #-}
 
 readBandBlock
@@ -932,9 +929,9 @@ readBandBlock band blockIx = liftM (snd . fromJust) $ runConduit $
 
 
 allBlocks :: Monad m => Band s a t -> Producer m BlockIx
-allBlocks band = CL.sourceList [XY x y | y <- [0..ny-1], x <- [0..nx-1]]
+allBlocks band = CL.sourceList [x :+: y | y <- [0..ny-1], x <- [0..nx-1]]
   where
-    !(XY nx ny) = bandBlockCount band
+    !(nx :+: ny) = bandBlockCount band
 {-# INLINE allBlocks #-}
 
 blockConduit
@@ -975,7 +972,7 @@ unsafeBlockConduitM band = do
     isNative = dtBand == dtBuf
     len      = bandBlockLen band
     dtBand   = bandDataType band
-    dtBuf    = dataType (undefined :: a)
+    dtBuf    = hsDataTypeK (undefined :: a)
 
     {-# INLINE blockReader #-}
     blockReader vec buf extra
@@ -997,8 +994,8 @@ unsafeBlockConduitM band = do
       checkCPLError "ReadBlock" $
       {#call ReadBlock as ^#}
         (unBand band)
-        (fromIntegral (px ix))
-        (fromIntegral (py ix))
+        (fromIntegral (pFst ix))
+        (fromIntegral (pSnd ix))
         (castPtr pBuf)
 
     {-# INLINE translateBlock #-}
@@ -1022,16 +1019,16 @@ unsafeBlockConduitM band = do
       {#call RasterIO as ^#}
         (unBand mask)
         (fromEnumC GF_Read)
-        (px off)
-        (py off)
-        (px win)
-        (py win)
+        (pFst off)
+        (pSnd off)
+        (pFst win)
+        (pSnd win)
         (castPtr pMask)
-        (px win)
-        (py win)
-        (fromEnumC GDT_Byte)
+        (pFst win)
+        (pSnd win)
+        (fromEnumC GByte)
         0
-        (px bs)
+        (pFst bs)
       where
         bi  = fmap fromIntegral ix
         off = bi * bs
@@ -1106,7 +1103,8 @@ setDescription val =
 
 fillBand :: GDALType a => Value a -> RWBand s a -> GDAL s ()
 fillBand v band =
-  mapM_ (flip (writeBandBlock band) vec) [XY i j | j<-[0..ny-1], i<-[0..nx-1]]
+  mapM_ (flip (writeBandBlock band) vec)
+        [i :+: j | j<-[0..ny-1], i<-[0..nx-1]]
   where
-    XY nx ny = bandBlockCount band
+    nx :+: ny = bandBlockCount band
     vec      = G.replicate (bandBlockLen band) v

@@ -33,7 +33,7 @@ import Foreign.C.Types (CChar(..), CDouble(..))
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (Storable(..))
 
-import GDAL.Internal.Types (XY(..))
+import GDAL.Internal.Types (Pair(..), pFst, pSnd)
 
 type GroundControlPointPtr = Ptr GroundControlPoint
 {#pointer *GDAL_GCP as GroundControlPointPtr nocode#}
@@ -42,15 +42,15 @@ data GroundControlPoint =
   GCP {
     gcpId    :: ByteString
   , gcpInfo  :: ByteString
-  , gcpPixel :: !(XY Double)
-  , gcpPoint :: !(XY Double)
+  , gcpPixel :: !(Pair Double)
+  , gcpPoint :: !(Pair Double)
   , gcpElev  :: !Double
   } deriving (Eq, Show)
 
 -- So the unsafe Storable instance doesn't escape the module
 newtype GroundControlPointInternal = GCPI GroundControlPoint
 
-gcp :: ByteString -> XY Double -> XY Double -> GroundControlPoint
+gcp :: ByteString -> Pair Double -> Pair Double -> GroundControlPoint
 gcp id_ px pt = GCP id_ empty px pt 0
 
 withGCPArrayLen
@@ -86,16 +86,16 @@ instance Storable GroundControlPointInternal where
       pokeElemOff ptr0 len 0
       copyArray ptr0 pInfo len
       {#set GDAL_GCP->pszInfo#} p ptr0
-    {#set GDAL_GCP->dfGCPPixel#} p (realToFrac (px gcpPixel))
-    {#set GDAL_GCP->dfGCPLine#} p (realToFrac (py gcpPixel))
-    {#set GDAL_GCP->dfGCPX#} p (realToFrac (px gcpPoint))
-    {#set GDAL_GCP->dfGCPY#} p (realToFrac (py gcpPoint))
+    {#set GDAL_GCP->dfGCPPixel#} p (realToFrac (pFst gcpPixel))
+    {#set GDAL_GCP->dfGCPLine#} p (realToFrac (pSnd gcpPixel))
+    {#set GDAL_GCP->dfGCPX#} p (realToFrac (pFst gcpPoint))
+    {#set GDAL_GCP->dfGCPY#} p (realToFrac (pSnd gcpPoint))
     {#set GDAL_GCP->dfGCPZ#} p (realToFrac gcpElev)
   peek p = liftM GCPI $
     GCP <$> ({#get GDAL_GCP->pszId#}   p >>= packCString)
         <*> ({#get GDAL_GCP->pszInfo#} p >>= packCString)
-        <*> (XY <$> liftM realToFrac ({#get GDAL_GCP->dfGCPPixel#} p)
-                <*> liftM realToFrac ({#get GDAL_GCP->dfGCPLine#} p))
-       <*> (XY <$> liftM realToFrac ({#get GDAL_GCP->dfGCPX#} p)
-               <*> liftM realToFrac ({#get GDAL_GCP->dfGCPY#} p))
-       <*> liftM realToFrac ({#get GDAL_GCP->dfGCPZ#} p)
+        <*> ((:+:) <$> liftM realToFrac ({#get GDAL_GCP->dfGCPPixel#} p)
+                   <*> liftM realToFrac ({#get GDAL_GCP->dfGCPLine#} p))
+        <*> ((:+:) <$> liftM realToFrac ({#get GDAL_GCP->dfGCPX#} p)
+                   <*> liftM realToFrac ({#get GDAL_GCP->dfGCPY#} p))
+        <*> liftM realToFrac ({#get GDAL_GCP->dfGCPZ#} p)
