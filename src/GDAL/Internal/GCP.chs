@@ -19,7 +19,7 @@ import Data.Coerce (coerce)
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Exception (bracket)
-import Control.Monad (liftM, mapM_)
+import Control.Monad (liftM)
 
 import Foreign.Marshal.Alloc (free)
 import Foreign.Marshal.Array (

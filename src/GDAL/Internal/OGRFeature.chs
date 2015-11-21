@@ -56,7 +56,12 @@ module GDAL.Internal.OGRFeature (
 {#context lib = "gdal" prefix = "OGR" #}
 
 import Control.Applicative ((<$>), (<*>), pure)
-import Control.Monad (liftM, liftM2, (>=>), (<=<), when, void, join)
+import Control.Monad (liftM, liftM2, (>=>), when, void)
+
+#if SUPPORTS_MULTI_GEOM_FIELDS
+import Control.Monad ((<=<), join)
+#endif
+
 import Control.Monad.Catch (bracket)
 
 import Data.ByteString (ByteString)

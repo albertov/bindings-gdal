@@ -15,7 +15,6 @@ module GDAL.Internal.OGRError (
 ) where
 
 import Control.Exception (Exception(..), SomeException, fromException)
-import Control.Monad (liftM, when)
 
 import Data.ByteString (ByteString)
 import Data.Text (Text)

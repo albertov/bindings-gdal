@@ -3,7 +3,6 @@
 module Main (main) where
 
 import Control.Monad (forM_)
-import Control.Monad.IO.Class (liftIO)
 
 import Data.Conduit
 import Data.Monoid ((<>))

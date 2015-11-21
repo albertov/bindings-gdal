@@ -9,7 +9,7 @@ import qualified Data.Vector.Unboxed as U
 
 import GDAL
 import OSR
-import OGR (Envelope(..), geomFromWkt)
+import OGR (geomFromWkt)
 import GDAL.Warper
 import GDAL.Algorithms
 

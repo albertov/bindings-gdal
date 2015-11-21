@@ -42,7 +42,6 @@ import Control.Monad.IO.Class (MonadIO(..))
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Typeable (Typeable, cast)
-import Data.Monoid (mconcat)
 
 import Foreign.C.Types (CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, nullPtr)

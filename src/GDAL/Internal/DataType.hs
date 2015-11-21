@@ -19,32 +19,24 @@ module GDAL.Internal.DataType (
   , dataType
 ) where
 
-#include "gdal.h"
-
-import GDAL.Internal.Util (fromEnumC)
-
+import GDAL.Internal.DataType.Internal (DataType(..))
 import Data.Word
 import Data.Int
-import Data.Complex
 
 import Foreign.Storable (Storable(..))
-import Foreign.C.String (peekCString)
-import Foreign.C.Types
-import Foreign.Ptr
+import Foreign.C.Types (CDouble(..))
 
-import System.IO.Unsafe (unsafePerformIO)
+#if MIN_VERSION_base(4,8,0)
+import Data.Complex (Complex((:+)), realPart)
+#else
+import Data.Complex (Complex((:+)))
+import Foreign.Ptr (castPtr)
 
+realPart :: Complex a -> a
+realPart (a :+ _) = a
+{-# INLINE realPart #-}
+#endif
 
-------------------------------------------------------------------------------
--- DataType
-------------------------------------------------------------------------------
-
-{#enum GDALDataType as DataType {} omit (GDT_TypeCount)
-  deriving (Eq,Ord,Bounded) #}
-
-instance Show DataType where
-  show d = unsafePerformIO $
-    {#call unsafe GDALGetDataTypeName as ^#} (fromEnumC d) >>= peekCString
 
 data GDataType :: DataType -> * where
   GByte     :: GDataType 'GDT_Byte
@@ -227,3 +219,18 @@ instance GDALType (Complex Double) where
   {-# INLINE dataType' #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
+
+#if !MIN_VERSION_base(4,8,0)
+instance Storable a => Storable (Complex a) where
+  sizeOf a       = 2 * sizeOf (realPart a)
+  alignment a    = alignment (realPart a)
+  peek p           = do
+                      q <- return $ castPtr p
+                      r <- peek q
+                      i <- peekElemOff q 1
+                      return (r :+ i)
+  poke p (r :+ i)  = do
+                      q <-return $  (castPtr p)
+                      poke q r
+                      pokeElemOff q 1 i
+#endif

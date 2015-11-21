@@ -47,7 +47,6 @@ module GDAL.Internal.OSR (
 
 {# context lib = "gdal" prefix = "OSR" #}
 
-import Control.Applicative ((<$>), (<*>))
 import Control.Exception (try, throw, mask_)
 import Control.Monad (liftM, (>=>), when, void)
 

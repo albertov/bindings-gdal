@@ -37,7 +37,7 @@ module GDAL.Internal.Algorithms (
 
 {#context lib = "gdal" prefix = "GDAL" #}
 
-import Control.Applicative ((<$>), (<*>), pure)
+import Control.Applicative ((<$>), (<*>))
 import Control.Monad.Catch (
     Exception(..)
   , bracket
@@ -46,7 +46,7 @@ import Control.Monad.Catch (
   , onException
   , try
   )
-import Control.Monad (liftM, mapM_, when)
+import Control.Monad (liftM, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
 import Data.Maybe (isJust)

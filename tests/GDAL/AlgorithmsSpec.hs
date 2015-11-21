@@ -12,7 +12,7 @@ import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Storable as St
 
 import Control.Applicative ((<$>), (<*>))
-import Control.Monad (liftM, sequence)
+import Control.Monad (liftM)
 
 import OGR
 import OSR

@@ -26,7 +26,7 @@ module GDAL.Internal.Types.Value (
   , toGVecWithMask
 ) where
 
-import Control.Applicative (Applicative(..), (<$>), liftA2)
+import Control.Applicative (Applicative(..))
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (liftM, liftM2)
 

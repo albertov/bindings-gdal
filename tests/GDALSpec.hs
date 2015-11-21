@@ -7,8 +7,6 @@
 module GDALSpec (main, spec) where
 
 import Control.Monad (void, liftM, forM_)
-import Control.Monad.IO.Class (MonadIO(liftIO))
-import Control.Exception (SomeException)
 
 import Data.Maybe (isNothing)
 import Data.Complex (Complex(..))
@@ -23,7 +21,6 @@ import System.FilePath (joinPath)
 
 import GDAL
 import OSR
-import OGR (Envelope(..))
 
 import Test.QuickCheck (getPositive)
 import Test.Hspec.QuickCheck (prop)
