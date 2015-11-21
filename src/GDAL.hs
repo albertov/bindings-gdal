@@ -99,9 +99,7 @@ module GDAL (
   , gcp
 
   , foldl'
-  , foldlM'
   , ifoldl'
-  , ifoldlM'
   , version
 
   , gcpGeotransform

@@ -104,9 +104,9 @@ module GDAL.Internal.GDAL (
   , setDescription
 
   , foldl'
-  , foldlM'
   , ifoldl'
-  , ifoldlM'
+  , blockConduit
+  , unsafeBlockConduit
 
   , unDataset
   , unBand
@@ -119,7 +119,7 @@ module GDAL.Internal.GDAL (
 
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.Exception (Exception(..))
-import Control.Monad (liftM, liftM2, when, void, (>=>))
+import Control.Monad (liftM, liftM2, when, (>=>))
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -838,7 +838,7 @@ ifoldl' f z band =
     !(XY nx ny) = bandBlockCount band
     !(XY sx sy) = bandBlockSize band
     {-# INLINE folder #-}
-    folder !acc (!(XY iB jB), !vec) = go SPEC 0 0 acc
+    folder !acc !(!(XY iB jB), !vec) = go SPEC 0 0 acc
       where
         go !_ !i !j !acc'
           | i   < stopx = go SPEC (i+1) j
@@ -854,38 +854,6 @@ ifoldl' f z band =
           | otherwise           = sy
 {-# INLINE ifoldl' #-}
 
-foldlM'
-  :: forall s t a b. GDALType a
-  => (b -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
-foldlM' f = ifoldlM' (\acc _ -> f acc)
-{-# INLINE foldlM' #-}
-
-ifoldlM'
-  :: forall s t a b. GDALType a
-  => (b -> BlockIx -> Value a -> GDAL s b) -> b -> Band s a t -> GDAL s b
-ifoldlM' f z band = runConduit $
-  allBlocks band =$= unsafeBlockConduitM band =$= CL.foldM folder z
-  where
-    !(XY mx my) = liftA2 mod (bandSize band) (bandBlockSize band)
-    !(XY nx ny) = bandBlockCount band
-    !(XY sx sy) = bandBlockSize band
-    {-# INLINE folder #-}
-    folder !acc (!(XY iB jB), !vec) = go SPEC 0 0 acc
-      where
-        go !_ !i !j !acc'
-          | i   < stopx = do
-             !v <- liftIO (M.unsafeRead vec (j*sx+i))
-             f acc' ix v >>= go SPEC (i+1) j
-          | j+1 < stopy = go SPEC 0 (j+1) acc'
-          | otherwise   = return acc'
-          where ix = XY (iB*sx+i) (jB*sy+j)
-        !stopx
-          | mx /= 0 && iB==nx-1 = mx
-          | otherwise           = sx
-        !stopy
-          | my /= 0 && jB==ny-1 = my
-          | otherwise           = sy
-{-# INLINE ifoldlM' #-}
 
 writeBandBlock
   :: forall s a. GDALType a
@@ -1026,7 +994,7 @@ unsafeBlockConduitM band = do
 
     {-# INLINE loadBlock #-}
     loadBlock ix pBuf = 
-      void $
+      checkCPLError "ReadBlock" $
       {#call ReadBlock as ^#}
         (unBand band)
         (fromIntegral (px ix))
