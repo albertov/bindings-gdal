@@ -4,6 +4,7 @@ module GDAL (
   , ApproxOK (..)
   , DataType (..)
   , HsType
+  , IsComplex
   , Pair (..)
   , pFst
   , pSnd
@@ -58,7 +59,7 @@ module GDAL (
   , createCopy
   , buildOverviews
 
-  , bandCoercedTo
+  , bandAs
 
   , datasetDriver
   , datasetSize
@@ -83,7 +84,6 @@ module GDAL (
   , setBandNodataValue
   , addBand
   , getBand
-  , isNativeBand
   , readBand
   , createBandMask
   , readBandBlock

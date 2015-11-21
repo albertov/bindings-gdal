@@ -31,7 +31,8 @@ spec :: Spec
 spec = setupAndTeardown $ do
 
   it "cannot open non-existent file" $ do
-    openReadOnly "foo.tif" GDT_Byte `shouldThrow` ((==OpenFailed) . gdalErrNum)
+    openReadOnly "foo.tif" GDT_Byte
+      `shouldThrow` ((==OpenFailed) . gdalErrNum)
 
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
@@ -66,8 +67,7 @@ spec = setupAndTeardown $ do
   withDir "can create and copy dataset" $ \tmpDir -> do
     let p  = joinPath [tmpDir, "test.tif"]
     ds <- createMem (100 :+: 100) 1 GDT_Int16 []
-    ds2 <- createCopy "GTIFF" p ds True [] Nothing
-    flushCache ds2
+    createCopy "GTIFF" p ds True [] Nothing >>= flushCache
     p `existsAndSizeIsGreaterThan` 0
 
   describe "progress function" $ do
@@ -93,19 +93,15 @@ spec = setupAndTeardown $ do
       let report pr m = do
             modifyIORef' msgsRef ((pr,m):)
             return Continue
-      ds2 <- createCopy "GTIFF" p ds True [] (Just report)
-      flushCache ds2
+      createCopy "GTIFF" p ds True [] (Just report) >>= flushCache
       p `existsAndSizeIsGreaterThan` 0
-      msgs <- liftIO (readIORef msgsRef)
-      msgs `shouldSatisfy` (not . null)
+      liftIO (readIORef msgsRef) >>= (`shouldSatisfy` (not . null))
 
-  it "can get band count" $ do
-    ds <- createMem (10 :+: 10) 5 GDT_Int16 []
-    datasetBandCount ds >>= (`shouldBe` 5)
+  it "can get band count" $
+    createMem 10 5 GDT_Int16 [] >>= datasetBandCount >>= (`shouldBe` 5)
 
-  it "can get existing raster band" $ do
-    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
-    void $ getBand 1 ds
+  it "can get existing raster band" $
+    void $ createMem (10 :+: 10) 1 GDT_Int16 [] >>= getBand 1
 
   it "cannot get non-existing raster band" $ do
     ds <- createMem (10 :+: 10) 1 GDT_Int16 []
@@ -114,7 +110,7 @@ spec = setupAndTeardown $ do
   it "can add raster band" $ do
     ds <- createMem (10 :+: 10) 1 GDT_Int16 []
     datasetBandCount ds >>= (`shouldBe` 1)
-    void $ addBand ds []
+    void $ addBand [] ds
     datasetBandCount ds >>= (`shouldBe` 2)
 
   describe "datasetGeotransform" $ do
@@ -122,7 +118,7 @@ spec = setupAndTeardown $ do
     it "can set and get" $ do
       ds <- createMem (10 :+: 10) 1 GDT_Int16 []
       let gt = Geotransform 5.0 4.0 3.0 2.0 1.0 0.0
-      setDatasetGeotransform ds gt
+      setDatasetGeotransform gt ds
       gt2 <- datasetGeotransform ds
       Just gt `shouldBe` gt2
 
@@ -137,7 +133,7 @@ spec = setupAndTeardown $ do
       ds <- createMem (10 :+: 10) 1 GDT_Int16 []
       let Right proj = srsFromProj4
                           "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
-      setDatasetProjection ds proj
+      setDatasetProjection proj ds
       proj2 <- datasetProjection ds
       Just proj `shouldBe` proj2
 
@@ -153,7 +149,7 @@ spec = setupAndTeardown $ do
       let Right proj = srsFromProj4
                           "+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs"
           gcps = [gcp "1" (0 :+: 0) (45 :+: 21)]
-      setDatasetGCPs ds gcps (Just proj)
+      setDatasetGCPs gcps (Just proj) ds
       (gcps2,proj2) <- datasetGCPs ds
       gcps2 `shouldBe` gcps
       Just proj `shouldBe` proj2
@@ -161,7 +157,7 @@ spec = setupAndTeardown $ do
     it "can set and get with no srs" $ do
       ds <- createMem (10 :+: 10) 1 GDT_Int16 []
       let gcps = [gcp "1" (0 :+: 0) (45 :+: 21)]
-      setDatasetGCPs ds gcps Nothing
+      setDatasetGCPs gcps Nothing ds
       (gcps2,proj2) <- datasetGCPs ds
       gcps2 `shouldBe` gcps
       proj2 `shouldSatisfy` isNothing
@@ -173,54 +169,45 @@ spec = setupAndTeardown $ do
       proj2 `shouldSatisfy` isNothing
 
   it "can set and get nodata value" $ do
-    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
-    b <- getBand 1 ds
-    nd <- bandNodataValue b
-    nd `shouldSatisfy` isNothing
+    b <- getBand 1 =<< createMem (10 :+: 10) 1 GDT_Int16 []
+    bandNodataValue b >>= (`shouldSatisfy` isNothing)
     let nodataValue = (-1)
-    setBandNodataValue b nodataValue
-    nodata2 <- bandNodataValue b
-    nodata2 `shouldBe` Just nodataValue
+    setBandNodataValue nodataValue b
+    bandNodataValue b >>= (`shouldBe` Just nodataValue)
 
-  it "can get bandBlockSize" $ do
-    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
-    b <- getBand 1 ds
-    bandBlockSize b `shouldBe` (10 :+: 1)
+  it "can get bandBlockSize" $
+    createMem (10 :+: 10) 1 GDT_Int16 []
+      >>= getBand 1 >>= (`shouldBe` (10 :+: 1)) . bandBlockSize
 
-  it "can get bandSize" $ do
-    ds <- createMem (10 :+: 10) 1 GDT_Int16 []
-    b <- getBand 1 ds
-    bandSize b `shouldBe` (10 :+: 10)
+  it "can get bandSize" $
+    createMem (10 :+: 10) 1 GDT_Int16 []
+      >>= getBand 1 >>= (`shouldBe` (10 :+: 10)) . bandSize
 
   describe "band and block IO" $ do
 
     it "readBandBlock converts type" $ do
-      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
-      band <- getBand 1 ds
+      band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
       let len = bandBlockLen band
           vec = U.generate len (Value . fromIntegral)
           bs  = bandBlockSize band
       writeBandBlock band 0 vec
-      vec2 <- readBand (band `bandCoercedTo` GDT_Float64) (Envelope 0 bs) bs
+      vec2 <- readBand (band `bandAs` GDT_Float64) (Envelope 0 bs) bs
       vec `shouldBe` U.map (fmap round) vec2
 
     it "writeBandBlock converts type" $ do
-      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
-      band <- getBand 1 ds
+      band <- createMem (100 :+: 100) 1 GDT_Int16 [] >>= getBand 1
       let len = bandBlockLen band
-          vec = U.generate len (Value . fromIntegral)
+          v   = U.generate len (Value . fromIntegral)
           bs  = bandBlockSize band
-      writeBandBlock (band `bandCoercedTo` GDT_Float64) 0 vec
-      vec2 <- readBand band (Envelope 0 bs) bs
-      vec2 `shouldBe` U.map (fmap round) vec
+      writeBandBlock (band `bandAs` GDT_Float64) 0 v
+      readBand band (Envelope 0 bs) bs >>= (`shouldBe` U.map (fmap round) v)
 
     it "can write and read band with automatic conversion" $ do
-      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
-      b <- getBand 1 ds
+      b <- createMem (100 :+: 100) 1 GDT_Int16 [] >>= getBand 1
       let vec = U.generate 10000 (Value . fromIntegral)
-      writeBand b (allBand b) (bandSize b) vec
-      vec2 <- readBand b (allBand b) (bandSize b)
-      vec `shouldBe` vec2
+          b'  = b `bandAs` GDT_Float64
+      writeBand b' (allBand b') (bandSize b') vec
+      readBand b' (allBand b') (bandSize b') >>= (`shouldBe` vec)
 
     describe "fillBand" $ do
 
@@ -237,30 +224,28 @@ spec = setupAndTeardown $ do
 
       it "can fill with NoData if setBandNodataValue" $ do
         band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
-        setBandNodataValue band (-999)
+        setBandNodataValue (-999) band
         fillBand NoData band
-        v <- readBand band (allBand band) (bandSize band)
-        v `shouldSatisfy` (U.all isNoData)
+        readBand band (allBand band) (bandSize band)
+          >>= (`shouldSatisfy` (U.all isNoData))
 
       withDir "can fill with NoData if createBandMask" $ \d -> do
         ds <- create "GTIFF" (joinPath [d, "test.tif"]) 100 1 GDT_Int16 []
         band <- getBand 1 ds
-        createBandMask band MaskPerDataset
+        createBandMask MaskPerDataset band
         fillBand NoData band
-        v <- readBand band (allBand band) (bandSize band)
-        v `shouldSatisfy` (U.all isNoData)
+        readBand band (allBand band) (bandSize band) >>=
+          (`shouldSatisfy` (U.all isNoData))
 
-      it "cannot fill with NoData if no nodata value or mask has been set" $ do
-        band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
-        fillBand NoData band `shouldThrow` (==BandDoesNotAllowNoData)
+      it "cannot fill with NoData if no nodata value or mask has been set" $
+        (createMem (100 :+: 100) 1 GDT_Int16 [] >>= getBand 1 >>= fillBand NoData)
+          `shouldThrow` (==BandDoesNotAllowNoData)
 
     it "can write and read block with automatic conversion" $ do
-      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
-      band <- getBand 1 ds
+      band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
       let vec = U.generate (bandBlockLen band) (Value . fromIntegral)
       writeBandBlock band 0 vec
-      vec2 <- readBandBlock band 0
-      vec `shouldBe` vec2
+      readBandBlock band 0 >>= (`shouldBe` vec)
 
     describe "RasterBand IO" $ do
       let genIntegral :: Integral a => Int -> Value a
@@ -333,10 +318,8 @@ spec = setupAndTeardown $ do
 
     describe "metadataDomains" $ do
 
-      it "mem driver dataset" $ do
-        ds <- createMem 3000 1 GDT_Int16 []
-        doms <- metadataDomains ds
-        doms `shouldBe` []
+      it "mem driver dataset" $
+        createMem 3000 1 GDT_Int16 [] >>= metadataDomains >>= (`shouldBe` [])
 
       withDir "GTIFF driver dataset" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
@@ -377,38 +360,32 @@ spec = setupAndTeardown $ do
       withDir "GTIFF driver dataset (can set)" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
         setMetadataItem Nothing "foo" "bar" ds
-        meta <- metadataItem Nothing "foo" ds
-        meta `shouldBe` (Just "bar")
+        metadataItem Nothing "foo" ds >>= (`shouldBe` (Just "bar"))
 
 
     describe "description" $ do
 
       withDir "GTIFF driver dataset" $ \tmpDir -> do
         let path = (joinPath [tmpDir, "foo"])
-        ds <- create "GTIFF" path 3000 1 GDT_Int16 []
-        desc <- description ds
-        desc `shouldBe` (fromString path)
+        create "GTIFF" path 3000 1 GDT_Int16 []
+          >>= description >>= (`shouldBe` (fromString path))
 
       withDir "GTIFF driver dataset (can set unicode)" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
         let someDesc = "ñamñamñamççççö"
         setDescription someDesc ds
-        desc <- description ds
-        desc `shouldBe` someDesc
+        description ds >>= (`shouldBe` someDesc)
 
-      withDir "GTIFF driver band" $ \tmpDir -> do
-        ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
-        b <- getBand 1 ds
-        desc <- description b
-        desc `shouldBe` ""
+      withDir "GTIFF driver band" $ \tmpDir ->
+        create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
+          >>= getBand 1 >>= description >>= (`shouldBe` "")
 
       withDir "GTIFF driver band (can set)" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 3000 1 GDT_Int16 []
         b <- getBand 1 ds
         let someDesc = "hjgjhghjgjh,gjhgjhgl"
         setDescription someDesc b
-        desc <- description b
-        desc `shouldBe` someDesc
+        description b >>= (`shouldBe` someDesc)
 
 
 ioSpec
@@ -431,41 +408,31 @@ it_can_write_and_read_band dt f = do
   describe name $ do
 
     it "all valid values" $ do
-      ds <- createMem sz 1 dt []
-      band <- getBand 1 ds
+      band <- getBand 1 =<< createMem sz 1 dt []
       let vec = U.generate len f
       writeBand band (allBand band) (bandSize band) vec
-      flushCache ds
-      vec2 <- readBand band (allBand band) (bandSize band)
-      U.length vec `shouldBe` U.length vec2
-      vec `shouldBe` vec2
+      readBand band (allBand band) (bandSize band) >>= (`shouldBe` vec)
 
     it "with nodata value" $ do
-      ds <- createMem sz 1 dt []
-      band <- getBand 1 ds
+      band <- getBand 1 =<< createMem sz 1 dt []
       let vec = U.generate len (\i ->
                   if i > len`div`2 && f i /= nd
                      then f i
                      else NoData)
           nd@(Value noData) = f (-1)
-      setBandNodataValue band noData
+      setBandNodataValue noData band
       writeBand band (allBand band) (bandSize band) vec
-      flushCache ds
-      vec2 <- readBand band (allBand band) (bandSize band)
-      U.length vec `shouldBe` U.length vec2
-      vec `shouldBe` vec2
+      readBand band (allBand band) (bandSize band) >>= (`shouldBe` vec)
 
     withDir "with mask" $ \d -> do
       let path = joinPath [d, "test.tif"]
       ds <- create "GTIFF" path sz 1 dt []
       band <- getBand 1 ds
       let vec = U.generate len (\i -> if i < len`div`2 then f i else NoData)
-      createBandMask band MaskPerBand
+      createBandMask MaskPerBand band
       writeBand band (allBand band) (bandSize band) vec
       flushCache ds
-      vec2 <- readBand band (allBand band) (bandSize band)
-      U.length vec `shouldBe` U.length vec2
-      vec `shouldBe` vec2
+      readBand band (allBand band) (bandSize band) >>= (`shouldBe` vec)
 
 
 it_can_write_and_read_block
@@ -499,7 +466,7 @@ it_can_write_and_read_block dt f = forM_ optionsList $ \options -> do
                      else NoData)
           nd@(Value noData) = f (-1)
           len = bandBlockLen band
-      setBandNodataValue band noData
+      setBandNodataValue noData band
       writeBandBlock band 0 vec
       flushCache ds
       vec2 <- readBandBlock band 0
@@ -512,7 +479,7 @@ it_can_write_and_read_block dt f = forM_ optionsList $ \options -> do
       band <- getBand 1 ds
       let vec = U.generate len (\i -> if i > len`div`2 then f i else NoData)
           len = bandBlockLen band
-      createBandMask band MaskPerBand
+      createBandMask MaskPerBand band
       writeBandBlock band 0 vec
       flushCache ds
       vec2 <- readBandBlock band 0
@@ -538,8 +505,7 @@ it_can_foldl dt f = forM_ [[], [("TILED","YES")]] $ \options -> do
       band <- getBand 1 ds
       writeBand band (allBand band) sz vec
       flushCache ds
-      value <- GDAL.foldl' (+) 0 band
-      value `shouldBe` U.foldl' (+) 0 vec
+      GDAL.foldl' (+) 0 band >>= (`shouldBe` U.foldl' (+) 0 vec)
 
     withDir "with nodata value" $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
@@ -549,11 +515,10 @@ it_can_foldl dt f = forM_ [[], [("TILED","YES")]] $ \options -> do
       let vec = U.imap (\i v -> if i>(sizeLen sz`div`2) then v else NoData)
                        (U.generate (sizeLen sz) f)
       band <- getBand 1 ds
-      setBandNodataValue band nodata
+      setBandNodataValue nodata band
       writeBand band (allBand band) sz vec
       flushCache ds
-      value <- GDAL.foldl' (+) 0 band
-      value `shouldBe` U.foldl' (+) 0 vec
+      GDAL.foldl' (+) 0 band >>= (`shouldBe` U.foldl' (+) 0 vec)
 
     withDir "with mask" $ \tmpDir -> do
       let p = joinPath [tmpDir, "test.tif"]
@@ -562,11 +527,10 @@ it_can_foldl dt f = forM_ [[], [("TILED","YES")]] $ \options -> do
       let vec = U.imap (\i v -> if i>(sizeLen sz`div`2) then v else NoData)
                        (U.generate (sizeLen sz) f)
       band <- getBand 1 ds
-      createBandMask band MaskPerBand
+      createBandMask MaskPerBand band
       writeBand band (allBand band) sz vec
       flushCache ds
-      value <- GDAL.foldl' (+) 0 band
-      value `shouldBe` U.foldl' (+) 0 vec
+      GDAL.foldl' (+) 0 band >>= (`shouldBe` U.foldl' (+) 0 vec)
 
 infix 4 ~==
 (~==) :: (Fractional a, Ord a) => a -> a -> Bool

@@ -23,23 +23,22 @@ toSummaryType = fromIntegral
 
 -}
 
-type SummaryType = Double
-
+type SummaryType = Int
+bandType = GDT_Int16
 sumTypeInf, sumTypeNegInf :: SummaryType
-sumTypeInf = 1/0
-sumTypeNegInf = (-1/0)
-
+sumTypeInf = maxBound --1/0
+sumTypeNegInf = minBound --(-1/0)
 toDouble :: SummaryType -> Double
-toDouble = id
-
-toSummaryType = id
+toDouble = fromIntegral
+--toSummaryType :: BandType -> SummaryType
+toSummaryType = fromIntegral
 
 main :: IO ()
 main = withGDAL $ do
   [fname] <- getArgs
   summary <- execGDAL $ do
-    b <- openReadOnly fname GDT_Float64 >>= getBand 1
-    computeStatistics toSummaryType b
+    openReadOnly fname bandType
+      >>= getBand 1 >>= computeStatistics toSummaryType
   print summary
 
 data Acc = Acc

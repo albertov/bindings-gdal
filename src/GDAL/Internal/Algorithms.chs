@@ -6,6 +6,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE BangPatterns #-}
 
 module GDAL.Internal.Algorithms (
@@ -290,10 +292,11 @@ rasterizeLayersBuf
   -> SpatialReference
   -> Size
   -> Geotransform
-  -> OGR s l (U.Vector (Value (HsType d)))
+  -> GDAL s (U.Vector (Value (HsType d)))
 rasterizeLayersBuf dt getLayers mTransformer nodataValue
                       burnValue options progressFun
                       srs size geotransform =
+  runOGR $
   bracket (liftOGR getLayers) (mapM_ closeLayer) $ \layers ->
   liftIO $
   withProgressFun "rasterizeLayersBuf" progressFun $ \pFun ->
@@ -328,7 +331,7 @@ class (Storable a, Typeable a, Default a, Show a) => GridAlgorithm a where
   setNodata     :: Ptr a -> CDouble -> IO ()
 
 createGridIO
-  :: (GDALType (HsType d), GridAlgorithm opts)
+  :: (GDALType (HsType d), GridAlgorithm opts, IsComplex d ~ 'False)
   => DataType d
   -> opts
   -> HsType d
@@ -376,7 +379,7 @@ createGridIO dt options noDataVal progressFun points envelope size =
 
 
 createGrid
-  :: (GDALType (HsType d), GridAlgorithm opts)
+  :: (GDALType (HsType d), GridAlgorithm opts, IsComplex d ~ 'False)
   => DataType d
   -> opts
   -> HsType d

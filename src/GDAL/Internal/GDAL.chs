@@ -59,7 +59,7 @@ module GDAL.Internal.GDAL (
   , buildOverviews
   , driverCreationOptionList
 
-  , bandCoercedTo
+  , bandAs
 
   , datasetDriver
   , datasetSize
@@ -82,7 +82,6 @@ module GDAL.Internal.GDAL (
   , bandNodataValue
   , setBandNodataValue
   , getBand
-  , isNativeBand
   , addBand
   , fillBand
   , readBand
@@ -245,9 +244,9 @@ bandDataType :: Band s a t -> DataTypeK
 bandDataType (Band (_,t)) = t
 {-# INLINE bandDataType #-}
 
-bandCoercedTo :: Band s a t -> DataType d -> Band s (HsType d) t
-bandCoercedTo = const . coerce
-{-# INLINE bandCoercedTo #-}
+bandAs :: Band s a t -> DataType d -> Band s (HsType d) t
+bandAs = const . coerce
+{-# INLINE bandAs #-}
 
 instance MajorObject (Band s a) t where
   majorObject b =
@@ -394,15 +393,16 @@ datasetProjection =
               >=> maybeSpatialReferenceFromCString)
 
 
-setDatasetProjection :: RWDataset s a -> SpatialReference -> GDAL s ()
-setDatasetProjection ds srs =
+setDatasetProjection :: SpatialReference -> RWDataset s a -> GDAL s ()
+setDatasetProjection srs ds =
   liftIO $ checkCPLError "SetProjection" $
     unsafeUseAsCString (srsToWkt srs)
       ({#call unsafe SetProjection as ^#} (unDataset ds))
 
 setDatasetGCPs
-  :: RWDataset s a -> [GroundControlPoint] -> Maybe SpatialReference -> GDAL s ()
-setDatasetGCPs ds gcps mSrs =
+  :: [GroundControlPoint] -> Maybe SpatialReference -> RWDataset s a
+  -> GDAL s ()
+setDatasetGCPs gcps mSrs ds =
   liftIO $
   checkCPLError "setDatasetGCPs" $
   withGCPArrayLen gcps $ \nGcps pGcps ->
@@ -573,8 +573,8 @@ datasetGeotransform ds = liftIO $ alloca $ \p -> do
     else return Nothing
 
 
-setDatasetGeotransform :: RWDataset s a -> Geotransform -> GDAL s ()
-setDatasetGeotransform ds gt = liftIO $
+setDatasetGeotransform :: Geotransform -> RWDataset s a -> GDAL s ()
+setDatasetGeotransform gt ds = liftIO $
   checkCPLError "SetGeoTransform" $
     with gt ({#call unsafe SetGeoTransform as ^#} (unDataset ds) . castPtr)
 
@@ -594,14 +594,10 @@ getBand b ds = liftIO $ do
       | p == nullBandH = Just (fromMaybe (GDALBindingException NullBand) exc)
       | otherwise      = Nothing
 
-isNativeBand :: forall s a t. GDALType a => Band s a t -> Bool
-isNativeBand = (==hsDataTypeK (undefined ::  a)) . bandDataType
-{-# INLINE isNativeBand #-}
-
 addBand
   :: forall s a. GDALType a
-  => RWDataset s a -> OptionList -> GDAL s (RWBand s a)
-addBand ds options = do
+  => OptionList -> RWDataset s a -> GDAL s (RWBand s a)
+addBand options ds = do
   liftIO $
     checkCPLError "addBand" $
     withOptionList options $
@@ -647,17 +643,17 @@ bandNodataValue b =
     value <- {#call unsafe GetRasterNoDataValue as ^#} (unBand b) p
     hasNodata <- liftM toBool $ peek p
     return (if hasNodata then Just (fromCDouble value) else Nothing)
-{-# INLINE bandNodataValue #-}
+{-# NOINLINE bandNodataValue #-}
 
 
-setBandNodataValue :: GDALType a => RWBand s a -> a -> GDAL s ()
-setBandNodataValue b v =
+setBandNodataValue :: GDALType a => a -> RWBand s a -> GDAL s ()
+setBandNodataValue v b =
   liftIO $
   checkCPLError "SetRasterNoDataValue" $
   {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
 
-createBandMask :: RWBand s a -> MaskType -> GDAL s ()
-createBandMask band maskType = liftIO $
+createBandMask :: MaskType -> RWBand s a -> GDAL s ()
+createBandMask maskType band = liftIO $
   checkCPLError "createBandMask" $
   {#call CreateMaskBand as ^#} (unBand band) cflags
   where cflags = maskFlagsForType maskType
@@ -676,7 +672,7 @@ readBand band win (bx :+: by) =
     _ ->
       liftM2 mkMaskedValueUVector (read_ =<< bandMask band) (read_ band)
   where
-    sx :+: sy     = envelopeSize win
+    sx   :+: sy   = envelopeSize win
     xoff :+: yoff = envelopeMin win
     read_ :: forall a'. GDALType a' => Band s a' t -> GDAL s (St.Vector a')
     read_ b = liftIO $ do
@@ -860,7 +856,7 @@ writeBandBlock band blockIx uvec = do
       | dtBand == dtBuf = writeNative
       | otherwise       = writeTranslated
     dtBand = bandDataType (band)
-    dtBuf  = hsDataTypeK (undefined :: a)
+    dtBuf  = dataType (undefined :: a)
     len = G.length uvec
     bi  = fmap fromIntegral blockIx
 
@@ -968,7 +964,7 @@ unsafeBlockConduitM band = do
     isNative = dtBand == dtBuf
     len      = bandBlockLen band
     dtBand   = bandDataType band
-    dtBuf    = hsDataTypeK (undefined :: a)
+    dtBuf    = dataType (undefined :: a)
 
     {-# INLINE blockReader #-}
     blockReader vec buf extra
@@ -1098,9 +1094,8 @@ setDescription val =
 
 
 fillBand :: GDALType a => Value a -> RWBand s a -> GDAL s ()
-fillBand v band =
-  mapM_ (flip (writeBandBlock band) vec)
-        [i :+: j | j<-[0..ny-1], i<-[0..nx-1]]
+fillBand val b =
+  mapM_ (flip (writeBandBlock b) v) [i:+:j | j<-[0..ny-1], i<-[0..nx-1]]
   where
-    nx :+: ny = bandBlockCount band
-    vec      = G.replicate (bandBlockLen band) v
+    nx:+:ny = bandBlockCount b
+    v       = G.replicate (bandBlockLen b) val

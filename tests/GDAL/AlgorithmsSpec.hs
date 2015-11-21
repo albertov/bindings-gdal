@@ -4,6 +4,8 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DataKinds #-}
 module GDAL.AlgorithmsSpec (main, spec) where
 
 import Data.Default (def)
@@ -37,8 +39,7 @@ spec = setupAndTeardown $ do
          env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
          mkLayer = liftM unsafeToReadOnlyLayer $
                      createLayerWithDef ds fDef StrictOK []
-     v <- runOGR $
-          rasterizeLayersBuf
+     v <- rasterizeLayersBuf
             GDT_Float64
             (sequence [mkLayer])
             DefaultTransformer
@@ -64,8 +65,7 @@ spec = setupAndTeardown $ do
      createFeature_ l feat
      syncLayerToDisk l
 
-     v <- runOGR $
-          rasterizeLayersBuf
+     v <- rasterizeLayersBuf
             GDT_Float64
             (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
             DefaultTransformer
@@ -92,8 +92,7 @@ spec = setupAndTeardown $ do
      createFeature_ l feat
      syncLayerToDisk l
 
-     v <- runOGR $
-          rasterizeLayersBuf
+     v <- rasterizeLayersBuf
             GDT_Float64
             (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
             DefaultTransformer
@@ -122,8 +121,7 @@ spec = setupAndTeardown $ do
      createFeature_ l feat
      syncLayerToDisk l
 
-     v <- runOGR $
-          rasterizeLayersBuf
+     v <- rasterizeLayersBuf
             GDT_Float64
             (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
             DefaultTransformer
@@ -138,8 +136,7 @@ spec = setupAndTeardown $ do
      v `shouldSatisfy` U.all (/=(Value (tfField1 feat)))
      v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
 
-     w <- runOGR $
-          rasterizeLayersBuf
+     w <- rasterizeLayersBuf
             GDT_Float64
             (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
             DefaultTransformer
@@ -161,13 +158,14 @@ spec = setupAndTeardown $ do
   createGridIOSpec GDT_Int32 (SGA (def :: GridMovingAverage))
   createGridIOSpec GDT_Int32 (SGA (def :: GridNearestNeighbor))
 
+  -- GDAL discards the imaginary part so these don't compile
   --createGridIOSpec GDT_CFloat64 (SGA (def :: GridInverseDistanceToAPower))
   --createGridIOSpec GDT_CFloat64 (SGA (def :: GridMovingAverage))
   --createGridIOSpec GDT_CFloat64 (SGA (def :: GridNearestNeighbor))
+  --createGridIOMetricsSpec GDT_CFloat64
 
   createGridIOMetricsSpec GDT_Float64
   createGridIOMetricsSpec GDT_Int32
-  -- createGridIOMetricsSpec GDT_CFloat64 BROKEN
 
 
   describe "contourGenerateVectorIO" $ do
@@ -215,7 +213,7 @@ data SomeGridAlgorithm = forall a. GridAlgorithm a => SGA a
 
 
 createGridIOSpec
-  :: GDALType (HsType d)
+  :: (GDALType (HsType d), IsComplex d ~ 'False)
   => DataType d -> SomeGridAlgorithm -> SpecWith (Arg (IO ()))
 createGridIOSpec dt (SGA opts) = do
 
@@ -245,7 +243,7 @@ createGridIOSpec dt (SGA opts) = do
 
 
 createGridIOMetricsSpec
-  :: (Ord (HsType d), GDALType (HsType d))
+  :: (Ord (HsType d), GDALType (HsType d), IsComplex d ~ 'False)
   => DataType d -> SpecWith (Arg (IO ()))
 createGridIOMetricsSpec dt = do
   describe ("createGridIO " ++ show dt ++ " (GridDataMetrics)") $ do

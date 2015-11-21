@@ -34,7 +34,6 @@ import Foreign.Ptr (
   )
 import Foreign.Marshal.Utils (with)
 import Foreign.Storable (Storable(..))
-import Foreign.C.Types (CDouble)
 
 import GDAL.Internal.Types
 import GDAL.Internal.Util (fromEnumC)
@@ -236,6 +235,5 @@ setDstNodata oDs options
       forM_ (woBands options) $ \BandOptions{..} ->
         case biDstNoData of
           Just nd -> do
-            b <- getBand biDst oDs
-            setBandNodataValue b nd
+            getBand biDst oDs >>= setBandNodataValue nd
           Nothing -> return ()
