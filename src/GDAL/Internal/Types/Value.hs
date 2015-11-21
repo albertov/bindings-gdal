@@ -12,7 +12,6 @@
 
 module GDAL.Internal.Types.Value (
     Value(..)
-  , Masked (..)
   , isNoData
   , fromValue
 
@@ -39,6 +38,7 @@ import qualified Data.Vector.Generic.Mutable as M
 import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Unboxed.Base as U
 
+import Foreign.Storable (Storable)
 
 data Value a
   = Value {unValue :: !a}
@@ -143,65 +143,56 @@ maskValid, maskNoData :: Word8
 maskValid  = 255
 maskNoData = 0
 
-class ( G.Vector  (BaseVector  a) a
-      , M.MVector (BaseMVector a) a
-      , G.Mutable (BaseVector  a) ~ BaseMVector a
-      , Eq a
-      ) => Masked a where
-  type BaseMVector a :: * -> * -> *
-  type BaseVector  a :: * -> *
-
-
 newtype instance U.Vector    (Value a) =
-    V_Value (Mask St.Vector a, (BaseVector a) a)
+    V_Value (Mask St.Vector a, St.Vector a)
 newtype instance U.MVector s (Value a) =
-  MV_Value (Mask (St.MVector s) a, (BaseMVector a) s a)
-instance Masked a => U.Unbox (Value a)
+  MV_Value (Mask (St.MVector s) a, St.MVector s a)
+instance (Storable a, Eq a) => U.Unbox (Value a)
 
 
 mkMaskedValueUVector
-  :: Masked a
-  => St.Vector Word8 -> BaseVector a a
+  :: (Storable a, Eq a)
+  => St.Vector Word8 -> St.Vector a
   -> U.Vector (Value a)
 mkMaskedValueUVector mask values =
     V_Value (Mask (mask), values)
 
 mkAllValidValueUVector
-  :: Masked a
-  => BaseVector a a -> U.Vector (Value a)
+  :: (Storable a, Eq a)
+  => St.Vector a -> U.Vector (Value a)
 mkAllValidValueUVector values = V_Value (AllValid, values)
 
 mkValueUVector
-  :: Masked a
-  => a -> BaseVector a a -> U.Vector (Value a)
+  :: (Storable a, Eq a)
+  => a -> St.Vector a -> U.Vector (Value a)
 mkValueUVector nd values = V_Value (UseNoData nd, values)
 
 mkMaskedValueUMVector
-  :: Masked a
-  => St.MVector s Word8 -> BaseMVector a s a -> U.MVector s (Value a)
+  :: (Storable a, Eq a)
+  => St.MVector s Word8 -> St.MVector s a -> U.MVector s (Value a)
 mkMaskedValueUMVector mask values = MV_Value (Mask mask, values)
 
 mkAllValidValueUMVector
-  :: Masked a
-  => BaseMVector a s a -> U.MVector s (Value a)
+  :: (Storable a, Eq a)
+  => St.MVector s a -> U.MVector s (Value a)
 mkAllValidValueUMVector values = MV_Value (AllValid, values)
 
 mkValueUMVector
-  :: Masked a => a -> BaseMVector a s a -> U.MVector s (Value a)
+  :: (Storable a, Eq a) => a -> St.MVector s a -> U.MVector s (Value a)
 mkValueUMVector nd values = MV_Value (UseNoData nd, values)
 
 
 
 toGVecWithNodata
-  :: Masked a
-  => a -> U.Vector (Value a) -> BaseVector a a
+  :: (Storable a, Eq a)
+  => a -> U.Vector (Value a) -> St.Vector a
 toGVecWithNodata nd v =
    (G.generate (G.length v) (fromValue nd . G.unsafeIndex v))
 
 toGVecWithMask
-  :: Masked a
+  :: (Storable a, Eq a)
   => U.Vector (Value a)
-  -> (St.Vector Word8, BaseVector a a)
+  -> (St.Vector Word8, St.Vector a)
 toGVecWithMask (V_Value (Mask m  , vs)) = ( m, vs)
 toGVecWithMask (V_Value (AllValid, vs)) =
   ( (G.replicate (G.length vs) maskValid), vs)
@@ -213,7 +204,7 @@ toGVecWithMask (V_Value (UseNoData nd, vs)) =
       | otherwise                  = maskValid
 
 
-toGVec :: Masked a => U.Vector (Value a) -> Maybe ((BaseVector a) a)
+toGVec :: (Storable a, Eq a) => U.Vector (Value a) -> Maybe ((St.Vector) a)
 toGVec (V_Value (AllValid, v)) = Just ( v)
 toGVec (V_Value (UseNoData nd, v))
   | G.any (==nd) v = Nothing
@@ -222,7 +213,7 @@ toGVec (V_Value (Mask m, v))
   | G.any (==maskNoData) m = Nothing
   | otherwise              = Just v
 
-instance Masked a => M.MVector U.MVector (Value a) where
+instance (Storable a, Eq a) => M.MVector U.MVector (Value a) where
 
   basicLength (MV_Value (_,v)) = M.basicLength v
   {-# INLINE basicLength #-}
@@ -252,7 +243,7 @@ instance Masked a => M.MVector U.MVector (Value a) where
   basicUnsafeRead (MV_Value (AllValid,v)) i =
     liftM Value (M.basicUnsafeRead v i)
   basicUnsafeRead (MV_Value (UseNoData nd,v)) i = do
-    val <- M.basicUnsafeRead v i
+    !val <- M.basicUnsafeRead v i
     return $! if val==nd then NoData else Value val
   {-# INLINE basicUnsafeRead #-}
 
@@ -282,7 +273,7 @@ instance Masked a => M.MVector U.MVector (Value a) where
   {-# INLINE basicInitialize #-}
 #endif
 
-instance Masked a => G.Vector U.Vector (Value a) where
+instance (Storable a, Eq a) => G.Vector U.Vector (Value a) where
 
   basicUnsafeFreeze (MV_Value (Mask x,v)) =
     liftM2 (\x' v' -> V_Value (Mask x',v'))

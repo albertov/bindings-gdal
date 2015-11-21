@@ -2,21 +2,7 @@ module GDAL (
     GDAL
   , GDALType
   , ApproxOK (..)
-  , Masked (..)
-  , DataType
-  , DynType (..)
-  , gdtByte
-  , gdtUInt16
-  , gdtUInt32
-  , gdtInt16
-  , gdtInt32
-  , gdtFloat32
-  , gdtFloat64
-  , gdtCInt16
-  , gdtCInt32
-  , gdtCFloat32
-  , gdtCFloat64
-  , gdtUnknown
+  , DataType (..)
   , XY (..)
   , Envelope (..)
   , Size
@@ -24,7 +10,6 @@ module GDAL (
 
   , GDALException (..)
   , GDALRasterException (..)
-  , DataTypeMismatch (..)
   , ProgressException (..)
   , ErrorType (..)
   , ErrorNum (..)
@@ -138,7 +123,6 @@ import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
 import GDAL.Internal.CPLProgress
 import GDAL.Internal.GCP
-import GDAL.Internal.DataType.Instances ()
 import GDAL.Internal.GDAL as GDAL
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value

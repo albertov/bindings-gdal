@@ -278,7 +278,7 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
 -- ############################################################################
 
 rasterizeLayersBuf
-  :: GDALType a
+  :: forall s l b a. GDALType a
   => GDAL s [ROLayer s l b]
   -> SomeTransformer s
   -> a
@@ -301,7 +301,7 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
   withTransformerAndArg mTransformer (Just geotransform) $ \trans tArg ->
   with geotransform $ \gt -> do
     vec <- GM.replicate (sizeLen size) nodataValue
-    gUnsafeWithDataTypeM vec $ \dt vecPtr ->
+    Stm.unsafeWith vec $ \vecPtr ->
       checkCPLError "RasterizeLayersBuf" $
       {#call GDALRasterizeLayersBuf as ^#}
         (castPtr vecPtr) nx ny (fromEnumC dt) 0 0 (fromIntegral len)
@@ -309,7 +309,8 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
         tArg bValue opts pFun nullPtr
     liftM (mkValueUVector nodataValue) (G.unsafeFreeze vec)
   where
-    bValue    = gToReal burnValue
+    dt = dataType (undefined :: a)
+    bValue    = toCDouble burnValue
     XY nx ny  = fmap fromIntegral size
 
 
@@ -347,7 +348,7 @@ createGridIO options noDataVal progressFun points envelope size =
       Stm.unsafeWith xs $ \pXs ->
       Stm.unsafeWith ys $ \pYs ->
       Stm.unsafeWith zs $ \pZs ->
-      gUnsafeWithDataTypeM out $ \gtype pOut ->
+      Stm.unsafeWith out $ \pOut ->
       {#call GDALGridCreate as ^#}
         (fromEnumC (gridAlgorithm options))
         (castPtr opts)
@@ -361,8 +362,8 @@ createGridIO options noDataVal progressFun points envelope size =
         y1
         nx
         ny
-        (fromEnumC gtype)
-        pOut
+        (fromEnumC GDT_Float64)
+        (castPtr pOut)
         pFun
         nullPtr
     liftM (mkValueUVector noDataVal) (G.unsafeFreeze out)

@@ -29,12 +29,8 @@ library
                    , GDAL.Warper
 
                    , GDAL.Internal.Types
-                   , GDAL.Internal.Types.Pair
                    , GDAL.Internal.Types.Value
-                   , GDAL.Internal.Types.Vector
-                   , GDAL.Internal.Types.Vector.Mutable
                    , GDAL.Internal.DataType
-                   , GDAL.Internal.DataType.Instances
                    , GDAL.Internal.Util
                    , GDAL.Internal.Common
                    , GDAL.Internal.CPLString
@@ -67,7 +63,6 @@ library
                    , data-default
                    , unordered-containers
                    , ghc-prim
-                   , primitive
   ghc-options:       -funbox-strict-fields -Wall
   install-includes: bindings.h
   default-extensions: CPP

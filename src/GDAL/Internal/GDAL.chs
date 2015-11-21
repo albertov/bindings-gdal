@@ -32,6 +32,9 @@ module GDAL.Internal.GDAL (
   , Band
   , RasterBandH (..)
   , MaskType (..)
+  , GDALType (..)
+  , DataType (..)
+  , dataType
 
   , northUpGeotransform
   , gcpGeotransform
@@ -110,8 +113,6 @@ module GDAL.Internal.GDAL (
   , version
   , newDatasetHandle
   , openDatasetCount
-
-  , module DT
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
@@ -126,23 +127,24 @@ import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Coerce (coerce)
 import Data.Maybe (fromMaybe)
-import Data.Proxy (Proxy(..))
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
-import qualified Data.Vector.Generic         as G
-import qualified Data.Vector.Storable        as St
-import qualified Data.Vector.Generic.Mutable as GM
-import qualified Data.Vector.Unboxed.Mutable as UM
-import qualified Data.Vector.Unboxed         as U
+import qualified Data.Vector.Generic          as G
+import qualified Data.Vector.Storable         as St
+import qualified Data.Vector.Storable.Mutable as Stm
+import qualified Data.Vector.Generic.Mutable  as M
+import qualified Data.Vector.Unboxed.Mutable  as UM
+import qualified Data.Vector.Unboxed          as U
 import Data.Word (Word8)
 
 import Foreign.C.String (withCString, CString)
 import Foreign.C.Types
+import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrBytes)
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Alloc (alloca, allocaBytes)
 import Foreign.Marshal.Array (withArrayLen)
 import Foreign.Marshal.Utils (toBool, fromBool, with)
 
@@ -152,8 +154,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value
-import GDAL.Internal.DataType as DT
-import GDAL.Internal.DataType.Instances ()
+import GDAL.Internal.DataType
 import GDAL.Internal.Common
 import GDAL.Internal.Util
 {#import GDAL.Internal.GCP#}
@@ -286,7 +287,7 @@ create
   :: Driver -> String -> Size -> Int -> DataType -> OptionList
   -> GDAL s (Dataset s ReadWrite)
 create drv path (XY nx ny) bands dtype  options
-  | dtype == gdtUnknown = throwBindingException UnknownRasterDataType
+  | dtype == GDT_Unknown = throwBindingException UnknownRasterDataType
   | otherwise
   = newDatasetHandle $ withCString path $ \path' -> do
       let nx'    = fromIntegral nx
@@ -598,7 +599,7 @@ getBand b ds = liftIO $ do
       | otherwise      = Nothing
 
 isNativeBand :: forall s a t. GDALType a => Band s a t -> Bool
-isNativeBand = (==dataType (Proxy :: Proxy a)) . bandDataType
+isNativeBand = (==dataType (undefined ::  a)) . bandDataType
 {-# INLINE isNativeBand #-}
 
 addBand
@@ -611,7 +612,7 @@ addBand ds options = do
     {#call GDALAddBand as ^#} (unDataset ds) (fromEnumC dt)
   ix <- datasetBandCount ds
   getBand ix ds
-  where dt = dataType (Proxy :: Proxy a)
+  where dt = dataType (undefined ::  a)
 
 
 
@@ -649,7 +650,7 @@ bandNodataValue b =
   alloca $ \p -> do
     value <- {#call unsafe GetRasterNoDataValue as ^#} (unBand b) p
     hasNodata <- liftM toBool $ peek p
-    return (if hasNodata then Just (gFromReal value) else Nothing)
+    return (if hasNodata then Just (fromCDouble value) else Nothing)
 {-# INLINE bandNodataValue #-}
 
 
@@ -657,7 +658,7 @@ setBandNodataValue :: GDALType a => RWBand s a -> a -> GDAL s ()
 setBandNodataValue b v =
   liftIO $
   checkCPLError "SetRasterNoDataValue" $
-  {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (gToReal v)
+  {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
 
 createBandMask :: RWBand s a -> MaskType -> GDAL s ()
 createBandMask band maskType = liftIO $
@@ -681,10 +682,10 @@ readBand band win (XY bx by) =
   where
     XY sx sy     = envelopeSize win
     XY xoff yoff = envelopeMin win
-    read_ :: forall v a'. DT.Vector v a' => Band s a' t -> GDAL s (v a')
+    read_ :: forall a'. GDALType a' => Band s a' t -> GDAL s (St.Vector a')
     read_ b = liftIO $ do
-      vec <- GM.new (bx*by)
-      gUnsafeWithDataTypeM vec $ \dtype ptr -> do
+      vec <- M.new (bx*by)
+      Stm.unsafeWith vec $ \ptr -> do
         checkCPLError "RasterAdviseRead" $
           {#call unsafe RasterAdviseRead as ^#}
             (unBand b)
@@ -694,7 +695,7 @@ readBand band win (XY bx by) =
             (fromIntegral sy)
             (fromIntegral bx)
             (fromIntegral by)
-            (fromEnumC dtype)
+            (fromEnumC (dataType (undefined :: a')))
             nullPtr
         checkCPLError "RasterIO" $
           {#call RasterIO as ^#}
@@ -704,10 +705,10 @@ readBand band win (XY bx by) =
             (fromIntegral yoff)
             (fromIntegral sx)
             (fromIntegral sy)
-            ptr
+            (castPtr ptr)
             (fromIntegral bx)
             (fromIntegral by)
-            (fromEnumC dtype)
+            (fromEnumC (dataType (undefined :: a')))
             0
             0
       G.unsafeFreeze vec
@@ -717,7 +718,7 @@ readBand band win (XY bx by) =
 writeMasked
   :: GDALType a
   => RWBand s a
-  -> (RWBand s a -> BaseVector a a -> GDAL s ())
+  -> (RWBand s a -> St.Vector a -> GDAL s ())
   -> (RWBand s Word8 -> St.Vector Word8 -> GDAL s ())
   -> U.Vector (Value a)
   -> GDAL s ()
@@ -741,7 +742,8 @@ noDataOrFail = liftM (fromMaybe err) . bandNodataValue
 
 bandMask :: Band s a t -> GDAL s (Band s Word8 t)
 bandMask =
-  liftIO . liftM (\p -> Band (p,gdtByte)) . {#call GetMaskBand as ^#} . unBand
+  liftIO . liftM (\p -> Band (p,GDT_Byte)) . {#call GetMaskBand as ^#}
+         . unBand
 
 data MaskType
   = MaskNoData
@@ -781,14 +783,15 @@ writeBand
   -> GDAL s ()
 writeBand band win sz@(XY bx by) = writeMasked band write write
   where
-    write :: forall v a'. DT.Vector v a' => RWBand s a' -> v a' -> GDAL s ()
+    write :: forall a'. GDALType a'
+          => RWBand s a' -> St.Vector a' -> GDAL s ()
     write band' vec = do
       let XY sx sy     = envelopeSize win
           XY xoff yoff = envelopeMin win
       if sizeLen sz /= G.length vec
         then throwBindingException (InvalidRasterSize sz)
         else liftIO $
-             gUnsafeWithDataType vec $ \dt ptr ->
+             St.unsafeWith vec $ \ptr ->
              checkCPLError "RasterIO" $
                {#call RasterIO as ^#}
                  (unBand band')
@@ -797,10 +800,10 @@ writeBand band win sz@(XY bx by) = writeMasked band write write
                  (fromIntegral yoff)
                  (fromIntegral sx)
                  (fromIntegral sy)
-                 ptr
+                 (castPtr ptr)
                  (fromIntegral bx)
                  (fromIntegral by)
-                 (fromEnumC dt)
+                 (fromEnumC (dataType (undefined :: a')))
                  0
                  0
 {-# INLINE writeBand #-}
@@ -853,7 +856,7 @@ ifoldlM' f initialAcc band = mkBlockLoader band >>= ifoldlM_loop
           where
             go !sPEC2 !i !j !acc'
               | i   < stopx = do
-                  !v <- liftIO (UM.unsafeRead vec (j*sx+i))
+                  !v <- liftIO (M.unsafeRead vec (j*sx+i))
                   f acc' ix v >>= go sPEC2 (i+1) j
               | j+1 < stopy = go sPEC2 0 (j+1) acc'
               | otherwise   = return acc'
@@ -874,41 +877,64 @@ writeBandBlock band blockIx uvec = do
     throwBindingException (InvalidBlockSize len)
   writeMasked band write writeMask uvec
   where
+    write
+      | dtBand == dtBuf = writeNative
+      | otherwise       = writeTranslated
+    dtBand = bandDataType (band)
+    dtBuf  = dataType (undefined :: a)
     len = G.length uvec
     bi  = fmap fromIntegral blockIx
 
-    write band' vec =
+    writeNative _ buf =
       liftIO $
-      gUnsafeAsDataType (bandDataType band') vec $ \pVec ->
+      St.unsafeWith buf $ \pBuf ->
       checkCPLError "WriteBlock" $
       {#call WriteBlock as ^#}
-        (unBand band')
+        (unBand band)
         (px bi)
         (py bi)
-        pVec
+        (castPtr pBuf)
+
+    writeTranslated _ buf = liftIO $
+      allocaBytes (len*sizeOfDataType dtBand) $ \pWork ->
+      St.unsafeWith buf $ \pBuf -> do
+        {#call unsafe CopyWords as ^#}
+          (castPtr pBuf)
+          (fromEnumC dtBuf)
+          (fromIntegral (sizeOfDataType dtBuf))
+          pWork
+          (fromEnumC dtBand)
+          (fromIntegral (sizeOfDataType dtBand))
+          (fromIntegral len)
+        checkCPLError "WriteBlock" $
+          {#call WriteBlock as ^#}
+            (unBand band)
+            (px bi)
+            (py bi)
+            pWork
 
     bs  = fmap fromIntegral (bandBlockSize band)
     rs  = fmap fromIntegral (bandSize band)
     off = bi * bs
     win = liftA2 min bs (rs - off)
 
-    writeMask band' vec =
+    writeMask mBand buf =
       liftIO $
       checkCPLError "WriteBlock" $
-      gUnsafeWithDataType vec $ \dt pVec ->
+      St.unsafeWith buf $ \pBuf ->
         {#call RasterIO as ^#}
-          (unBand band')
+          (unBand mBand)
           (fromEnumC GF_Write)
           (px off)
           (py off)
           (px win)
           (py win)
-          pVec
+          (castPtr pBuf)
           (px win)
           (py win)
-          (fromEnumC dt)
+          (fromEnumC GDT_Byte)
           0
-          (px bs * fromIntegral (sizeOfDataType dt))
+          (px bs * fromIntegral (sizeOfDataType GDT_Byte))
 {-# INLINE writeBandBlock #-}
 
 readBandBlock
@@ -926,25 +952,34 @@ mkBlockLoader
   => Band s a t
   -> GDAL s (BlockIx -> GDAL s (), UM.IOVector (Value a))
 mkBlockLoader band = do
-  buf <- liftIO $ gNewAs (bandDataType band) len
+  buf <- liftIO $ M.new len
+  blockLoader <- if dtBuf == dtBand
+                   then return (blockLoaderNative buf)
+                   else do
+                      work <- liftIO $
+                                mallocForeignPtrBytes
+                                (len*sizeOfDataType(dtBand))
+                      return (blockLoaderTrans buf work)
   bandMaskType band >>= \case
     MaskNoData -> do
       noData <- noDataOrFail band
-      return (blockLoader buf, mkValueUMVector noData buf)
+      return (blockLoader, mkValueUMVector noData buf)
     MaskAllValid ->
-      return (blockLoader buf, mkAllValidValueUMVector buf)
+      return (blockLoader, mkAllValidValueUMVector buf)
     _ -> do
-      maskBuf <- liftIO $ GM.replicate len 0
+      maskBuf <- liftIO $ M.replicate len 0
       mask <- bandMask band
-      return ( maskedBlockLoader mask maskBuf (blockLoader buf)
+      return ( maskedBlockLoader mask maskBuf blockLoader
              , mkMaskedValueUMVector maskBuf buf)
   where
     len = bandBlockLen band
+    dtBand = bandDataType band
+    dtBuf = dataType (undefined :: a)
 
     maskedBlockLoader mask maskBuf loadBlock blockIx = do
       loadBlock blockIx
       liftIO $ do
-        gUnsafeWithDataTypeM maskBuf $ \dt pVec ->
+        Stm.unsafeWith maskBuf $ \pVec ->
           void $ --checkCPLError "RasterIO" $
           {#call RasterIO as ^#}
             (unBand mask)
@@ -953,12 +988,12 @@ mkBlockLoader band = do
             (py off)
             (px win)
             (py win)
-            pVec
+            (castPtr pVec)
             (px win)
             (py win)
-            (fromEnumC dt)
+            (fromEnumC GDT_Byte)
             0
-            (px bs * fromIntegral (sizeOfDataType dt))
+            (px bs * fromIntegral (sizeOfDataType GDT_Byte))
       where
         bi  = fmap fromIntegral blockIx
         bs  = fmap fromIntegral (bandBlockSize band)
@@ -967,17 +1002,37 @@ mkBlockLoader band = do
         win = liftA2 min bs (rs  - off)
     {-# INLINE maskedBlockLoader #-}
 
-    blockLoader buf blockIx = liftIO $ do
-      gUnsafeWithDataTypeM buf $ \_ pVec ->
+    blockLoaderTrans buf work blockIx =
+      liftIO $
+      Stm.unsafeWith buf $ \pBuf ->
+      withForeignPtr work $ \pWork -> do
         void $ --checkCPLError "ReadBlock" $
-        {#call ReadBlock as ^#}
-          (unBand band)
-          (px bi)
-          (py bi)
-          pVec
+          {#call ReadBlock as ^#}
+            (unBand band)
+            (px bi)
+            (py bi)
+            (castPtr pWork)
+        {#call unsafe CopyWords as ^#}
+          pWork
+          (fromEnumC dtBand)
+          (fromIntegral (sizeOfDataType dtBand))
+          (castPtr pBuf)
+          (fromEnumC dtBuf)
+          (fromIntegral (sizeOfDataType dtBuf))
+          (fromIntegral len)
       where
         bi  = fmap fromIntegral blockIx
-    {-# INLINE blockLoader #-}
+    blockLoaderNative buf blockIx =
+      liftIO $
+      Stm.unsafeWith buf $ \pBuf ->
+        void $ --checkCPLError "ReadBlock" $
+          {#call ReadBlock as ^#}
+            (unBand band)
+            (px bi)
+            (py bi)
+            (castPtr pBuf)
+      where
+        bi  = fmap fromIntegral blockIx
 {-# INLINE mkBlockLoader #-}
 
 openDatasetCount :: IO Int
