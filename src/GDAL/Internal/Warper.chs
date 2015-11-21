@@ -22,7 +22,7 @@ import Control.Applicative ((<$>), (<*>))
 import Control.Monad (when, forM_, forM, liftM)
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (Exception(..), bracket)
-import Data.Maybe (isJust, fromMaybe)
+import Data.Maybe (isJust)
 import Data.Typeable (Typeable)
 import Data.Default (Default(..))
 import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
@@ -34,6 +34,7 @@ import Foreign.Ptr (
   )
 import Foreign.Marshal.Utils (with)
 import Foreign.Storable (Storable(..))
+import Foreign.C.Types (CDouble)
 
 import GDAL.Internal.Types
 import GDAL.Internal.Util (fromEnumC)
@@ -60,32 +61,30 @@ instance Exception GDALWarpException where
 {# enum GDALResampleAlg as ResampleAlg {upcaseFirstLetter} with prefix = "GRA_"
      deriving (Eq,Read,Show,Bounded) #}
 
-data BandOptions =
+data BandOptions a =
   BandOptions {
     biSrc       :: !Int
   , biDst       :: !Int
-  , biSrcNoData :: !(Maybe Double)
-  , biDstNoData :: !(Maybe Double)
-  }
-
-deriving instance Show BandOptions
+  , biSrcNoData :: !(Maybe a)
+  , biDstNoData :: !(Maybe a)
+  } deriving Show
 
 
-data WarpOptions s =
+data WarpOptions s a =
   WarpOptions {
       woResampleAlg      :: ResampleAlg
     , woWarpOptions      :: OptionList
     , woMemoryLimit      :: Double
     , woWorkingDataType  :: DataTypeK
-    , woBands            :: [BandOptions]
-    , woTransfomer       :: SomeTransformer s
+    , woBands            :: [BandOptions a]
+    , woTransfomer       :: SomeTransformer s a
     , woCutline          :: Maybe Geometry
     , woCutlineBlendDist :: Double
     }
 
 {#pointer *GDALWarpOptions as WarpOptionsH newtype #}
 
-instance Default (WarpOptions s) where
+instance Default (WarpOptions s a) where
   def = WarpOptions {
           woResampleAlg      = NearestNeighbour
         , woWarpOptions      = []
@@ -98,8 +97,9 @@ instance Default (WarpOptions s) where
         }
 
 setOptionDefaults
-  :: forall s t. RODataset s
-  -> Maybe (Dataset s t) -> WarpOptions s -> GDAL s (WarpOptions s)
+  :: GDALType a
+  => RODataset s a -> Maybe (Dataset s a t) -> WarpOptions s a
+  -> GDAL s (WarpOptions s a)
 setOptionDefaults ds moDs wo@WarpOptions{..} = do
   bands <- if null woBands
             then do
@@ -118,17 +118,18 @@ setOptionDefaults ds moDs wo@WarpOptions{..} = do
       wo' = wo {woBands = bands}
   return wo' {woWarpOptions = warpOptions}
 
-anyBandHasNoData :: WarpOptions s -> Bool
+anyBandHasNoData :: WarpOptions s a -> Bool
 anyBandHasNoData wo
   = any (\BandOptions{..} -> isJust biSrcNoData || isJust biDstNoData) (woBands wo)
 
-anyBandHasDstNoData :: WarpOptions s -> Bool
+anyBandHasDstNoData :: WarpOptions s a -> Bool
 anyBandHasDstNoData wo = any (\BandOptions{..} -> isJust biDstNoData) (woBands wo)
 
 withWarpOptionsH
-  :: RODataset s
+  :: GDALType a
+  => RODataset s a
   -> Maybe Geotransform
-  -> WarpOptions s
+  -> WarpOptions s a
   -> (WarpOptionsH -> IO c)
   -> IO c
 withWarpOptionsH _ _ WarpOptions{woCutline=Just g} _
@@ -160,8 +161,8 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
       {#set GDALWarpOptions->dfCutlineBlendDist#} p
         (realToFrac woCutlineBlendDist)
       when (anyBandHasNoData wo) $ do
-        let sNds = map (\bo -> fromMaybe (0/0) (biSrcNoData bo)) woBands
-            dNds = map (\bo -> fromMaybe (0/0) (biDstNoData bo)) woBands
+        let sNds = map (\bo -> maybe (0/0) toCDouble (biSrcNoData bo)) woBands
+            dNds = map (\bo -> maybe (0/0) toCDouble (biDstNoData bo)) woBands
             imgs = replicate (length woBands) 0
         cplNewArray sNds >>=
           {#set GDALWarpOptions->padfSrcNoDataReal #} p . castPtr
@@ -172,13 +173,14 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
       return p
 
 reprojectImage
-  :: RODataset s
+  :: GDALType a
+  => RODataset s a
   -> Maybe SpatialReference
-  -> RWDataset s
+  -> RWDataset s a
   -> Maybe SpatialReference
   -> Double
   -> Maybe ProgressFun
-  -> WarpOptions s
+  -> WarpOptions s a
   -> GDAL s ()
 reprojectImage _ _ _ _ _ _ WarpOptions{woTransfomer=SomeTransformer _} =
   throwBindingException CannotSetTransformer
@@ -203,11 +205,12 @@ reprojectImage srcDs srcSrs dstDs dstSrs maxError progressFun options = do
       wopts
 
 createWarpedVRT
-  :: forall s. RODataset s
+  :: GDALType a
+  => RODataset s a
   -> Size
   -> Geotransform
-  -> WarpOptions s
-  -> GDAL s (RODataset s)
+  -> WarpOptions s a
+  -> GDAL s (RODataset s a)
 createWarpedVRT srcDs (nPixels :+: nLines) geotransform wo = do
   options <- setOptionDefaults srcDs Nothing (setWarpedVRTDefaultTransformer wo)
   oDs <- newDatasetHandle $
@@ -222,12 +225,12 @@ createWarpedVRT srcDs (nPixels :+: nLines) geotransform wo = do
   unsafeToReadOnly oDs
 
 setWarpedVRTDefaultTransformer
-  :: forall s. WarpOptions s -> WarpOptions s
-setWarpedVRTDefaultTransformer wo@WarpOptions{woTransfomer=DefaultTransformer} =
-  wo { woTransfomer = SomeTransformer (def :: GenImgProjTransformer s)}
+  :: GDALType a => WarpOptions s a -> WarpOptions s a
+setWarpedVRTDefaultTransformer w@WarpOptions{woTransfomer=DefaultTransformer} =
+  w { woTransfomer = SomeTransformer (def :: GenImgProjTransformer s a)}
 setWarpedVRTDefaultTransformer wo = wo
 
-setDstNodata :: RWDataset s -> WarpOptions s -> GDAL s ()
+setDstNodata :: GDALType a => RWDataset s a -> WarpOptions s a -> GDAL s ()
 setDstNodata oDs options
   = when (anyBandHasDstNoData options) $
       forM_ (woBands options) $ \BandOptions{..} ->

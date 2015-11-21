@@ -1,8 +1,9 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE BangPatterns #-}
@@ -99,23 +100,23 @@ instance Exception GDALAlgorithmException where
   fromException = bindingExceptionFromException
 
 class Transformer t where
-  transformerFun         :: t s -> TransformerFun t s
-  createTransformerArg   :: t s -> IO (Ptr (t s))
-  destroyTransformerArg  :: Ptr (t s) -> IO ()
-  setGeotransform        :: Geotransform -> Ptr (t s) -> IO ()
+  transformerFun         :: t s a -> TransformerFun t s a
+  createTransformerArg   :: t s a -> IO (Ptr (t s a))
+  destroyTransformerArg  :: Ptr (t s a) -> IO ()
+  setGeotransform        :: Geotransform -> Ptr (t s a) -> IO ()
 
   destroyTransformerArg p =
     when (p/=nullPtr) ({# call unsafe GDALDestroyTransformer as ^#} (castPtr p))
 
-data SomeTransformer s
-  = forall t. Transformer t => SomeTransformer (t s)
+data SomeTransformer s a
+  = forall t. (Transformer t, GDALType a) => SomeTransformer (t s a)
   | DefaultTransformer
 
-instance Default (SomeTransformer s) where
+instance Default (SomeTransformer s a) where
   def = DefaultTransformer
 
 withTransformerAndArg
-  :: SomeTransformer s
+  :: SomeTransformer s a
   -> Maybe Geotransform
   -> (TransformerFunPtr -> Ptr () -> IO c)
   -> IO c
@@ -131,7 +132,7 @@ withTransformerAndArg (SomeTransformer t) mGt act =
               `onException` destroyTransformerArg arg
 
 
-newtype TransformerFun (t :: * -> *) s
+newtype TransformerFun (t :: * -> * -> *) s a
   = TransformerFun {getTransformerFunPtr :: TransformerFunPtr}
 
 {#pointer GDALTransformerFunc as TransformerFunPtr #}
@@ -142,10 +143,10 @@ newtype TransformerFun (t :: * -> *) s
 -- GenImgProjTransformer
 -- ############################################################################
 
-data GenImgProjTransformer s =
+data GenImgProjTransformer s a =
      GenImgProjTransformer {
-      giptSrcDs    :: Maybe (RODataset s)
-    , giptDstDs    :: Maybe (RWDataset s)
+      giptSrcDs    :: Maybe (RODataset s a)
+    , giptDstDs    :: Maybe (RWDataset s a)
     , giptSrcSrs   :: Maybe SpatialReference
     , giptDstSrs   :: Maybe SpatialReference
     , giptUseGCP   :: Bool
@@ -153,7 +154,7 @@ data GenImgProjTransformer s =
     , giptOrder    :: Int
   }
 
-instance Default (GenImgProjTransformer s) where
+instance Default (GenImgProjTransformer s a) where
   def = GenImgProjTransformer {
           giptSrcDs    = Nothing
         , giptDstDs    = Nothing
@@ -189,21 +190,21 @@ instance Transformer GenImgProjTransformer where
         (fromIntegral giptOrder)
 
 foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
-  c_GDALGenImgProjTransform :: TransformerFun GenImgProjTransformer s
+  c_GDALGenImgProjTransform :: TransformerFun GenImgProjTransformer s a
 
 
 -- ############################################################################
 -- GenImgProjTransformer2
 -- ############################################################################
 
-data GenImgProjTransformer2 s =
+data GenImgProjTransformer2 s a =
      GenImgProjTransformer2 {
-      gipt2SrcDs    :: Maybe (RODataset s)
-    , gipt2DstDs    :: Maybe (RWDataset s)
+      gipt2SrcDs    :: Maybe (RODataset s a)
+    , gipt2DstDs    :: Maybe (RWDataset s a)
     , gipt2Options  :: OptionList
   }
 
-instance Default (GenImgProjTransformer2 s) where
+instance Default (GenImgProjTransformer2 s a) where
   def = GenImgProjTransformer2 {
           gipt2SrcDs   = Nothing
         , gipt2DstDs   = Nothing
@@ -223,13 +224,13 @@ instance Transformer GenImgProjTransformer2 where
         opts
 
 foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
-  c_GDALGenImgProjTransform2 :: TransformerFun GenImgProjTransformer2 s
+  c_GDALGenImgProjTransform2 :: TransformerFun GenImgProjTransformer2 s a
 
 -- ############################################################################
 -- GenImgProjTransformer3
 -- ############################################################################
 
-data GenImgProjTransformer3 s =
+data GenImgProjTransformer3 s a =
      GenImgProjTransformer3 {
       gipt3SrcSrs :: Maybe SpatialReference
     , gipt3DstSrs :: Maybe SpatialReference
@@ -237,7 +238,7 @@ data GenImgProjTransformer3 s =
     , gipt3DstGt  :: Maybe Geotransform
   }
 
-instance Default (GenImgProjTransformer3 s) where
+instance Default (GenImgProjTransformer3 s a) where
   def = GenImgProjTransformer3 {
           gipt3SrcSrs = Nothing
         , gipt3DstSrs = Nothing
@@ -271,27 +272,28 @@ withMaybeGeotransformPtr Nothing   f = f nullPtr
 withMaybeGeotransformPtr (Just g) f = alloca $ \gp -> poke gp g >> f gp
 
 foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
-  c_GDALGenImgProjTransform3 :: TransformerFun GenImgProjTransformer3 s
+  c_GDALGenImgProjTransform3 :: TransformerFun GenImgProjTransformer3 s a
 
 -- ############################################################################
 -- GDALRasterizeLayersBuf
 -- ############################################################################
 
 rasterizeLayersBuf
-  :: forall s l b a. GDALType a
-  => GDAL s [ROLayer s l b]
-  -> SomeTransformer s
-  -> a
-  -> a
+  :: GDALType (HsType d)
+  => DataType d
+  -> GDAL s [ROLayer s l b]
+  -> SomeTransformer s (HsType d)
+  -> HsType d
+  -> HsType d
   -> OptionList
   -> Maybe ProgressFun
   -> SpatialReference
   -> Size
   -> Geotransform
-  -> OGR s l (U.Vector (Value a))
-rasterizeLayersBuf getLayers mTransformer nodataValue
-                   burnValue options progressFun
-                   srs size geotransform =
+  -> OGR s l (U.Vector (Value (HsType d)))
+rasterizeLayersBuf dt getLayers mTransformer nodataValue
+                      burnValue options progressFun
+                      srs size geotransform =
   bracket (liftOGR getLayers) (mapM_ closeLayer) $ \layers ->
   liftIO $
   withProgressFun "rasterizeLayersBuf" progressFun $ \pFun ->
@@ -309,7 +311,6 @@ rasterizeLayersBuf getLayers mTransformer nodataValue
         tArg bValue opts pFun nullPtr
     liftM (mkValueUVector nodataValue) (G.unsafeFreeze vec)
   where
-    dt = dataType (undefined :: a)
     bValue    = toCDouble burnValue
     nx :+: ny  = fmap fromIntegral size
 
@@ -327,22 +328,23 @@ class (Storable a, Typeable a, Default a, Show a) => GridAlgorithm a where
   setNodata     :: Ptr a -> CDouble -> IO ()
 
 createGridIO
-  :: GridAlgorithm opts
-  => opts
-  -> Double
+  :: (GDALType (HsType d), GridAlgorithm opts)
+  => DataType d
+  -> opts
+  -> HsType d
   -> Maybe ProgressFun
-  -> St.Vector GridPoint
+  -> St.Vector (GridPoint (HsType d))
   -> EnvelopeReal
   -> Size
-  -> IO (U.Vector (Value Double))
-createGridIO options noDataVal progressFun points envelope size =
+  -> IO (U.Vector (Value (HsType d)))
+createGridIO dt options noDataVal progressFun points envelope size =
   withProgressFun "createGridIO" progressFun $ \pFun ->
   withErrorHandler $
   with options $ \opts -> do
-    setNodata opts (realToFrac noDataVal)
+    setNodata opts (toCDouble noDataVal)
     xs <- G.unsafeThaw (St.unsafeCast (St.map (pFst . gpXY) points))
     ys <- G.unsafeThaw (St.unsafeCast (St.map (pSnd . gpXY) points))
-    zs <- G.unsafeThaw (St.unsafeCast (St.map gpZ         points))
+    zs <- G.unsafeThaw (St.map (toCDouble . gpZ) points)
     out <- GM.unsafeNew (sizeLen size)
     checkCPLError "GDALGridCreate" $
       Stm.unsafeWith xs $ \pXs ->
@@ -362,7 +364,7 @@ createGridIO options noDataVal progressFun points envelope size =
         y1
         nx
         ny
-        (fromEnumC GFloat64)
+        (fromEnumC dt)
         (castPtr pOut)
         pFun
         nullPtr
@@ -374,30 +376,31 @@ createGridIO options noDataVal progressFun points envelope size =
 
 
 createGrid
-  :: GridAlgorithm opts
-  => opts
-  -> Double
-  -> St.Vector GridPoint
+  :: (GDALType (HsType d), GridAlgorithm opts)
+  => DataType d
+  -> opts
+  -> HsType d
+  -> St.Vector (GridPoint (HsType d))
   -> EnvelopeReal
   -> Size
-  -> Either GDALException (U.Vector (Value Double))
-createGrid options noDataVal points envelope =
+  -> Either GDALException (U.Vector (Value (HsType d)))
+createGrid dt options noDataVal points envelope =
   unsafePerformIO .
   try .
-  createGridIO options noDataVal Nothing points envelope
+  createGridIO dt options noDataVal Nothing points envelope
 {-# INLINE createGrid #-}
 
 
-data GridPoint =
+data GridPoint a =
   GP {
     gpXY :: {-# UNPACK #-} !(Pair Double)
-  , gpZ  :: {-# UNPACK #-} !Double
+  , gpZ  ::                !a
   } deriving (Eq, Show, Read)
 
-instance Storable GridPoint where
-  sizeOf _ = sizeOf (undefined::Pair Double) + sizeOf (undefined::Double)
+instance Storable a => Storable (GridPoint a) where
+  sizeOf _ = sizeOf (undefined::Pair Double) + sizeOf (undefined::a)
   {-# INLINE sizeOf #-}
-  alignment _ = alignment (undefined::Double)
+  alignment _ = alignment (undefined::a)
   {-# INLINE alignment #-}
   poke ptr (GP xy z) = poke ptr' xy >> poke (castPtr (ptr' `advancePtr` 1)) z
     where ptr' = castPtr ptr :: Ptr (Pair Double)

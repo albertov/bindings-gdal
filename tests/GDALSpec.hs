@@ -7,7 +7,7 @@
 
 module GDALSpec (main, spec) where
 
-import Control.Monad (void, liftM, forM_)
+import Control.Monad (void, forM_)
 
 import Data.Maybe (isNothing)
 import Data.IORef (newIORef, readIORef, modifyIORef')
@@ -31,7 +31,7 @@ spec :: Spec
 spec = setupAndTeardown $ do
 
   it "cannot open non-existent file" $ do
-    openReadOnly "foo.tif" `shouldThrow` ((==OpenFailed) . gdalErrNum)
+    openReadOnly "foo.tif" GDT_Byte `shouldThrow` ((==OpenFailed) . gdalErrNum)
 
   withDir "can create compressed gtiff" $ \tmpDir -> do
     let p = joinPath [tmpDir, "test.tif"]
@@ -61,7 +61,7 @@ spec = setupAndTeardown $ do
     let p = joinPath [tmpDir, "test.tif"]
     ds <- create "GTIFF" p 3000 1 GDT_Int16 []
     flushCache ds
-    void $ (openReadOnly p)
+    void $ (openReadOnly p GDT_Int16)
 
   withDir "can create and copy dataset" $ \tmpDir -> do
     let p  = joinPath [tmpDir, "test.tif"]
@@ -114,7 +114,7 @@ spec = setupAndTeardown $ do
   it "can add raster band" $ do
     ds <- createMem (10 :+: 10) 1 GDT_Int16 []
     datasetBandCount ds >>= (`shouldBe` 1)
-    void $ liftM (`bandTypedAs` GDT_Float64) (addBand ds [])
+    void $ addBand ds []
     datasetBandCount ds >>= (`shouldBe` 2)
 
   describe "datasetGeotransform" $ do
@@ -175,7 +175,7 @@ spec = setupAndTeardown $ do
   it "can set and get nodata value" $ do
     ds <- createMem (10 :+: 10) 1 GDT_Int16 []
     b <- getBand 1 ds
-    nd <- bandNodataValue (b `bandTypedAs` GDT_Int16)
+    nd <- bandNodataValue b
     nd `shouldSatisfy` isNothing
     let nodataValue = (-1)
     setBandNodataValue b nodataValue
@@ -200,7 +200,7 @@ spec = setupAndTeardown $ do
       let len = bandBlockLen band
           vec = U.generate len (Value . fromIntegral)
           bs  = bandBlockSize band
-      writeBandBlock (band `bandTypedAs` GDT_Int16) 0 vec
+      writeBandBlock band 0 vec
       vec2 <- readBand (band `bandCoercedTo` GDT_Float64) (Envelope 0 bs) bs
       vec `shouldBe` U.map (fmap round) vec2
 
@@ -211,14 +211,14 @@ spec = setupAndTeardown $ do
           vec = U.generate len (Value . fromIntegral)
           bs  = bandBlockSize band
       writeBandBlock (band `bandCoercedTo` GDT_Float64) 0 vec
-      vec2 <- readBand (band `bandTypedAs` GDT_Int16) (Envelope 0 bs) bs
+      vec2 <- readBand band (Envelope 0 bs) bs
       vec2 `shouldBe` U.map (fmap round) vec
 
     it "can write and read band with automatic conversion" $ do
       ds <- createMem (100 :+: 100) 1 GDT_Int16 []
       b <- getBand 1 ds
       let vec = U.generate 10000 (Value . fromIntegral)
-      writeBand (b `bandTypedAs` GDT_Float64) (allBand b) (bandSize b) vec
+      writeBand b (allBand b) (bandSize b) vec
       vec2 <- readBand b (allBand b) (bandSize b)
       vec `shouldBe` vec2
 
@@ -227,7 +227,7 @@ spec = setupAndTeardown $ do
       it "can fill and read band" $ do
         forM_ ([-10..10]) $ \value -> do
           band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
-          fillBand (Value value)  (band `bandTypedAs` GDT_Int16)
+          fillBand (Value value)  band
           v <- readBand band (allBand band) (bandSize band)
           U.length v `shouldBe` 10000
           let allEqual = U.foldl' f True v
@@ -237,7 +237,7 @@ spec = setupAndTeardown $ do
 
       it "can fill with NoData if setBandNodataValue" $ do
         band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
-        setBandNodataValue (band `bandTypedAs` GDT_Int16) (-999)
+        setBandNodataValue band (-999)
         fillBand NoData band
         v <- readBand band (allBand band) (bandSize band)
         v `shouldSatisfy` (U.all isNoData)
@@ -246,20 +246,19 @@ spec = setupAndTeardown $ do
         ds <- create "GTIFF" (joinPath [d, "test.tif"]) 100 1 GDT_Int16 []
         band <- getBand 1 ds
         createBandMask band MaskPerDataset
-        fillBand NoData (band `bandTypedAs` GDT_Int16)
+        fillBand NoData band
         v <- readBand band (allBand band) (bandSize band)
         v `shouldSatisfy` (U.all isNoData)
 
       it "cannot fill with NoData if no nodata value or mask has been set" $ do
         band <- getBand 1 =<< createMem (100 :+: 100) 1 GDT_Int16 []
-        fillBand NoData (band `bandTypedAs` GDT_Int16)
-          `shouldThrow` (==BandDoesNotAllowNoData)
+        fillBand NoData band `shouldThrow` (==BandDoesNotAllowNoData)
 
     it "can write and read block with automatic conversion" $ do
       ds <- createMem (100 :+: 100) 1 GDT_Int16 []
       band <- getBand 1 ds
       let vec = U.generate (bandBlockLen band) (Value . fromIntegral)
-      writeBandBlock (band `bandTypedAs` GDT_Float64) 0 vec
+      writeBandBlock band 0 vec
       vec2 <- readBandBlock band 0
       vec `shouldBe` vec2
 

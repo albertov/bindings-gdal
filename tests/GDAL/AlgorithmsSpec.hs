@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -38,6 +39,7 @@ spec = setupAndTeardown $ do
                      createLayerWithDef ds fDef StrictOK []
      v <- runOGR $
           rasterizeLayersBuf
+            GDT_Float64
             (sequence [mkLayer])
             DefaultTransformer
             0
@@ -47,16 +49,16 @@ spec = setupAndTeardown $ do
             srs4326
             size
             (northUpGeotransform size env)
-     (v :: U.Vector (Value Double)) `shouldSatisfy` U.all (==NoData)
+     v `shouldSatisfy` U.all (==NoData)
 
    it "burns value passed as parameter" $ do
      ds <- OGR.createMem []
      let size = 100
-         burnValue = 10 :: Double
+         burnValue = 10
          Just geom = do
            g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
            geomBuffer 0.05 10 g
-         feat = TestFeature geom (0 :: Double) (0 :: Double)
+         feat = TestFeature geom 87 99
          env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
      l <- createLayer ds StrictOK []
      createFeature_ l feat
@@ -64,6 +66,7 @@ spec = setupAndTeardown $ do
 
      v <- runOGR $
           rasterizeLayersBuf
+            GDT_Float64
             (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
             DefaultTransformer
             0
@@ -74,6 +77,8 @@ spec = setupAndTeardown $ do
             size
             (northUpGeotransform size env)
      v `shouldSatisfy` U.any (==(Value burnValue))
+     v `shouldSatisfy` U.all (/=(Value (tfField1 feat)))
+     v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
 
    it "burns attribute from feature" $ do
      ds <- OGR.createMem []
@@ -81,7 +86,7 @@ spec = setupAndTeardown $ do
          Just geom = do
            g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
            geomBuffer 0.05 10 g
-         feat = TestFeature geom (15 :: Double) (0 :: Double)
+         feat = TestFeature geom 15 0
          env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
      l <- createLayer ds StrictOK []
      createFeature_ l feat
@@ -89,6 +94,7 @@ spec = setupAndTeardown $ do
 
      v <- runOGR $
           rasterizeLayersBuf
+            GDT_Float64
             (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
             DefaultTransformer
             0
@@ -99,15 +105,16 @@ spec = setupAndTeardown $ do
             size
             (northUpGeotransform size env)
      v `shouldSatisfy` U.any (==(Value (tfField1 feat)))
+     v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
 
    it "transforms geometries" $ do
      ds <- OGR.createMem []
      let size = 100
-         burnValue = 10 :: Double
+         burnValue = 10
          Just geom = do
            g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
            geomBuffer 0.05 10 g
-         feat = TestFeature geom (0 :: Double) (0 :: Double)
+         feat = TestFeature geom 7 9
          Right ct = coordinateTransformation srs4326 srs23030
          env4326  = Envelope ((-3) :+: 42) ((-2) :+: 43)
          Just env23030 = env4326 `transformWith` ct
@@ -117,6 +124,7 @@ spec = setupAndTeardown $ do
 
      v <- runOGR $
           rasterizeLayersBuf
+            GDT_Float64
             (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
             DefaultTransformer
             0
@@ -127,9 +135,12 @@ spec = setupAndTeardown $ do
             size
             (northUpGeotransform size env4326)
      v `shouldSatisfy` U.all (==NoData)
+     v `shouldSatisfy` U.all (/=(Value (tfField1 feat)))
+     v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
 
      w <- runOGR $
           rasterizeLayersBuf
+            GDT_Float64
             (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
             DefaultTransformer
             0
@@ -142,82 +153,22 @@ spec = setupAndTeardown $ do
      w `shouldSatisfy` U.any (==(Value burnValue))
 
 
-  createGridIOSpec (SGA (def :: GridInverseDistanceToAPower))
-  createGridIOSpec (SGA (def :: GridMovingAverage))
-  createGridIOSpec (SGA (def :: GridNearestNeighbor))
+  createGridIOSpec GDT_Float64 (SGA (def :: GridInverseDistanceToAPower))
+  createGridIOSpec GDT_Float64 (SGA (def :: GridMovingAverage))
+  createGridIOSpec GDT_Float64 (SGA (def :: GridNearestNeighbor))
 
-  describe "createGridIO (GridDataMetrics)" $ do
+  createGridIOSpec GDT_Int32 (SGA (def :: GridInverseDistanceToAPower))
+  createGridIOSpec GDT_Int32 (SGA (def :: GridMovingAverage))
+  createGridIOSpec GDT_Int32 (SGA (def :: GridNearestNeighbor))
 
-    describeWith (def {dmType = MetricCount}) $ \opts -> do
+  --createGridIOSpec GDT_CFloat64 (SGA (def :: GridInverseDistanceToAPower))
+  --createGridIOSpec GDT_CFloat64 (SGA (def :: GridMovingAverage))
+  --createGridIOSpec GDT_CFloat64 (SGA (def :: GridNearestNeighbor))
 
-      itIO "produces all zeros when no points" $ do
-        vec <- createGridIO
-                 opts
-                 (-1)
-                 Nothing
-                 []
-                 (Envelope (-500) 500)
-                 (100 :+: 100)
-        vec `shouldSatisfy` U.all (==(Value 0 :: Value Double))
+  createGridIOMetricsSpec GDT_Float64
+  createGridIOMetricsSpec GDT_Int32
+  -- createGridIOMetricsSpec GDT_CFloat64 BROKEN
 
-      itIO "produces a vector with some values > 0" $ do
-        vec <- createGridIO
-                 opts
-                 (-1)
-                 Nothing
-                 [GP (0 :+: 0) 10]
-                 (Envelope (-500) 500)
-                 (100 :+: 100)
-        vec `shouldSatisfy` U.any (>(Value 0 :: Value Double))
-
-
-    describeWith (def {dmType = MetricMaximum}) $ \opts -> do
-
-      itIO "produces a NoData vector when no points" $ do
-        vec <- createGridIO
-                 opts
-                 (-1)
-                 Nothing
-                 []
-                 (Envelope (-500) 500)
-                 (100 :+: 100)
-        vec `shouldSatisfy` U.all (==(NoData :: Value Double))
-
-      itIO "produces a vector that contains the maximum value" $ do
-        vec <- createGridIO
-                 opts
-                 (-1)
-                 Nothing
-                 [ GP (2 :+: 2) 10
-                 , GP (0 :+: 0) 2]
-                 (Envelope (-500) 500)
-                 (100 :+: 100)
-        vec `shouldSatisfy` U.any (==(Value 10 :: Value Double))
-        vec `shouldSatisfy` U.all (/=(Value 2 :: Value Double))
-
-    describeWith (def {dmType = MetricMinimum}) $ \opts -> do
-
-      itIO "produces a NoData vector when no points" $ do
-        vec <- createGridIO
-                 opts
-                 (-1)
-                 Nothing
-                 []
-                 (Envelope (-500) 500)
-                 (100 :+: 100)
-        vec `shouldSatisfy` U.all (==(NoData :: Value Double))
-
-      itIO "produces a vector that contains the minimum value" $ do
-        vec <- createGridIO
-                 opts
-                 (-1)
-                 Nothing
-                 [ GP (2 :+: 2) 10
-                 , GP (0 :+: 0) 2]
-                 (Envelope (-500) 500)
-                 (100 :+: 100)
-        vec `shouldSatisfy` U.any (==(Value 2 :: Value Double))
-        vec `shouldSatisfy` U.all (/=(Value 10 :: Value Double))
 
   describe "contourGenerateVectorIO" $ do
 
@@ -263,32 +214,118 @@ describeWith opts act = describe ("with "++ show opts) (act opts)
 data SomeGridAlgorithm = forall a. GridAlgorithm a => SGA a
 
 
-createGridIOSpec :: SomeGridAlgorithm -> SpecWith (Arg (IO ()))
-createGridIOSpec (SGA opts) = do
+createGridIOSpec
+  :: GDALType (HsType d)
+  => DataType d -> SomeGridAlgorithm -> SpecWith (Arg (IO ()))
+createGridIOSpec dt (SGA opts) = do
 
-  describe ("createGridIO (with "++ show opts ++")") $ do
+  describe ("createGridIO " ++ show dt ++ "(with "++ show opts ++")") $ do
 
     itIO "produces a NoData vector when no points" $ do
       vec <- createGridIO
+               dt
                opts
                (-1)
                Nothing
                []
                (Envelope (-500) 500)
                (100 :+: 100)
-      vec `shouldSatisfy` U.all (==(NoData :: Value Double))
+      vec `shouldSatisfy` U.all (==NoData)
 
     itIO "produces a vector with values when some points" $ do
       vec <- createGridIO
+               dt
                opts
                (-1)
                Nothing
                [GP (0 :+: 0) 10]
                (Envelope (-500) 500)
                (100 :+: 100)
-      vec `shouldSatisfy` U.any (/=(NoData :: Value Double))
+      vec `shouldSatisfy` U.any (/=NoData)
 
 
+createGridIOMetricsSpec
+  :: (Ord (HsType d), GDALType (HsType d))
+  => DataType d -> SpecWith (Arg (IO ()))
+createGridIOMetricsSpec dt = do
+  describe ("createGridIO " ++ show dt ++ " (GridDataMetrics)") $ do
+
+    describeWith (def {dmType = MetricCount}) $ \opts -> do
+
+      itIO "produces all zeros when no points" $ do
+        vec <- createGridIO
+                 dt
+                 opts
+                 (-1)
+                 Nothing
+                 []
+                 (Envelope (-500) 500)
+                 (100 :+: 100)
+        vec `shouldSatisfy` U.all (==Value 0)
+
+      itIO "produces a vector with some values > 0" $ do
+        vec <- createGridIO
+                 dt
+                 opts
+                 (-1)
+                 Nothing
+                 [GP (0 :+: 0) 10]
+                 (Envelope (-500) 500)
+                 (100 :+: 100)
+        vec `shouldSatisfy` U.any (>Value 0)
+
+
+    describeWith (def {dmType = MetricMaximum}) $ \opts -> do
+
+      itIO "produces a NoData vector when no points" $ do
+        vec <- createGridIO
+                 dt
+                 opts
+                 (-1)
+                 Nothing
+                 []
+                 (Envelope (-500) 500)
+                 (100 :+: 100)
+        vec `shouldSatisfy` U.all (==NoData)
+
+      itIO "produces a vector that contains the maximum value" $ do
+        vec <- createGridIO
+                 dt
+                 opts
+                 (-1)
+                 Nothing
+                 [ GP (2 :+: 2) 10
+                 , GP (0 :+: 0) 2]
+                 (Envelope (-500) 500)
+                 (100 :+: 100)
+        vec `shouldSatisfy` U.any (==Value 10)
+        vec `shouldSatisfy` U.all (/=Value 2)
+
+    describeWith (def {dmType = MetricMinimum}) $ \opts -> do
+
+      itIO "produces a NoData vector when no points" $ do
+        vec <- createGridIO
+                 dt
+                 opts
+                 (-1)
+                 Nothing
+                 []
+                 (Envelope (-500) 500)
+                 (100 :+: 100)
+        vec `shouldSatisfy` U.all (==NoData)
+
+      itIO "produces a vector that contains the minimum value" $ do
+        vec <- createGridIO
+                 dt
+                 opts
+                 (-1)
+                 Nothing
+                 [ GP (2 :+: 2) 10
+                 , GP (0 :+: 0) 2]
+                 (Envelope (-500) 500)
+                 (100 :+: 100)
+        vec `shouldSatisfy` U.any (==Value 2)
+        vec `shouldSatisfy` U.all (/=Value 10)
 
 liftMaybe :: Either b a -> Maybe a
 liftMaybe = either (const Nothing) Just

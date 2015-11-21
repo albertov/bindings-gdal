@@ -4,7 +4,6 @@ module GDAL.WarperSpec (main, spec) where
 
 import Control.Monad (forM_)
 import Data.Default (def)
-import Data.Int (Int32)
 import qualified Data.Vector.Unboxed as U
 
 import GDAL
@@ -109,20 +108,19 @@ spec = setupAndTeardown $ do
         let sz  = 100 :+: 100
             sz2 = 200 :+: 200
             gt  = Geotransform 0 10 0 0 0 (-10)
-            v1 :: U.Vector (Value Int32)
             v1  = U.generate (sizeLen sz)
                   (\i -> if i<50 then NoData else Value (fromIntegral i))
         ds' <- createMem sz 1 GDT_Int32 []
         setDatasetGeotransform ds' gt
         b <- getBand 1 ds'
-        setBandNodataValue b ((-1) :: Int32)
+        setBandNodataValue b (-1)
         writeBand b (allBand b) sz v1
         ds <- unsafeToReadOnly ds'
 
         ds2 <- createMem sz2 1 GDT_Int32 []
         setDatasetGeotransform ds2 gt
         b2 <- getBand 1 ds2
-        setBandNodataValue b2 ((-2) :: Int32)
+        setBandNodataValue b2 (-2)
 
         reprojectImage ds Nothing ds2 Nothing 0 Nothing def {woResampleAlg=algo}
         flushCache ds2
@@ -140,13 +138,12 @@ spec = setupAndTeardown $ do
           opts = def {woCutline=Just cl}
           sz  = 100 :+: 100
           sz2 = 200 :+: 200
-          v1 :: U.Vector (Value Int32)
           v1  = U.generate (sizeLen sz)
                 (\i -> if i<50 then NoData else Value (fromIntegral i))
       ds' <- createMem sz 1 GDT_Int32 []
       setDatasetGeotransform ds' gt
       b <- getBand 1 ds'
-      setBandNodataValue b ((-1) :: Int32)
+      setBandNodataValue b (-1)
       writeBand b (allBand b) sz v1
       ds <- unsafeToReadOnly ds'
 
@@ -161,13 +158,12 @@ spec = setupAndTeardown $ do
         let sz  = 100 :+: 100
             sz2 = 200 :+: 200
             gt  = Geotransform 0 10 0 0 0 (-10)
-            v1 :: U.Vector (Value Int32)
             v1  = U.generate (sizeLen sz)
                   (\i -> if i<50 then NoData else Value (fromIntegral i))
         ds' <- createMem sz 1 GDT_Int32 []
         setDatasetGeotransform ds' gt
         b <- getBand 1 ds'
-        setBandNodataValue b ((-1) :: Int32)
+        setBandNodataValue b (-1)
         writeBand b (allBand b) sz v1
         ds <- unsafeToReadOnly ds'
 
@@ -186,13 +182,12 @@ spec = setupAndTeardown $ do
         let sz  = 100 :+: 100
             sz2 = 200 :+: 200
             gt  = Geotransform 0 10 0 0 0 (-10)
-            v1 :: U.Vector (Value Int32)
             v1  = U.generate (sizeLen sz)
                   (\i -> if i<50 then NoData else Value (fromIntegral i))
         ds' <- createMem sz 1 GDT_Int32 []
         setDatasetGeotransform ds' gt
         b <- getBand 1 ds'
-        setBandNodataValue b ((-1) :: Int32)
+        setBandNodataValue b (-1)
         writeBand b (allBand b) sz v1
         ds <- unsafeToReadOnly ds'
 
@@ -211,13 +206,12 @@ spec = setupAndTeardown $ do
         let sz  = 100 :+: 100
             sz2 = 200 :+: 200
             gt  = Geotransform 0 10 0 0 0 (-10)
-            v1 :: U.Vector (Value Int32)
             v1  = U.generate (sizeLen sz)
                   (\i -> if i<50 then NoData else Value (fromIntegral i))
         ds' <- createMem sz 1 GDT_Int32 []
         setDatasetGeotransform ds' gt
         b <- getBand 1 ds'
-        setBandNodataValue b ((-1) :: Int32)
+        setBandNodataValue b (-1)
         writeBand b (allBand b) sz v1
         ds <- unsafeToReadOnly ds'
 

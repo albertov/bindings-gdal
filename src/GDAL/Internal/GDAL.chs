@@ -59,7 +59,6 @@ module GDAL.Internal.GDAL (
   , buildOverviews
   , driverCreationOptionList
 
-  , bandTypedAs
   , bandCoercedTo
 
   , datasetDriver
@@ -212,22 +211,22 @@ nullDatasetH = DatasetH nullPtr
 
 deriving instance Eq DatasetH
 
-newtype Dataset s (t::AccessMode) =
+newtype Dataset s a (t::AccessMode) =
   Dataset (ReleaseKey, DatasetH)
 
-instance MajorObject (Dataset s) t where
+instance MajorObject (Dataset s a) t where
   majorObject ds =
     let DatasetH p = unDataset ds
     in MajorObjectH (castPtr p)
 
-unDataset :: Dataset s t -> DatasetH
+unDataset :: Dataset s a t -> DatasetH
 unDataset (Dataset (_,s)) = s
 
-closeDataset :: MonadIO m => Dataset s t -> m ()
+closeDataset :: MonadIO m => Dataset s a t -> m ()
 closeDataset (Dataset (rk,_)) = release rk
 
-type RODataset s = Dataset s ReadOnly
-type RWDataset s = Dataset s ReadWrite
+type RODataset s a = Dataset s a ReadOnly
+type RWDataset s a = Dataset s a ReadWrite
 
 {#pointer RasterBandH newtype #}
 
@@ -245,10 +244,6 @@ unBand (Band (p,_)) = p
 bandDataType :: Band s a t -> DataTypeK
 bandDataType (Band (_,t)) = t
 {-# INLINE bandDataType #-}
-
-bandTypedAs :: Band s (HsType d) t -> DataType d -> Band s (HsType d) t
-bandTypedAs = const . id
-{-# INLINE bandTypedAs #-}
 
 bandCoercedTo :: Band s a t -> DataType d -> Band s (HsType d) t
 bandCoercedTo = const . coerce
@@ -288,7 +283,7 @@ validateCreationOptions d o = do
 
 create
   :: Driver -> String -> Size -> Int -> DataType d -> OptionList
-  -> GDAL s (Dataset s ReadWrite)
+  -> GDAL s (Dataset s (HsType d) ReadWrite)
 create drv path (nx :+: ny) bands dtype  options =
   newDatasetHandle $ withCString path $ \path' -> do
     let nx'    = fromIntegral nx
@@ -323,24 +318,24 @@ copyFiles driver newName oldName =
     withCString newName $
       withCString oldName . ({#call CopyDatasetFiles as ^#} d)
 
-openReadOnly :: String -> GDAL s (RODataset s)
-openReadOnly p = openWithMode GA_ReadOnly p
+openReadOnly :: String -> DataType d -> GDAL s (RODataset s (HsType d))
+openReadOnly p _ = openWithMode GA_ReadOnly p
 
-openReadWrite :: String -> GDAL s (RWDataset s)
-openReadWrite p = openWithMode GA_Update p
+openReadWrite :: String -> DataType d -> GDAL s (RWDataset s (HsType d))
+openReadWrite p _ = openWithMode GA_Update p
 
-openWithMode :: GDALAccess -> String -> GDAL s (Dataset s t)
+openWithMode :: GDALAccess -> String -> GDAL s (Dataset s a t)
 openWithMode m path =
   newDatasetHandle $
   withCString path $
   flip {#call GDALOpen as ^#} (fromEnumC m)
 
-unsafeToReadOnly :: RWDataset s -> GDAL s (RODataset s)
+unsafeToReadOnly :: RWDataset s a -> GDAL s (RODataset s a)
 unsafeToReadOnly ds = flushCache ds >> return (coerce ds)
 
 createCopy
-  :: Driver -> String -> Dataset s t -> Bool -> OptionList
-  -> Maybe ProgressFun -> GDAL s (RWDataset s)
+  :: Driver -> String -> Dataset s a t -> Bool -> OptionList
+  -> Maybe ProgressFun -> GDAL s (RWDataset s a)
 createCopy driver path ds strict options progressFun =
   newDatasetHandle $
   withProgressFun "createCopy" progressFun $ \pFunc -> do
@@ -353,7 +348,7 @@ createCopy driver path ds strict options progressFun =
 
 
 
-newDatasetHandle :: IO DatasetH -> GDAL s (Dataset s t)
+newDatasetHandle :: IO DatasetH -> GDAL s (Dataset s a t)
 newDatasetHandle act =
   liftM Dataset $ allocate (checkGDALCall checkit act) free
   where
@@ -366,46 +361,47 @@ newDatasetHandle act =
       when (refCount<=0) ({#call GDALClose as ^#} ds)
 
 createMem
-  :: Size -> Int -> DataType d -> OptionList -> GDAL s (Dataset s ReadWrite)
+  :: Size -> Int -> DataType d -> OptionList
+  -> GDAL s (Dataset s (HsType d) ReadWrite)
 createMem = create "Mem" ""
 
-flushCache :: forall s. RWDataset s -> GDAL s ()
+flushCache :: RWDataset s a -> GDAL s ()
 flushCache = liftIO . {#call GDALFlushCache as ^#} . unDataset
 
-datasetDriver :: Dataset s t -> Driver
+datasetDriver :: Dataset s a t -> Driver
 datasetDriver ds =
   unsafePerformIO $
   liftM Driver $ do
     driver <-{#call unsafe GetDatasetDriver as ^#} (unDataset ds)
     {#call unsafe GetDriverShortName as ^#} driver >>= packCString
 
-datasetSize :: Dataset s t -> Size
+datasetSize :: Dataset s a t -> Size
 datasetSize ds =
   fmap fromIntegral $
         ({#call pure unsafe GetRasterXSize as ^#} (unDataset ds))
     :+: ({#call pure unsafe GetRasterYSize as ^#} (unDataset ds))
 
-datasetFileList :: Dataset s t -> GDAL s [Text]
+datasetFileList :: Dataset s a t -> GDAL s [Text]
 datasetFileList =
   liftIO .
   fromCPLStringList .
   {#call unsafe GetFileList as ^#} .
   unDataset
 
-datasetProjection :: Dataset s t -> GDAL s (Maybe SpatialReference)
+datasetProjection :: Dataset s a t -> GDAL s (Maybe SpatialReference)
 datasetProjection =
   liftIO . ({#call unsafe GetProjectionRef as ^#} . unDataset
               >=> maybeSpatialReferenceFromCString)
 
 
-setDatasetProjection :: RWDataset s -> SpatialReference -> GDAL s ()
+setDatasetProjection :: RWDataset s a -> SpatialReference -> GDAL s ()
 setDatasetProjection ds srs =
   liftIO $ checkCPLError "SetProjection" $
     unsafeUseAsCString (srsToWkt srs)
       ({#call unsafe SetProjection as ^#} (unDataset ds))
 
 setDatasetGCPs
-  :: RWDataset s -> [GroundControlPoint] -> Maybe SpatialReference -> GDAL s ()
+  :: RWDataset s a -> [GroundControlPoint] -> Maybe SpatialReference -> GDAL s ()
 setDatasetGCPs ds gcps mSrs =
   liftIO $
   checkCPLError "setDatasetGCPs" $
@@ -417,7 +413,7 @@ setDatasetGCPs ds gcps mSrs =
     pGcps
 
 datasetGCPs
-  :: Dataset s t
+  :: Dataset s a t
   -> GDAL s ([GroundControlPoint], Maybe SpatialReference)
 datasetGCPs ds =
   liftIO $ do
@@ -439,7 +435,7 @@ data OverviewResampling
   | OvNone
 
 buildOverviews
-  :: RWDataset s -> OverviewResampling -> [Int] -> [Int] -> Maybe ProgressFun
+  :: RWDataset s a -> OverviewResampling -> [Int] -> [Int] -> Maybe ProgressFun
   -> GDAL s ()
 buildOverviews ds resampling overviews bands progressFun =
   liftIO $
@@ -569,7 +565,7 @@ instance Storable Geotransform where
                  <*> liftM realToFrac (peekElemOff p 5)
 
 
-datasetGeotransform :: Dataset s t -> GDAL s (Maybe Geotransform)
+datasetGeotransform :: Dataset s a t -> GDAL s (Maybe Geotransform)
 datasetGeotransform ds = liftIO $ alloca $ \p -> do
   ret <- {#call unsafe GetGeoTransform as ^#} (unDataset ds) (castPtr p)
   if toEnumC ret == CE_None
@@ -577,17 +573,17 @@ datasetGeotransform ds = liftIO $ alloca $ \p -> do
     else return Nothing
 
 
-setDatasetGeotransform :: RWDataset s -> Geotransform -> GDAL s ()
+setDatasetGeotransform :: RWDataset s a -> Geotransform -> GDAL s ()
 setDatasetGeotransform ds gt = liftIO $
   checkCPLError "SetGeoTransform" $
     with gt ({#call unsafe SetGeoTransform as ^#} (unDataset ds) . castPtr)
 
 
-datasetBandCount :: Dataset s t -> GDAL s Int
+datasetBandCount :: Dataset s a t -> GDAL s Int
 datasetBandCount =
   liftM fromIntegral . liftIO . {#call unsafe GetRasterCount as ^#} . unDataset
 
-getBand :: Int -> Dataset s t -> GDAL s (Band s a t)
+getBand :: Int -> Dataset s a t -> GDAL s (Band s a t)
 getBand b ds = liftIO $ do
   pB <- checkGDALCall checkit $
          {#call GetRasterBand as ^#} (unDataset ds) (fromIntegral b)
@@ -604,7 +600,7 @@ isNativeBand = (==hsDataTypeK (undefined ::  a)) . bandDataType
 
 addBand
   :: forall s a. GDALType a
-  => RWDataset s -> OptionList -> GDAL s (RWBand s a)
+  => RWDataset s a -> OptionList -> GDAL s (RWBand s a)
 addBand ds options = do
   liftIO $
     checkCPLError "addBand" $

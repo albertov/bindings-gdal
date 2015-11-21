@@ -58,7 +58,6 @@ module GDAL (
   , createCopy
   , buildOverviews
 
-  , bandTypedAs
   , bandCoercedTo
 
   , datasetDriver

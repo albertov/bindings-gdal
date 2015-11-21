@@ -23,7 +23,6 @@ toSummaryType = fromIntegral
 
 -}
 
-type BandType = Double
 type SummaryType = Double
 
 sumTypeInf, sumTypeNegInf :: SummaryType
@@ -33,15 +32,14 @@ sumTypeNegInf = (-1/0)
 toDouble :: SummaryType -> Double
 toDouble = id
 
-toSummaryType :: BandType -> SummaryType
 toSummaryType = id
 
 main :: IO ()
 main = withGDAL $ do
   [fname] <- getArgs
   summary <- execGDAL $ do
-    b <- openReadOnly fname >>= getBand 1
-    computeStatistics b
+    b <- openReadOnly fname GDT_Float64 >>= getBand 1
+    computeStatistics toSummaryType b
   print summary
 
 data Acc = Acc
@@ -55,14 +53,15 @@ data Acc = Acc
 type Summary = (Double, Double, SummaryType, SummaryType)
 
 computeStatistics
-  :: ROBand s BandType -> GDAL s Summary
-computeStatistics
+  :: GDALType a
+  => (a -> SummaryType) -> ROBand s a -> GDAL s Summary
+computeStatistics toSummaryType'
   = fmap sumarize . GDAL.foldl' folder (Acc 0 0 sumTypeInf sumTypeNegInf 0)
   where
     folder acc NoData = acc
     folder Acc{..} (Value v')
       = Acc (accS+v) (accSq+v*v) (min accMin v) (max accMax v) (accCnt+1)
-      where v = toSummaryType v'
+      where v = toSummaryType' v'
     sumarize Acc{..} = (avg, stddev, accMin, accMax)
       where
         avg    = toDouble accS  / fromIntegral accCnt
