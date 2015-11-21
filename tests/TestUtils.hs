@@ -68,9 +68,7 @@ runGDAL' a = do
   case r of
     Left (e :: GDALException) ->
       Hspec.expectationFailure ("Unexpected GDALException: " ++ show e)
-    Right ((),[]) -> return ()
-    Right ((),msgs) ->
-      Hspec.expectationFailure ("Uncollected GDALExceptions " ++ show msgs)
+    Right () -> return ()
 
 existsAndSizeIsGreaterThan
   :: (MonadIO m, MonadCatch m)

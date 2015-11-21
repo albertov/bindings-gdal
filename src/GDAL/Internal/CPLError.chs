@@ -14,7 +14,6 @@ module GDAL.Internal.CPLError (
   , throwBindingException
   , bindingExceptionToException
   , bindingExceptionFromException
-  , withErrorHandler
   , getErrors
   , popLastError
   , checkCPLError
@@ -30,7 +29,6 @@ import Control.Monad (void, liftM)
 import Control.Monad.Catch (
     Exception (..)
   , SomeException
-  , MonadMask
   , MonadThrow (throwM)
   , mask
   , onException
@@ -108,21 +106,21 @@ isBindingException e
 
 
 checkGDALCall
-  :: (MonadMask m, MonadIO m, Exception e)
-  => (Maybe GDALException -> a -> Maybe e) -> m a -> m a
-checkGDALCall isOk act = mask $ \restore -> do
-  liftIO clearErrors
-  (a,err) <- restore (do r<-act; err<-liftIO popLastError; return (r,err))
-              `onException` (liftIO clearErrors)
-  liftIO clearErrors
+  :: Exception e
+  => (Maybe GDALException -> a -> Maybe e) -> IO a -> IO a
+checkGDALCall isOk act = withErrorHandler $ mask $ \restore -> do
+  clearErrors
+  (a,err) <- restore (do r<-act; err<-popLastError; return (r,err))
+              `onException` clearErrors
+  clearErrors
   case isOk err a of
     Nothing -> return a
     Just e  -> throwM e
 {-# INLINE checkGDALCall #-}
 
 checkGDALCall_
-  :: (MonadMask m, MonadIO m, Functor m, Exception e)
-  => (Maybe GDALException -> a -> Maybe e) -> m a -> m ()
+  :: Exception e
+  => (Maybe GDALException -> a -> Maybe e) -> IO a -> IO ()
 {-# INLINE checkGDALCall_ #-}
 checkGDALCall_ isOk = void . checkGDALCall isOk
 
@@ -160,13 +158,14 @@ withErrorHandler :: IO a -> IO a
 withErrorHandler act = runBounded $
   ({#call unsafe push_error_handler as ^#} >> act)
     `finally` {#call unsafe pop_error_handler as ^#}
-  where
-    runBounded
-      | rtsSupportsBoundThreads = runInBoundThread
-      | otherwise               = id
+
+runBounded :: IO a -> IO a
+runBounded
+  | rtsSupportsBoundThreads = runInBoundThread
+  | otherwise               = id
 
 withQuietErrorHandler :: IO a -> IO a
-withQuietErrorHandler a = (pushIt >> a) `finally` popIt
+withQuietErrorHandler a = runBounded ((pushIt >> a) `finally` popIt)
   where
     pushIt = {#call unsafe CPLPushErrorHandler as ^#} c_quietErrorHandler
     popIt  = {#call unsafe CPLPopErrorHandler as ^#}

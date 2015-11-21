@@ -192,14 +192,12 @@ deriving instance MonadMask (GDAL s)
 deriving instance MonadBase IO (GDAL s)
 deriving instance MonadResource (GDAL s)
 
-runGDAL :: NFData a => (forall s. GDAL s a) -> IO (a, [GDALException])
-runGDAL (GDAL a) = withErrorHandler $ do
-  ret <- runResourceT (a >>= liftIO . evaluate . force)
-  errs <- getErrors
-  return (ret, errs)
+runGDAL :: NFData a => (forall s. GDAL s a) -> IO a
+runGDAL (GDAL a) = runResourceT (a >>= liftIO . evaluate . force)
 
 execGDAL :: NFData a => (forall s. GDAL s a) -> IO a
-execGDAL a = liftM fst (runGDAL a)
+execGDAL = runGDAL
+{-# DEPRECATED execGDAL "dont use it" #-}
 
 unsafeGDALToIO :: GDAL s a -> GDAL s (IO a)
 unsafeGDALToIO (GDAL act) = do
