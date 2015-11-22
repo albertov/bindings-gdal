@@ -102,6 +102,7 @@ module GDAL.Internal.GDAL (
   , ifoldl'
   , blockConduit
   , unsafeBlockConduit
+  , blockSink
 
   , unDataset
   , unBand
@@ -144,7 +145,7 @@ import Foreign.C.Types
 import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrBytes)
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.Marshal.Alloc (alloca, allocaBytes)
+import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (withArrayLen)
 import Foreign.Marshal.Utils (toBool, fromBool, with)
 
@@ -847,58 +848,57 @@ ifoldl' f z band =
 writeBandBlock
   :: forall s a. GDALType a
   => RWBand s a -> BlockIx  -> U.Vector (Value a) -> GDAL s ()
-writeBandBlock band blockIx uvec = do
-  when (bandBlockLen band /= len) $
-    throwBindingException (InvalidBlockSize len)
-  writeMasked band write writeMask uvec
+writeBandBlock band blockIx uvec =
+  runConduit (yield (blockIx, uvec) =$= blockSink band)
+{-# INLINE writeBandBlock #-}
+
+
+blockSink
+  :: forall s a. GDALType a
+  => RWBand s a
+  -> Sink (BlockIx, U.Vector (Value a)) (GDAL s) ()
+blockSink band = do
+  writeBlock <-
+    if dtBand==dtBuf
+      then return writeNative
+      else do tempBuf <- liftIO (mallocForeignPtrBytes (len*szBand))
+              return (writeTranslated tempBuf)
+  lift (bandMaskType band) >>= \case
+    MaskNoData   -> lift (noDataOrFail band) >>= sinkNodata   writeBlock
+    MaskAllValid ->                              sinkAllValid writeBlock
+    _            -> lift (bandMask band)     >>= sinkMask     writeBlock
+
   where
-    write
-      | dtBand == dtBuf = writeNative
-      | otherwise       = writeTranslated
+    len    = bandBlockLen band
     dtBand = bandDataType (band)
+    szBand = sizeOfDataType dtBand
     dtBuf  = dataType (undefined :: a)
-    len = G.length uvec
-    bi  = fmap fromIntegral blockIx
+    szBuf  = sizeOfDataType dtBuf
 
-    writeNative _ buf =
-      liftIO $
-      St.unsafeWith buf $ \pBuf ->
-      checkCPLError "WriteBlock" $
-      {#call WriteBlock as ^#}
-        (unBand band)
-        (pFst bi)
-        (pSnd bi)
-        (castPtr pBuf)
+    sinkNodata writeBlock nd = awaitForever $ \(ix, vec) -> liftIO $ do
+      checkLen vec
+      St.unsafeWith (toGVecWithNodata nd vec) (writeBlock ix)
 
-    writeTranslated _ buf = liftIO $
-      allocaBytes (len*sizeOfDataType dtBand) $ \pWork ->
-      St.unsafeWith buf $ \pBuf -> do
-        {#call unsafe CopyWords as ^#}
-          (castPtr pBuf)
-          (fromEnumC dtBuf)
-          (fromIntegral (sizeOfDataType dtBuf))
-          pWork
-          (fromEnumC dtBand)
-          (fromIntegral (sizeOfDataType dtBand))
-          (fromIntegral len)
+
+    sinkAllValid writeBlock = awaitForever $ \(ix, vec) -> liftIO $ do
+      checkLen vec
+      case toGVec vec of
+        Just buf -> St.unsafeWith buf (writeBlock ix)
+        Nothing  -> throwBindingException BandDoesNotAllowNoData
+
+    sinkMask writeBlock bMask = awaitForever $ \(ix, vec) -> liftIO $ do
+      checkLen vec
+      let (mask, vec') = toGVecWithMask vec
+          off          = bi * bs
+          win          = liftA2 min bs (rs - off)
+          bi           = fmap fromIntegral ix
+          bs           = fmap fromIntegral (bandBlockSize band)
+          rs           = fmap fromIntegral (bandSize band)
+      St.unsafeWith vec' (writeBlock ix)
+      St.unsafeWith mask $ \pBuf ->
         checkCPLError "WriteBlock" $
-          {#call WriteBlock as ^#}
-            (unBand band)
-            (pFst bi)
-            (pSnd bi)
-            pWork
-
-    bs  = fmap fromIntegral (bandBlockSize band)
-    rs  = fmap fromIntegral (bandSize band)
-    off = bi * bs
-    win = liftA2 min bs (rs - off)
-
-    writeMask mBand buf =
-      liftIO $
-      checkCPLError "WriteBlock" $
-      St.unsafeWith buf $ \pBuf ->
         {#call RasterIO as ^#}
-          (unBand mBand)
+          (unBand bMask)
           (fromEnumC GF_Write)
           (pFst off)
           (pSnd off)
@@ -910,7 +910,34 @@ writeBandBlock band blockIx uvec = do
           (fromEnumC GByte)
           0
           (pFst bs * fromIntegral (sizeOfDataType GByte))
-{-# INLINE writeBandBlock #-}
+
+    checkLen v
+      | len /= G.length v
+      = throwBindingException (InvalidBlockSize (G.length v))
+      | otherwise = return ()
+
+    writeTranslated temp blockIx pBuf =
+      withForeignPtr temp $ \pTemp -> do
+        {#call unsafe CopyWords as ^#}
+          (castPtr pTemp)
+          (fromEnumC dtBand)
+          (fromIntegral szBand)
+          (castPtr pBuf)
+          (fromEnumC dtBuf)
+          (fromIntegral szBuf)
+          (fromIntegral len)
+        writeNative blockIx pTemp
+
+    writeNative blockIx pBuf =
+      checkCPLError "WriteBlock" $
+      {#call GDALWriteBlock as ^#}
+        (unBand band)
+        (pFst bi)
+        (pSnd bi)
+        (castPtr pBuf)
+      where bi = fmap fromIntegral blockIx
+{-# INLINE blockSink #-}
+
 
 readBandBlock
   :: forall s t a. GDALType a
