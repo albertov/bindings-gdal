@@ -97,6 +97,8 @@ module GDAL (
   , allBlocks
   , blockSource
   , unsafeBlockSource
+  , zipBlocks
+  , getZipBlocks
 
 
   , metadataDomains

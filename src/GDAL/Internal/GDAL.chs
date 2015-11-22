@@ -14,6 +14,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
 
 #include "bindings.h"
@@ -106,6 +107,8 @@ module GDAL.Internal.GDAL (
   , unsafeBlockSource
   , blockSink
   , allBlocks
+  , zipBlocks
+  , getZipBlocks
 
   , unDataset
   , unBand
@@ -120,7 +123,7 @@ module GDAL.Internal.GDAL (
 
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.Exception (Exception(..))
-import Control.Monad (liftM, liftM2, when, (>=>), void)
+import Control.Monad (liftM, liftM2, when, (>=>), void, forever)
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -130,6 +133,7 @@ import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Coerce (coerce)
 import qualified Data.Conduit.List as CL
 import Data.Conduit
+import Data.Conduit.Internal (Pipe(..), ConduitM(..), injectLeftovers)
 import Data.Maybe (fromMaybe, fromJust)
 import Data.String (IsString)
 import Data.Text (Text)
@@ -715,25 +719,51 @@ readBand band win (bx :+: by) =
       G.unsafeFreeze vec
 {-# INLINE readBand #-}
 
-
-writeMasked
-  :: GDALType a
+writeBand
+  :: forall s a. GDALType a
   => RWBand s a
-  -> (RWBand s a -> St.Vector a -> GDAL s ())
-  -> (RWBand s Word8 -> St.Vector Word8 -> GDAL s ())
+  -> Envelope Int
+  -> Size
   -> U.Vector (Value a)
   -> GDAL s ()
-writeMasked band writer maskWriter uvec =
+writeBand band win sz@(bx :+: by) uvec =
   bandMaskType band >>= \case
     MaskNoData ->
-      noDataOrFail band >>= writer band . flip toGVecWithNodata uvec
+      noDataOrFail band >>= write band . flip toGVecWithNodata uvec
     MaskAllValid ->
       maybe (throwBindingException BandDoesNotAllowNoData)
-            (writer band)
+            (write band)
             (toGVec uvec)
-    _ ->
-      let (mask, vec) = toGVecWithMask uvec
-      in writer band vec >> bandMask band >>= flip maskWriter mask
+    _ -> do let (mask, vec) = toGVecWithMask uvec
+            write band vec
+            mBand <- bandMask band
+            write mBand mask
+  where
+    write :: forall a'. GDALType a'
+          => RWBand s a' -> St.Vector a' -> GDAL s ()
+    write band' vec = do
+      let sx :+: sy     = envelopeSize win
+          xoff :+: yoff = envelopeMin win
+      if sizeLen sz /= G.length vec
+        then throwBindingException (InvalidRasterSize sz)
+        else liftIO $
+             St.unsafeWith vec $ \ptr ->
+             checkCPLError "RasterIO" $
+               {#call RasterIO as ^#}
+                 (unBand band')
+                 (fromEnumC GF_Write)
+                 (fromIntegral xoff)
+                 (fromIntegral yoff)
+                 (fromIntegral sx)
+                 (fromIntegral sy)
+                 (castPtr ptr)
+                 (fromIntegral bx)
+                 (fromIntegral by)
+                 (fromEnumC (dataType (undefined :: a')))
+                 0
+                 0
+{-# INLINE writeBand #-}
+
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
 noDataOrFail = liftM (fromMaybe err) . bandNodataValue
@@ -774,41 +804,6 @@ maskFlagsForType MaskPerDataset  = fromEnumC GMF_PER_DATASET
                        , GMF_NODATA      as GMF_NODATA
                        } deriving (Eq,Bounded,Show) #}
 
-
-writeBand
-  :: forall s a. GDALType a
-  => RWBand s a
-  -> Envelope Int
-  -> Size
-  -> U.Vector (Value a)
-  -> GDAL s ()
-writeBand band win sz@(bx :+: by) = writeMasked band write write
-  where
-    write :: forall a'. GDALType a'
-          => RWBand s a' -> St.Vector a' -> GDAL s ()
-    write band' vec = do
-      let sx :+: sy     = envelopeSize win
-          xoff :+: yoff = envelopeMin win
-      if sizeLen sz /= G.length vec
-        then throwBindingException (InvalidRasterSize sz)
-        else liftIO $
-             St.unsafeWith vec $ \ptr ->
-             checkCPLError "RasterIO" $
-               {#call RasterIO as ^#}
-                 (unBand band')
-                 (fromEnumC GF_Write)
-                 (fromIntegral xoff)
-                 (fromIntegral yoff)
-                 (fromIntegral sx)
-                 (fromIntegral sy)
-                 (castPtr ptr)
-                 (fromIntegral bx)
-                 (fromIntegral by)
-                 (fromEnumC (dataType (undefined :: a')))
-                 0
-                 0
-{-# INLINE writeBand #-}
-
 copyBand
   :: Band s a t -> RWBand s a -> OptionList
   -> Maybe ProgressFun -> GDAL s ()
@@ -819,6 +814,12 @@ copyBand src dst options progressFun =
   checkCPLError "copyBand" $
   {#call RasterBandCopyWholeRaster as ^#}
     (unBand src) (unBand dst) o pFunc nullPtr
+
+fillBand :: GDALType a => Value a -> RWBand s a -> GDAL s ()
+fillBand val b =
+  runConduit (allBlocks b =$= CL.map (\i -> (i,v)) =$= blockSink b)
+  where v = G.replicate (bandBlockLen b) val
+
 
 foldl'
   :: forall s t a b. GDALType a
@@ -855,13 +856,13 @@ ifoldl' f z band =
 unsafeBlockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
-unsafeBlockSource band = allBlocks band =$= unsafeBlockConduit band
+unsafeBlockSource band = allBlocks band =$= decorate (unsafeBlockConduit band)
 {-# INLINE unsafeBlockSource #-}
 
 blockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
-blockSource band = allBlocks band =$= blockConduit band
+blockSource band = allBlocks band =$= decorate (blockConduit band)
 {-# INLINE blockSource #-}
 
 writeBandBlock
@@ -870,6 +871,7 @@ writeBandBlock
 writeBandBlock band blockIx uvec =
   runConduit (yield (blockIx, uvec) =$= blockSink band)
 {-# INLINE writeBandBlock #-}
+
 
 
 blockSink
@@ -962,7 +964,7 @@ blockSink band = addCleanup flush $ do
 readBandBlock
   :: forall s t a. GDALType a
   => Band s a t -> BlockIx -> GDAL s (U.Vector (Value a))
-readBandBlock band blockIx = liftM (snd . fromJust) $ runConduit $
+readBandBlock band blockIx = liftM fromJust $ runConduit $
   yield blockIx =$= unsafeBlockConduit band =$= CL.head
 {-# INLINE readBandBlock #-}
 
@@ -976,24 +978,24 @@ allBlocks band = CL.sourceList [x :+: y | y <- [0..ny-1], x <- [0..nx-1]]
 blockConduit
   :: forall s a t. GDALType a
   => Band s a t
-  -> Conduit BlockIx (GDAL s) (BlockIx, U.Vector (Value a))
+  -> Conduit BlockIx (GDAL s) (U.Vector (Value a))
 blockConduit band =
-       unsafeBlockConduitM band
-  =$=  CL.mapM (\(i,v) -> liftIO (U.freeze v >>= \v' -> return (i,v')))
+  unsafeBlockConduitM band =$= CL.mapM (liftIO . U.freeze)
 {-# INLINE blockConduit #-}
 
 unsafeBlockConduit
   :: forall s a t. GDALType a
   => Band s a t
-  -> Conduit BlockIx (GDAL s) (BlockIx, U.Vector (Value a))
-unsafeBlockConduit band = unsafeBlockConduitM band =$= awaitForever go
-  where go (ix, v) = liftIO (U.unsafeFreeze v) >>= (\v' -> yield (ix, v'))
+  -> Conduit BlockIx (GDAL s) (U.Vector (Value a))
+unsafeBlockConduit band =
+  unsafeBlockConduitM band =$= CL.mapM (liftIO . U.unsafeFreeze)
 {-# INLINE unsafeBlockConduit #-}
+
 
 unsafeBlockConduitM
   :: forall s a t. GDALType a
   => Band s a t
-  -> Conduit BlockIx (GDAL s) (BlockIx, UM.IOVector (Value a))
+  -> Conduit BlockIx (GDAL s) (UM.IOVector (Value a))
 unsafeBlockConduitM band = do
   buf <- liftIO (M.new len)
   maskType <- lift $ bandMaskType band
@@ -1018,7 +1020,7 @@ unsafeBlockConduitM band = do
       | isNative = awaitForever $ \ix -> do
           liftIO (Stm.unsafeWith buf (loadBlock ix))
           extra ix
-          yield (ix, vec)
+          yield vec
       | otherwise = do
           temp <- liftIO $ mallocForeignPtrBytes (len*szBand)
           awaitForever $ \ix -> do
@@ -1026,7 +1028,7 @@ unsafeBlockConduitM band = do
               loadBlock ix pTemp
               Stm.unsafeWith buf (translateBlock pTemp)
             extra ix
-            yield (ix, vec)
+            yield vec
 
     {-# INLINE loadBlock #-}
     loadBlock ix pBuf = 
@@ -1082,6 +1084,10 @@ openDatasetCount =
   alloca $ \pCount -> do
     {#call unsafe GetOpenDatasets as ^#} ppDs pCount
     liftM fromIntegral (peek pCount)
+
+-----------------------------------------------------------------------------
+-- Metadata
+-----------------------------------------------------------------------------
 
 metadataDomains :: MajorObject o t => o t -> GDAL s [Text]
 #if SUPPORTS_METADATA_DOMAINS
@@ -1140,9 +1146,60 @@ setDescription val =
   useAsCString val . {#call unsafe GDALSetDescription as ^#} . majorObject
 
 
-fillBand :: GDALType a => Value a -> RWBand s a -> GDAL s ()
-fillBand val b =
-  mapM_ (flip (writeBandBlock b) v) [i:+:j | j<-[0..ny-1], i<-[0..nx-1]]
-  where
-    nx:+:ny = bandBlockCount b
-    v       = G.replicate (bandBlockLen b) val
+
+-----------------------------------------------------------------------------
+-- Conduit utils
+-----------------------------------------------------------------------------
+
+-- | Parallel zip of two conduits
+pZipConduitApp
+  :: Monad m
+  => Conduit a m (b -> c)
+  -> Conduit a m b
+  -> Conduit a m c
+pZipConduitApp (ConduitM l0) (ConduitM r0) = ConduitM $ \rest -> let
+  go (HaveOutput p c o) (HaveOutput p' c' o') =
+    HaveOutput (go p p') (c>>c') (o o')
+  go (NeedInput p c) (NeedInput p' c') =
+    NeedInput (\i -> go (p i) (p' i)) (\u -> go (c u) (c' u))
+  go (Done ()) (Done ())  = rest ()
+  go (PipeM m) (PipeM m') = PipeM (liftM2 go m m')
+  go (Leftover p i) (Leftover p' _) = Leftover (go p p') i
+  go _              _               = error "pZipConduitApp: not parallel"
+  in go (injectLeftovers $ l0 Done) (injectLeftovers $ r0 Done)
+
+newtype PZipConduit i m o =
+  PZipConduit { getPZipConduit :: Conduit i m o}
+
+instance Monad m => Functor (PZipConduit i m) where
+    fmap f = PZipConduit . mapOutput f . getPZipConduit
+
+instance Monad m => Applicative (PZipConduit i m) where
+    pure = PZipConduit . forever . yield
+    PZipConduit l <*> PZipConduit r = PZipConduit (pZipConduitApp l r)
+
+zipBlocks
+  :: GDALType a
+  => Band s a t -> PZipConduit BlockIx (GDAL s) (U.Vector (Value a))
+zipBlocks = PZipConduit . unsafeBlockConduit
+
+getZipBlocks
+  :: PZipConduit BlockIx (GDAL s) a
+  -> Conduit BlockIx (GDAL s) (BlockIx, a)
+getZipBlocks = decorate . getPZipConduit
+
+decorate :: Monad m => Conduit a m b -> Conduit a m (a, b)
+decorate (ConduitM c0) = ConduitM $ \rest -> let
+  go1 HaveOutput{} = error "unexpected NeedOutput"
+  go1 (NeedInput p c) = NeedInput (\i -> go2 i (p i)) (go1 . c)
+  go1 (Done r) = rest r
+  go1 (PipeM mp) = PipeM (liftM (go1) mp)
+  go1 (Leftover p i) = Leftover (go1 p) i
+
+  go2 i (HaveOutput p c o) = HaveOutput (go2 i p) c (i, o)
+  go2 _ (NeedInput p c)    = NeedInput (\i -> go2 i (p i)) (go1 . c)
+  go2 _ (Done r)           = rest r
+  go2 i (PipeM mp)         = PipeM (liftM (go2 i) mp)
+  go2 i (Leftover p i')    = Leftover (go2 i p) i'
+  in go1 (c0 Done)
+{-# INLINE decorate #-}

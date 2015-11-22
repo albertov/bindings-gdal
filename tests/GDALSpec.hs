@@ -7,6 +7,7 @@
 
 module GDALSpec (main, spec) where
 
+import Control.Applicative ((<$>), (<*>))
 import Control.Arrow (second)
 import Control.Monad (void, forM_)
 
@@ -293,21 +294,16 @@ spec = setupAndTeardown $ do
               v1 = U.generate (sizeLen sz) (Value . fromIntegral . (+6))
               v2 = U.generate (sizeLen sz) (Value . fromIntegral . (*2))
           ds <- createMem sz 3 GDT_Int32 []
-          band1 <- getBand 1 ds
-          band2 <- getBand 2 ds
-          band3 <- getBand 3 ds
-          writeBand band1 (allBand band1) sz v1
-          writeBand band2 (allBand band2) sz v2
+          b1 <- getBand 1 ds
+          b2 <- getBand 2 ds
+          b3 <- getBand 3 ds
+          writeBand b1 (allBand b1) sz v1
+          writeBand b2 (allBand b2) sz v2
           flushCache ds
-          let source =
-                getZipSource $
-                  (,) <$> ZipSource (allBlocks band1)
-                      <*> ((,) <$> ZipSource (blockSource band1 =$= CL.map snd)
-                               <*> ZipSource (blockSource band2 =$= CL.map snd))
-              conduit =  CL.map (second (uncurry vecFun))
-              vecFun = U.zipWith (+)
-          runConduit (source =$= conduit =$= blockSink band3)
-          readBand band3 (allBand band3) sz >>= (`shouldBe` vecFun v1 v2)
+          let conduit = getZipBlocks (fun <$> zipBlocks b1 <*> zipBlocks b2)
+              fun = U.zipWith (+)
+          runConduit (allBlocks b3 =$= conduit =$= blockSink b3)
+          readBand b3 (allBand b3) sz >>= (`shouldBe` fun v1 v2)
 
   describe "Geotransform" $ do
 
