@@ -102,7 +102,10 @@ module GDAL.Internal.GDAL (
   , ifoldl'
   , blockConduit
   , unsafeBlockConduit
+  , blockSource
+  , unsafeBlockSource
   , blockSink
+  , allBlocks
 
   , unDataset
   , unBand
@@ -117,7 +120,7 @@ module GDAL.Internal.GDAL (
 
 import Control.Applicative ((<$>), (<*>), liftA2, pure)
 import Control.Exception (Exception(..))
-import Control.Monad (liftM, liftM2, when, (>=>))
+import Control.Monad (liftM, liftM2, when, (>=>), void)
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -607,6 +610,11 @@ addBand options ds = do
   getBand ix ds
   where dt = dataType (undefined ::  a)
 
+bandDataset :: Band s a t -> GDAL s (Dataset s a t)
+bandDataset b = newDatasetHandle $ do
+  hDs <- {#call unsafe GDALGetBandDataset as ^#} (unBand b)
+  void $ {#call unsafe GDALReferenceDataset as ^#} hDs
+  return hDs
 
 
 bandBlockSize :: (Band s a t) -> Size
@@ -822,7 +830,7 @@ ifoldl'
   :: forall s t a b. GDALType a
   => (b -> BlockIx -> Value a -> b) -> b -> Band s a t -> GDAL s b
 ifoldl' f z band =
-  runConduit (allBlocks band =$= unsafeBlockConduit band =$= CL.fold folder z)
+  runConduit (unsafeBlockSource band =$= CL.fold folder z)
   where
     !(mx :+: my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(nx :+: ny) = bandBlockCount band
@@ -844,6 +852,17 @@ ifoldl' f z band =
           | otherwise           = sy
 {-# INLINE ifoldl' #-}
 
+unsafeBlockSource
+  :: GDALType a
+  => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
+unsafeBlockSource band = allBlocks band =$= unsafeBlockConduit band
+{-# INLINE unsafeBlockSource #-}
+
+blockSource
+  :: GDALType a
+  => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
+blockSource band = allBlocks band =$= blockConduit band
+{-# INLINE blockSource #-}
 
 writeBandBlock
   :: forall s a. GDALType a
@@ -857,7 +876,7 @@ blockSink
   :: forall s a. GDALType a
   => RWBand s a
   -> Sink (BlockIx, U.Vector (Value a)) (GDAL s) ()
-blockSink band = do
+blockSink band = addCleanup flush $ do
   writeBlock <-
     if dtBand==dtBuf
       then return writeNative
@@ -869,11 +888,12 @@ blockSink band = do
     _            -> lift (bandMask band)     >>= sinkMask     writeBlock
 
   where
-    len    = bandBlockLen band
-    dtBand = bandDataType (band)
-    szBand = sizeOfDataType dtBand
-    dtBuf  = dataType (undefined :: a)
-    szBuf  = sizeOfDataType dtBuf
+    flush f = when f (bandDataset band >>= flushCache)
+    len     = bandBlockLen band
+    dtBand  = bandDataType (band)
+    szBand  = sizeOfDataType dtBand
+    dtBuf   = dataType (undefined :: a)
+    szBuf   = sizeOfDataType dtBuf
 
     sinkNodata writeBlock nd = awaitForever $ \(ix, vec) -> liftIO $ do
       checkLen vec

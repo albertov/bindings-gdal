@@ -91,6 +91,14 @@ module GDAL (
   , writeBandBlock
   , copyBand
   , fillBand
+  , blockConduit
+  , unsafeBlockConduit
+  , blockSink
+  , allBlocks
+  , blockSource
+  , unsafeBlockSource
+
+
   , metadataDomains
   , metadata
   , metadataItem
@@ -114,10 +122,14 @@ module GDAL (
   , (|.|)
 
   , liftIO
+
+  , module Data.Conduit
 ) where
 
 import Control.Exception (finally)
 import Control.Monad.IO.Class (liftIO)
+
+import Data.Conduit
 
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString

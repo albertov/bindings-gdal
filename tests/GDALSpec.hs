@@ -7,8 +7,10 @@
 
 module GDALSpec (main, spec) where
 
+import Control.Arrow (second)
 import Control.Monad (void, forM_)
 
+import qualified Data.Conduit.List as CL
 import Data.Maybe (isNothing)
 import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.String (fromString)
@@ -272,6 +274,40 @@ spec = setupAndTeardown $ do
       ioSpec GDT_CInt32    genCIntegral
       ioSpec GDT_CFloat32  genCReal
       ioSpec GDT_CFloat64  genCReal
+
+      describe "blockSource and blockSink" $ do
+
+        it "can be used to copy a band" $ do
+          ds <- createMem (333 :+: 444) 2 GDT_Int16 []
+          band1 <- getBand 1 ds
+          band2 <- getBand 2 ds
+          let v1 = Value 0; v2 = Value 10
+          fillBand v1 band1
+          fillBand v2 band2
+          runConduit (blockSource band2 =$= blockSink band1)
+          readBand band1 (allBand band1) (bandSize band1)
+            >>= (`shouldSatisfy` U.all (==v2))
+
+        it "can zip two bands" $ do
+          let sz = 333 :+: 444
+              v1 = U.generate (sizeLen sz) (Value . fromIntegral . (+6))
+              v2 = U.generate (sizeLen sz) (Value . fromIntegral . (*2))
+          ds <- createMem sz 3 GDT_Int32 []
+          band1 <- getBand 1 ds
+          band2 <- getBand 2 ds
+          band3 <- getBand 3 ds
+          writeBand band1 (allBand band1) sz v1
+          writeBand band2 (allBand band2) sz v2
+          flushCache ds
+          let source =
+                getZipSource $
+                  (,) <$> ZipSource (allBlocks band1)
+                      <*> ((,) <$> ZipSource (blockSource band1 =$= CL.map snd)
+                               <*> ZipSource (blockSource band2 =$= CL.map snd))
+              conduit =  CL.map (second (uncurry vecFun))
+              vecFun = U.zipWith (+)
+          runConduit (source =$= conduit =$= blockSink band3)
+          readBand band3 (allBand band3) sz >>= (`shouldBe` vecFun v1 v2)
 
   describe "Geotransform" $ do
 
