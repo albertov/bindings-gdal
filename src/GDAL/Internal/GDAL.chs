@@ -14,7 +14,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
 
 #include "bindings.h"
@@ -121,7 +120,7 @@ module GDAL.Internal.GDAL (
 
 {#context lib = "gdal" prefix = "GDAL" #}
 
-import Control.Applicative ((<$>), (<*>), liftA2, pure)
+import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when, (>=>), void, forever)
 import Control.Monad.Trans (lift)
