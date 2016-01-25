@@ -86,7 +86,7 @@ module GDAL.Internal.OGRGeometry (
 
 import Control.Applicative ((<$>), (<*>), liftA2)
 import Control.DeepSeq (NFData(rnf))
-import Control.Exception (throw, mask_, try)
+import Control.Monad.Catch (throwM, mask_, try)
 import Control.Monad (liftM, (>=>))
 
 import Data.ByteString.Internal (ByteString(..))
@@ -178,7 +178,7 @@ instance Eq Geometry where
   a == b = a `geomEquals` b
 
 cloneGeometry :: Ptr Geometry -> IO Geometry
-cloneGeometry = maybeCloneGeometry >=> maybe (throw NullGeometry) return
+cloneGeometry = maybeCloneGeometry >=> maybe (throwM NullGeometry) return
 
 maybeCloneGeometry :: Ptr Geometry -> IO (Maybe Geometry)
 maybeCloneGeometry p

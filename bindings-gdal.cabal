@@ -14,6 +14,11 @@ Data-Files:
   tests/fixtures/fondo.shp
   tests/fixtures/fondo.shx
 
+flag examples
+  description: Build example apps
+  default: False
+  manual: True
+
 source-repository head
   type:              git
   location:          https://github.com/meteogrid/bindings-gdal.git
@@ -123,6 +128,8 @@ executable ogrinfo-hs
   hs-source-dirs:      exe
   main-is:             OGRInfo.hs
   default-language:    Haskell2010
+  if !flag(examples)
+    Buildable: False
 
 executable rasterstats-hs
   build-depends:       base
@@ -132,3 +139,5 @@ executable rasterstats-hs
   hs-source-dirs:      exe
   main-is:             RasterStats.hs
   default-language:    Haskell2010
+  if !flag(examples)
+    Buildable: False
