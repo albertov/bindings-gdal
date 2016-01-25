@@ -47,7 +47,7 @@ module GDAL.Internal.OSR (
 
 {# context lib = "gdal" prefix = "OSR" #}
 
-import Control.Exception (try, throw, mask_)
+import Control.Monad.Catch (throwM, mask_, try)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
@@ -231,7 +231,7 @@ maybeSpatialReferenceFromCString srs = do
   c <- peek srs
   if c == 0
     then return Nothing
-    else srsFromWktIO srs >>= either throw (return . Just)
+    else srsFromWktIO srs >>= either throwM (return . Just)
 
 withMaybeSpatialReference
   :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a
