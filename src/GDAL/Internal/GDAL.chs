@@ -41,6 +41,7 @@ module GDAL.Internal.GDAL (
   , inv
   , composeGeotransforms
   , (|.|)
+  , geotransformEnvelope
 
   , nullDatasetH
   , allRegister
@@ -489,6 +490,13 @@ northUpGeotransform size envelope =
     , gtYRot   = 0
     , gtYDelta = negate (pSnd (envelopeSize envelope / fmap fromIntegral size))
   }
+
+geotransformEnvelope :: Size -> Geotransform -> Envelope Double
+geotransformEnvelope sz gt =
+  Envelope (min x0 x1 :+: min y0 y1) (max x0 x1 :+: max y0 y1)
+  where
+    x0 :+: y0 = applyGeotransform gt 0
+    x1 :+: y1 = applyGeotransform gt (fmap fromIntegral sz)
 
 gcpGeotransform :: [GroundControlPoint] -> ApproxOK -> Maybe Geotransform
 gcpGeotransform gcps approxOk =

@@ -122,6 +122,7 @@ module GDAL (
   , inv
   , composeGeotransforms
   , (|.|)
+  , geotransformEnvelope
 
   , liftIO
 
