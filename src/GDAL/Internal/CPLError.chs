@@ -29,7 +29,6 @@ import Control.Exception (
     Exception (..)
   , SomeException
   , throw
-  , bracket
   , finally
   )
 import Data.Maybe (isJust)
