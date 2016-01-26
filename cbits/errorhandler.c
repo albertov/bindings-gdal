@@ -1,44 +1,28 @@
 #include "errorhandler.h"
+#include "cpl_conv.h"
 #include <assert.h>
 
-typedef ErrorCell* error_stack;
-
-static error_stack get_stack()
-{
-  return CPLGetErrorHandlerUserData();
-}
 
 static void error_handler(CPLErr errClass, int errNo, const char *msg);
-static void destroy_stack (error_stack stack);
-static void clear_stack_ (error_stack stack);
-static error_stack new_stack();
+static void destroy_stack (ErrorStack stack);
 
 //
 // Public interface
 //
 
-void push_error_handler()
+void push_error_handler(ErrorStack stack)
 {
-  CPLPushErrorHandlerEx(error_handler, (void*)new_stack());
+  CPLPushErrorHandlerEx(error_handler, (void*)stack);
 }
 
-void pop_error_handler()
+void pop_error_handler(ErrorStack stack)
 {
-  destroy_stack(get_stack());
   CPLPopErrorHandler();
+  destroy_stack(stack);
 }
 
-void clear_stack()
+ErrorCell pop_last(ErrorStack stack)
 {
-  error_stack stack = get_stack();
-  if (stack) {
-    clear_stack_(stack);
-  }
-}
-
-ErrorCell pop_last()
-{
-  error_stack stack = get_stack();
   ErrorCell ret = stack? *stack : NULL;
   if (ret) {
     *stack = ret->next;
@@ -62,26 +46,17 @@ void destroy_ErrorCell(ErrorCell cell)
 
 static void error_handler(CPLErr errClass, int errNo, const char *msg)
 {
-  error_stack stack = get_stack();
+  ErrorStack stack = CPLGetErrorHandlerUserData();
   assert(stack);
-  ErrorCell cell = malloc(sizeof(struct error_cell));
-  if (cell) {
-    cell->errClass = errClass;
-    cell->errNo    = errNo;
-    cell->msg      = strdup(msg);
-    cell->next     = *stack;
-    *stack         = cell;
-  }
+  ErrorCell cell = CPLMalloc(sizeof(struct error_cell));
+  cell->errClass = errClass;
+  cell->errNo    = errNo;
+  cell->msg      = strdup(msg);
+  cell->next     = *stack;
+  *stack         = cell;
 }
 
-static void destroy_stack (error_stack stack)
-{
-  assert(stack);
-  clear_stack_(stack);
-  free(stack);
-}
-
-static void clear_stack_ (error_stack stack)
+static void destroy_stack (ErrorStack stack)
 {
   assert(stack);
   ErrorCell cur = *stack;
@@ -91,13 +66,4 @@ static void clear_stack_ (error_stack stack)
     cur = next;
   }
   *stack = NULL;
-}
-
-
-static error_stack new_stack()
-{
-  error_stack stack = malloc(sizeof(error_stack));
-  assert(stack);
-  *stack = NULL;
-  return stack;
 }

@@ -14,8 +14,6 @@ module GDAL.Internal.CPLError (
   , throwBindingException
   , bindingExceptionToException
   , bindingExceptionFromException
-  , getErrors
-  , popLastError
   , checkCPLError
   , checkGDALCall
   , checkGDALCall_
@@ -41,6 +39,7 @@ import Data.Typeable (Typeable, cast)
 import Foreign.C.Types (CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, nullPtr)
 import Foreign.Storable (peekByteOff)
+import Foreign.Marshal.Utils (with)
 
 -- work around  https://github.com/haskell/c2hs/issues/151
 import qualified Foreign.C.Types as C2HSImp
@@ -105,9 +104,9 @@ isBindingException e
 checkGDALCall
   :: Exception e
   => (Maybe GDALException -> a -> Maybe e) -> IO a -> IO a
-checkGDALCall isOk act = withErrorHandler $ do
-  a <-act
-  err <- popLastError
+checkGDALCall isOk act = withErrorHandler $ \ stack -> do
+  a <- act
+  err <- popLastError stack
   case isOk err a of
     Nothing -> return a
     Just e  -> throw e
@@ -128,10 +127,11 @@ checkCPLError msg = checkGDALCall_ $ \mExc r ->
 {-# INLINE checkCPLError #-}
 
 {#pointer ErrorCell #}
+type ErrorStack = Ptr ErrorCell
 
-popLastError :: IO (Maybe GDALException)
-popLastError =
-  bracket {#call unsafe pop_last as ^#}
+popLastError :: ErrorStack -> IO (Maybe GDALException)
+popLastError stack =
+  bracket ({#call unsafe pop_last as ^#} stack)
           {#call unsafe destroy_ErrorCell as ^#} $ \ec -> do
   if ec == nullPtr
     then return Nothing
@@ -141,18 +141,10 @@ popLastError =
       errNo <- liftM toEnumC ({#get ErrorCell->errNo#} ec)
       return (Just (GDALException errClass errNo msg))
 
-clearErrors :: IO ()
-clearErrors = {#call unsafe clear_stack as ^#}
-
-getErrors :: IO [GDALException]
-getErrors = go []
-  where
-    go acc = popLastError >>= maybe (return acc) (go . (:acc))
-
-withErrorHandler :: IO a -> IO a
-withErrorHandler act = runBounded $
-  ({#call unsafe push_error_handler as ^#} >> act)
-    `finally` {#call unsafe pop_error_handler as ^#}
+withErrorHandler :: (ErrorStack -> IO a) -> IO a
+withErrorHandler act = runBounded $ with nullPtr $ \stack ->
+  ({#call unsafe push_error_handler as ^#} stack >> act stack)
+    `finally` ({#call unsafe pop_error_handler as ^#} stack)
 {-# INLINE withErrorHandler #-}
 
 runBounded :: IO a -> IO a
