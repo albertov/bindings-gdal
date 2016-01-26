@@ -30,6 +30,7 @@ module GDAL.Internal.Types (
   , release
   , sizeLen
   , unsafeGDALToIO
+  , unsafeGDALInterleaveIO
 ) where
 
 import Control.Applicative (Applicative(..), (<$>), liftA2)
@@ -64,7 +65,7 @@ import Foreign.Ptr (castPtr)
 import Foreign.Storable (Storable(..))
 
 import GDAL.Internal.CPLError
-
+import System.IO.Unsafe (unsafeInterleaveIO)
 
 
 data AccessMode = ReadOnly | ReadWrite
@@ -202,7 +203,7 @@ instance MonadBaseControl IO (GDAL s) where
   type StM (GDAL s) a = a
   liftBaseWith runInBase = do
     state <- getInternalState
-    liftIO $ runInBase (withErrorHandler . flip runReaderT state . unGDAL)
+    liftIO $ runInBase (flip runReaderT state . unGDAL)
   restoreM = return
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO (a, [GDALException])
@@ -218,7 +219,11 @@ execGDAL a = liftM fst (runGDAL a)
 unsafeGDALToIO :: GDAL s a -> GDAL s (IO a)
 unsafeGDALToIO (GDAL act) = do
   state <- getInternalState
-  return (withErrorHandler (runReaderT act state))
+  return (runReaderT act state)
 
 getInternalState :: GDAL s InternalState
 getInternalState = GDAL ask
+
+unsafeGDALInterleaveIO :: GDAL s a -> GDAL s a
+unsafeGDALInterleaveIO (GDAL act) =
+  liftIO . unsafeInterleaveIO . runReaderT act =<< getInternalState
