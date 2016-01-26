@@ -14,7 +14,5 @@ typedef ErrorCell* ErrorStack;
 
 void push_error_handler(ErrorStack);
 void pop_error_handler(ErrorStack);
-ErrorCell pop_last(ErrorStack);
-void destroy_ErrorCell(ErrorCell);
 
 #endif

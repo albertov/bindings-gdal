@@ -3,8 +3,8 @@
 #include <assert.h>
 
 
-static void error_handler(CPLErr errClass, int errNo, const char *msg);
-static void destroy_stack (ErrorStack stack);
+static void error_handler(CPLErr, int, const char *);
+static void destroy_stack (ErrorStack);
 
 //
 // Public interface
@@ -21,28 +21,11 @@ void pop_error_handler(ErrorStack stack)
   destroy_stack(stack);
 }
 
-ErrorCell pop_last(ErrorStack stack)
-{
-  ErrorCell ret = stack? *stack : NULL;
-  if (ret) {
-    *stack = ret->next;
-  }
-  return ret;
-}
-
-void destroy_ErrorCell(ErrorCell cell)
-{
-  if (cell) {
-    free(cell->msg);
-    free(cell);
-  }
-}
-
-
 
 //
 // Internal implementation
 //
+
 
 static void error_handler(CPLErr errClass, int errNo, const char *msg)
 {
@@ -62,7 +45,10 @@ static void destroy_stack (ErrorStack stack)
   ErrorCell cur = *stack;
   while (cur) {
     ErrorCell next = cur->next;
-    destroy_ErrorCell(cur);
+    if (cur) {
+      free(cur->msg);
+      free(cur);
+    }
     cur = next;
   }
   *stack = NULL;

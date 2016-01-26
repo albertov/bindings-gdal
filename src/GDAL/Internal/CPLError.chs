@@ -38,7 +38,7 @@ import Data.Typeable (Typeable, cast)
 
 import Foreign.C.Types (CInt(..), CChar(..))
 import Foreign.Ptr (Ptr, FunPtr, nullPtr)
-import Foreign.Storable (peekByteOff)
+import Foreign.Storable (peekByteOff, peek)
 import Foreign.Marshal.Utils (with)
 
 -- work around  https://github.com/haskell/c2hs/issues/151
@@ -106,7 +106,7 @@ checkGDALCall
   => (Maybe GDALException -> a -> Maybe e) -> IO a -> IO a
 checkGDALCall isOk act = withErrorHandler $ \ stack -> do
   a <- act
-  err <- popLastError stack
+  err <- peekLastError stack
   case isOk err a of
     Nothing -> return a
     Just e  -> throw e
@@ -129,10 +129,9 @@ checkCPLError msg = checkGDALCall_ $ \mExc r ->
 {#pointer ErrorCell #}
 type ErrorStack = Ptr ErrorCell
 
-popLastError :: ErrorStack -> IO (Maybe GDALException)
-popLastError stack =
-  bracket ({#call unsafe pop_last as ^#} stack)
-          {#call unsafe destroy_ErrorCell as ^#} $ \ec -> do
+peekLastError :: ErrorStack -> IO (Maybe GDALException)
+peekLastError stack = do
+  ec <- peek stack
   if ec == nullPtr
     then return Nothing
     else do
