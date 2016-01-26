@@ -34,19 +34,22 @@ module GDAL.Internal.Types (
 
 import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.DeepSeq (NFData(rnf), force)
-import Control.Exception (evaluate)
+import Control.Exception (evaluate, bracket)
 import Control.Monad (liftM)
 import Control.Monad.Base (MonadBase)
+import Control.Monad.Fix (MonadFix)
+import Control.Monad.Reader (ReaderT(runReaderT), ask)
+import Control.Monad.Trans.Control (MonadBaseControl(..))
 import Control.Monad.Trans.Resource (
-    ResourceT
-  , MonadResource
+    MonadResource(liftResourceT)
   , ReleaseKey
-  , runResourceT
+  , InternalState
   , allocate
   , release
   , unprotect
   , runInternalState
-  , getInternalState
+  , createInternalState
+  , closeInternalState
   )
 import Control.Monad.Catch (
     MonadThrow
@@ -180,7 +183,7 @@ instance Storable a => Storable (Pair a) where
     where ptr' = castPtr ptr
   {-# INLINE peek #-}
 
-newtype GDAL s a = GDAL (ResourceT IO a)
+newtype GDAL s a = GDAL {unGDAL :: ReaderT InternalState IO a}
 
 deriving instance Functor (GDAL s)
 deriving instance Applicative (GDAL s)
@@ -190,18 +193,32 @@ deriving instance MonadThrow (GDAL s)
 deriving instance MonadCatch (GDAL s)
 deriving instance MonadMask (GDAL s)
 deriving instance MonadBase IO (GDAL s)
-deriving instance MonadResource (GDAL s)
+deriving instance MonadFix (GDAL s)
+
+instance MonadResource (GDAL s) where
+  liftResourceT act = liftIO . runInternalState act =<< getInternalState
+
+instance MonadBaseControl IO (GDAL s) where
+  type StM (GDAL s) a = a
+  liftBaseWith runInBase = do
+    state <- getInternalState
+    liftIO $ runInBase (withErrorHandler . flip runReaderT state . unGDAL)
+  restoreM = return
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO (a, [GDALException])
-runGDAL (GDAL a) = withErrorHandler $ do
-  ret <- runResourceT (a >>= liftIO . evaluate . force)
-  errs <- getErrors
-  return (ret, errs)
+runGDAL (GDAL a) = withErrorHandler $
+  bracket createInternalState closeInternalState $ \state -> do
+    ret <- evaluate . force =<< runReaderT a state
+    errs <- getErrors
+    return (ret, errs)
 
 execGDAL :: NFData a => (forall s. GDAL s a) -> IO a
 execGDAL a = liftM fst (runGDAL a)
 
 unsafeGDALToIO :: GDAL s a -> GDAL s (IO a)
 unsafeGDALToIO (GDAL act) = do
-  state <- GDAL getInternalState
-  return (runInternalState act state)
+  state <- getInternalState
+  return (withErrorHandler (runReaderT act state))
+
+getInternalState :: GDAL s InternalState
+getInternalState = GDAL ask
