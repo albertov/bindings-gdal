@@ -342,7 +342,6 @@ createGridIO
   -> IO (U.Vector (Value (HsType d)))
 createGridIO dt options noDataVal progressFun points envelope size =
   withProgressFun "createGridIO" progressFun $ \pFun ->
-  withErrorHandler $
   with options $ \opts -> do
     setNodata opts (toCDouble noDataVal)
     xs <- G.unsafeThaw (St.unsafeCast (St.map (pFst . gpXY) points))
@@ -652,7 +651,6 @@ contourGenerateVectorIO _ _ _ size vector
   | St.length vector /= sizeLen size =
       throwBindingException (InvalidRasterSize size)
 contourGenerateVectorIO interval base nodataVal (nx :+: ny) vector =
-  withErrorHandler $
   with nullPtr $ \pList ->
   bracket (alloc pList) (free pList) $ \generator -> do
     St.forM_ (St.enumFromStepN 0 nx ny) $ \offset ->

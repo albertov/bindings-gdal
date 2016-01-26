@@ -145,7 +145,6 @@ srsFromWkt =
 srsFromWktIO :: CString -> IO (Either OGRException SpatialReference)
 srsFromWktIO a =
   try $
-  withErrorHandler $
   newSpatialRefHandle $
   checkGDALCall checkIt ({#call unsafe NewSpatialReference as ^#} a)
   where
@@ -168,7 +167,7 @@ srsFromEPSG = fromImporter importFromEPSG
 fromImporter
   :: (SpatialReference -> a -> IO CInt) -> a
   -> Either OGRException SpatialReference
-fromImporter f s = unsafePerformIO $ withErrorHandler $ do
+fromImporter f s = unsafePerformIO $ do
   r <- emptySpatialRef
   try (checkOGRError "srsFrom" (f r s) >> return r)
 {-# NOINLINE fromImporter #-}
@@ -255,7 +254,6 @@ coordinateTransformationIO
   -> IO (Either OGRException CoordinateTransformation)
 coordinateTransformationIO source target =
   try $
-  withErrorHandler $
   liftM CoordinateTransformation $
   withSpatialReference source $ \pSource ->
   withSpatialReference target $ \pTarget ->

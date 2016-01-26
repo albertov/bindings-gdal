@@ -42,7 +42,7 @@ module GDAL (
 
   , dataType
   , runGDAL
-  , execGDAL
+  , runGDAL_
   , withGDAL
   , isNoData
   , fromValue

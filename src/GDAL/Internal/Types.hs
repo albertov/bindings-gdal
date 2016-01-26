@@ -24,19 +24,19 @@ module GDAL.Internal.Types (
   , ReadWrite
   , ReadOnly
   , runGDAL
-  , execGDAL
+  , runGDAL_
   , allocate
+  , allocateGDAL
   , unprotect
   , release
   , sizeLen
-  , unsafeGDALToIO
   , unsafeGDALInterleaveIO
 ) where
 
 import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.DeepSeq (NFData(rnf), force)
-import Control.Exception (evaluate, bracket)
-import Control.Monad (liftM)
+import Control.Exception (evaluate, bracket, try, throw)
+import Control.Monad ((<=<))
 import Control.Monad.Base (MonadBase)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (ReaderT(runReaderT), ask)
@@ -206,20 +206,21 @@ instance MonadBaseControl IO (GDAL s) where
     liftIO $ runInBase (flip runReaderT state . unGDAL)
   restoreM = return
 
-runGDAL :: NFData a => (forall s. GDAL s a) -> IO (a, [GDALException])
-runGDAL (GDAL a) = withErrorHandler $
-  bracket createInternalState closeInternalState $ \state -> do
-    ret <- evaluate . force =<< runReaderT a state
-    errs <- getErrors
-    return (ret, errs)
+runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
+runGDAL (GDAL a) =
+  bracket createInternalState closeInternalState $
+    try . evaluate . force <=< runReaderT a
 
-execGDAL :: NFData a => (forall s. GDAL s a) -> IO a
-execGDAL a = liftM fst (runGDAL a)
+runGDAL_ :: NFData a => (forall s. GDAL s a) -> IO a
+runGDAL_ a = either throw return =<< runGDAL a
 
-unsafeGDALToIO :: GDAL s a -> GDAL s (IO a)
-unsafeGDALToIO (GDAL act) = do
+allocateGDAL
+  :: GDAL s a
+  -> (a -> GDAL s ())
+  -> GDAL s (ReleaseKey, a)
+allocateGDAL (GDAL alloc) free = do
   state <- getInternalState
-  return (runReaderT act state)
+  allocate (runReaderT alloc state) (flip runReaderT state . unGDAL . free)
 
 getInternalState :: GDAL s InternalState
 getInternalState = GDAL ask

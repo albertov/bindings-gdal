@@ -471,8 +471,7 @@ layerTransaction
   -> ((Layer s l t a, e) -> OGRConduit s l i o)
   -> OGRConduit s l i o
 layerTransaction alloc inside = do
-  alloc' <- lift (liftOGR (unsafeGDALToIO alloc))
-  (rbKey, seed) <- allocate alloc' rollback
+  (rbKey, seed) <- lift $ liftOGR $ allocateGDAL alloc rollback
   liftIO $ checkOGRError "StartTransaction" $
     {#call OGR_L_StartTransaction as ^#} (unLayer (fst seed))
   addCleanup (const (release rbKey))
@@ -486,7 +485,7 @@ layerTransaction alloc inside = do
       checkOGRError "SyncToDisk" $
         {#call OGR_L_SyncToDisk as ^#} (unLayer (fst seed))
 
-    rollback seed =
+    rollback seed = liftIO $
       (checkOGRError "RollbackTransaction" $
         {#call OGR_L_RollbackTransaction as ^#} (unLayer (fst seed)))
           `finally` free seed

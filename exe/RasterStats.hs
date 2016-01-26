@@ -36,7 +36,7 @@ toSummaryType = fromIntegral
 main :: IO ()
 main = withGDAL $ do
   [fname] <- getArgs
-  summary <- execGDAL $ do
+  summary <- runGDAL_ $ do
     openReadOnly fname bandType
       >>= getBand 1 >>= computeStatistics toSummaryType
   print summary

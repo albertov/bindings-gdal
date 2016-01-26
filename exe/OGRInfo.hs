@@ -17,7 +17,7 @@ import GDAL
 import OGR
 
 main :: IO ()
-main = withGDAL $ execGDAL $ do
+main = withGDAL $ runGDAL_ $ do
   [fname, nameStr] <- liftIO getArgs
   let name = T.pack nameStr
   ds <- OGR.openReadOnly fname

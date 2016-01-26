@@ -118,8 +118,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import GDAL.Internal.Types
 import GDAL.Internal.CPLString (peekCPLString)
 import GDAL.Internal.CPLError (
-    withErrorHandler
-  , withQuietErrorHandler
+    withQuietErrorHandler
   , throwBindingException
   )
 import GDAL.Internal.Util
@@ -201,7 +200,6 @@ newGeometryHandle
   :: (Ptr (Ptr Geometry) -> IO OGRError) -> IO (Either OGRException Geometry)
 newGeometryHandle io =
   try $
-  withErrorHandler $
   with nullPtr $ \pptr ->
   mask_ $ do
     checkOGRError "newGeometryHandle" (liftM fromEnumC (io pptr))

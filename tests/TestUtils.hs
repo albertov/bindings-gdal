@@ -64,13 +64,11 @@ withDir n a =
 
 runGDAL' :: (forall s. GDAL s ()) -> IO ()
 runGDAL' a = do
-  r <- try (runGDAL a)
+  r <- runGDAL a
   case r of
-    Left (e :: GDALException) ->
+    Left e ->
       Hspec.expectationFailure ("Unexpected GDALException: " ++ show e)
-    Right ((),[]) -> return ()
-    Right ((),msgs) ->
-      Hspec.expectationFailure ("Uncollected GDALExceptions " ++ show msgs)
+    Right () -> return ()
 
 existsAndSizeIsGreaterThan
   :: (MonadIO m, MonadCatch m)

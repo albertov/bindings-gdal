@@ -97,7 +97,7 @@ before_install:
 - gdal-config --version
 
 script:
-  - stack $ARGS --no-terminal test
+  - stack --flag bindings-gdal:examples $ARGS --no-terminal test
 
 cache:
   apt: true
