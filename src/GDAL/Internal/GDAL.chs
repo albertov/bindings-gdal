@@ -136,6 +136,7 @@ import Data.Conduit
 import Data.Conduit.Internal (Pipe(..), ConduitM(..), injectLeftovers)
 import Data.Maybe (fromMaybe, fromJust)
 import Data.String (IsString)
+import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -619,7 +620,7 @@ addBand options ds = do
     {#call GDALAddBand as ^#} (unDataset ds) (fromEnumC dt)
   ix <- datasetBandCount ds
   getBand ix ds
-  where dt = dataType (undefined ::  a)
+  where dt = hsDataType (Proxy :: Proxy a)
 
 bandDataset :: Band s a t -> GDAL s (Dataset s a t)
 bandDataset b = newDatasetHandle $ do
@@ -707,7 +708,7 @@ readBand band win (bx :+: by) =
             (fromIntegral sy)
             (fromIntegral bx)
             (fromIntegral by)
-            (fromEnumC (dataType (undefined :: a')))
+            (fromEnumC (hsDataType (Proxy :: Proxy a')))
             nullPtr
         checkCPLError "RasterIO" $
           {#call RasterIO as ^#}
@@ -720,7 +721,7 @@ readBand band win (bx :+: by) =
             (castPtr ptr)
             (fromIntegral bx)
             (fromIntegral by)
-            (fromEnumC (dataType (undefined :: a')))
+            (fromEnumC (hsDataType (Proxy :: Proxy a')))
             0
             0
       G.unsafeFreeze vec
@@ -766,7 +767,7 @@ writeBand band win sz@(bx :+: by) uvec =
                  (castPtr ptr)
                  (fromIntegral bx)
                  (fromIntegral by)
-                 (fromEnumC (dataType (undefined :: a')))
+                 (fromEnumC (hsDataType (Proxy :: Proxy a')))
                  0
                  0
 {-# INLINE writeBand #-}
@@ -901,7 +902,7 @@ blockSink band = addCleanup flush $ do
     len     = bandBlockLen band
     dtBand  = bandDataType (band)
     szBand  = sizeOfDataType dtBand
-    dtBuf   = dataType (undefined :: a)
+    dtBuf   = hsDataType (Proxy :: Proxy a)
     szBuf   = sizeOfDataType dtBuf
 
     sinkNodata writeBlock nd = awaitForever $ \(ix, vec) -> liftIO $ do
@@ -1020,7 +1021,7 @@ unsafeBlockConduitM band = do
     isNative = dtBand == dtBuf
     len      = bandBlockLen band
     dtBand   = bandDataType band
-    dtBuf    = dataType (undefined :: a)
+    dtBuf    = hsDataType (Proxy :: Proxy a)
 
     {-# INLINE blockReader #-}
     blockReader vec buf extra

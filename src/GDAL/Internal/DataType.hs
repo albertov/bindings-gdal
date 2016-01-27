@@ -29,12 +29,14 @@ module GDAL.Internal.DataType (
   , GDT_CFloat64
 
   , sizeOfDataType
+  , hsDataType
 ) where
 
 import GDAL.Internal.Types (Pair(..), pFst)
 import GDAL.Internal.DataType.Internal
 import Data.Word
 import Data.Int
+import Data.Proxy
 
 import Foreign.Storable (Storable(sizeOf))
 import Foreign.C.Types (CDouble(..))
@@ -100,7 +102,7 @@ class ( Storable a
       , HsType (TypeK a) ~ a
       ) => GDALType a where
   type TypeK a  :: DataTypeK
-  dataType      :: a -> DataTypeK
+  dataType      :: Proxy a -> DataType (TypeK a)
   toCDouble     :: a -> CDouble
   fromCDouble   :: CDouble -> a
 
@@ -133,10 +135,14 @@ type family IsComplex (a :: DataTypeK) where
 
 sizeOfDataType :: DataTypeK -> Int
 sizeOfDataType dt = reifyDataTypeK dt (sizeOf . hsType)
+  where
+    hsType :: DataType d -> HsType d
+    hsType = const undefined
 {-# INLINE sizeOfDataType #-}
 
-hsType :: Storable (HsType d) => DataType d -> HsType d
-hsType = const undefined
+
+hsDataType :: GDALType a => Proxy a -> DataTypeK
+hsDataType = dataTypeK . dataType
 
 ------------------------------------------------------------------------------
 -- GDALType
@@ -144,7 +150,7 @@ hsType = const undefined
 
 instance GDALType Word8 where
   type TypeK Word8 = GDT_Byte
-  dataType _       = GByte
+  dataType _       = GDT_Byte
   toCDouble        = fromIntegral
   fromCDouble      = truncate
   {-# INLINE dataType #-}
@@ -153,7 +159,7 @@ instance GDALType Word8 where
 
 instance GDALType Word16 where
   type TypeK Word16 = GDT_UInt16
-  dataType _        = GUInt16
+  dataType _        = GDT_UInt16
   toCDouble         = fromIntegral
   fromCDouble       = truncate
   {-# INLINE dataType #-}
@@ -162,7 +168,7 @@ instance GDALType Word16 where
 
 instance GDALType Word32 where
   type TypeK Word32 = GDT_UInt32
-  dataType _        = GUInt32
+  dataType _        = GDT_UInt32
   toCDouble         = fromIntegral
   fromCDouble       = truncate
   {-# INLINE dataType #-}
@@ -171,7 +177,7 @@ instance GDALType Word32 where
 
 instance GDALType Int16 where
   type TypeK Int16 = GDT_Int16
-  dataType _       = GInt16
+  dataType _       = GDT_Int16
   toCDouble        = fromIntegral
   fromCDouble      = truncate
   {-# INLINE dataType #-}
@@ -180,7 +186,7 @@ instance GDALType Int16 where
 
 instance GDALType Int32 where
   type TypeK Int32 = GDT_Int32
-  dataType _       = GInt32
+  dataType _       = GDT_Int32
   toCDouble        = fromIntegral
   fromCDouble      = truncate
   {-# INLINE dataType #-}
@@ -189,7 +195,7 @@ instance GDALType Int32 where
 
 instance GDALType Float where
   type TypeK Float = GDT_Float32
-  dataType _       = GFloat32
+  dataType _       = GDT_Float32
   toCDouble        = realToFrac
   fromCDouble      = realToFrac
   {-# INLINE dataType #-}
@@ -198,7 +204,7 @@ instance GDALType Float where
 
 instance GDALType Double where
   type TypeK Double = GDT_Float64
-  dataType _        = GFloat64
+  dataType _        = GDT_Float64
   toCDouble         = realToFrac
   fromCDouble       = realToFrac
   {-# INLINE dataType #-}
@@ -207,7 +213,7 @@ instance GDALType Double where
 
 instance GDALType (Pair Int16) where
   type TypeK (Pair Int16) = GDT_CInt16
-  dataType _              = GCInt16
+  dataType _              = GDT_CInt16
   toCDouble               = fromIntegral . pFst
   fromCDouble             = (:+: 0) . truncate
   {-# INLINE dataType #-}
@@ -216,7 +222,7 @@ instance GDALType (Pair Int16) where
 
 instance GDALType (Pair Int32) where
   type TypeK (Pair Int32) = GDT_CInt32
-  dataType _              = GCInt32
+  dataType _              = GDT_CInt32
   toCDouble               = fromIntegral . pFst
   fromCDouble             = (:+: 0) . truncate
   {-# INLINE dataType #-}
@@ -225,7 +231,7 @@ instance GDALType (Pair Int32) where
 
 instance GDALType (Pair Float) where
   type TypeK (Pair Float) = GDT_CFloat32
-  dataType _              = GCFloat32
+  dataType _              = GDT_CFloat32
   toCDouble               = realToFrac . pFst
   fromCDouble             = (:+: 0) . realToFrac
   {-# INLINE dataType #-}
@@ -234,7 +240,7 @@ instance GDALType (Pair Float) where
 
 instance GDALType (Pair Double) where
   type TypeK (Pair Double) = GDT_CFloat64
-  dataType _               = GCFloat64
+  dataType _               = GDT_CFloat64
   toCDouble                = realToFrac . pFst
   fromCDouble              = (:+: 0) . realToFrac
   {-# INLINE dataType #-}
