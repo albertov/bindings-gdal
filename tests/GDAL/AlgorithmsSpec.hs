@@ -15,6 +15,7 @@ import qualified Data.Vector.Storable as St
 
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (liftM)
+import Lens.Micro
 
 import OGR
 import OSR
@@ -266,6 +267,46 @@ spec = setupAndTeardown $ do
      dDs <- GDAL.createMem 1 1 GDT_Float64 []
      rasterizeGeometries [(undefined,[])] dDs def
        `shouldThrow` (==GeomValueListLengthMismatch)
+
+   it "transforms geometries" $ do
+     let size = 100
+         burnValue = 10
+         Just geom = do
+           g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
+           geomBuffer 0.05 10 g
+         Right ct = coordinateTransformation srs4326 srs23030
+         env4326  = Envelope ((-3) :+: 42) ((-2) :+: 43)
+         Just env23030 = env4326 `transformWith` ct
+         gtV = northUpGeotransform size env4326
+         gtW = northUpGeotransform size env23030
+
+     dDsV <- GDAL.createMem size 1 GDT_Float64 []
+     setDatasetGeotransform gtV dDsV
+     setDatasetProjection srs23030 dDsV
+     bV <- getBand 1 dDsV
+     setBandNodataValue 0 bV
+     rasterizeGeometries [(geom,[burnValue])] dDsV $ def
+       & transformer  .~ Just (
+         SomeTransformer (gipt3 & srcSrs .~ Just srs4326
+                                & dstSrs .~ Just srs23030
+                                & dstGt  .~ Just gtV))
+     v <- readBand bV (allBand bV) (bandSize bV)
+
+     v `shouldSatisfy` U.all (==NoData)
+
+     dDsW <- GDAL.createMem size 1 GDT_Float64 []
+     setDatasetGeotransform gtW dDsW
+     setDatasetProjection srs23030 dDsW
+     bW <- getBand 1 dDsW
+     setBandNodataValue 0 bW
+     rasterizeGeometries [(geom,[burnValue])] dDsW $ def
+       & transformer  .~ Just (
+         SomeTransformer (gipt3 & srcSrs .~ Just srs4326
+                                & dstSrs .~ Just srs23030
+                                & dstGt  .~ Just gtW))
+     w <- readBand bW (allBand bW) (bandSize bW)
+
+     w `shouldSatisfy` U.any (==(Value burnValue))
 
 
   createGridIOSpec GDT_Float64 (SGA (def :: GridInverseDistanceToAPower))
