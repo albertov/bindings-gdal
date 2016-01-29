@@ -129,6 +129,23 @@ spec = setupAndTeardown $ do
         U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
 
   describe "createWarpedVRT" $ do
+    it "can be created with default options" $ do
+      let gt = northUpGeotransform 100 (Envelope (-500) 500)
+          sz  = 100 :+: 100
+          sz2 = 200 :+: 200
+          v1  = U.generate (sizeLen sz)
+                (\i -> if i<50 then NoData else Value (fromIntegral i))
+      ds' <- createMem sz 1 GDT_Int32 []
+      setDatasetGeotransform gt ds'
+      b <- getBand 1 ds'
+      setBandNodataValue (-1) b
+      writeBand b (allBand b) sz v1
+      flushCache ds'
+      ds <- unsafeToReadOnly ds'
+      b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt def
+      v2 <- readBand b2 (allBand b2) sz2
+      catValues v2 `shouldSatisfy` U.all (> 0)
+      U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
 
 {-
     it "can receive cutline" $ do
@@ -171,7 +188,7 @@ spec = setupAndTeardown $ do
 
         let opts = def
               & resampleAlg .~ algo
-              & transformer .~ SomeTransformer gipt
+              & transformer .~ Just (SomeTransformer gipt)
         b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt opts
         v2 <- readBand b2 (allBand b2) sz2
         catValues v2 `shouldSatisfy` U.all (> 0)
@@ -193,7 +210,7 @@ spec = setupAndTeardown $ do
 
         let opts = def
               & resampleAlg .~ algo
-              & transformer .~ SomeTransformer gipt2
+              & transformer .~ Just (SomeTransformer gipt2)
         b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt opts
         v2 <- readBand b2 (allBand b2) sz2
         catValues v2 `shouldSatisfy` U.all (> 0)
@@ -216,7 +233,7 @@ spec = setupAndTeardown $ do
 
         let opts = def
               & resampleAlg .~ algo
-              & transformer .~ SomeTransformer gipt3
+              & transformer .~ Just (SomeTransformer gipt3)
         b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt opts
         v2 <- readBand b2 (allBand b2) sz2
         catValues v2 `shouldSatisfy` U.all (> 0)

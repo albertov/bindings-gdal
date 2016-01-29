@@ -125,20 +125,16 @@ instance Exception GDALAlgorithmException where
   fromException = bindingExceptionFromException
 
 class Transformer t where
-  transformerFun         :: t s a -> TransformerFun t s a
-  createTransformerArg   :: t s a -> Maybe (RODataset s a) -> IO (Ptr (t s a))
-  destroyTransformerArg  :: Ptr (t s a) -> IO ()
-  setGeotransform        :: Geotransform -> Ptr (t s a) -> IO ()
+  transformerFun         :: t -> TransformerFun t
+  createTransformerArg   :: t -> Maybe (RODataset s a) -> IO (Ptr t)
+  destroyTransformerArg  :: Ptr t -> IO ()
+  setGeotransform        :: Geotransform -> Ptr t -> IO ()
 
   destroyTransformerArg p =
     when (p/=nullPtr) ({# call unsafe GDALDestroyTransformer as ^#} (castPtr p))
 
-data SomeTransformer s a
-  = forall t. (Transformer t, GDALType a) => SomeTransformer (t s a)
-  | DefaultTransformer
-
-instance Default (SomeTransformer s a) where
-  def = DefaultTransformer
+data SomeTransformer
+  = forall t. Transformer t => SomeTransformer t
 
 class HasTransformer o t | o -> t where
   transformer :: Lens' o t
@@ -166,13 +162,13 @@ class HasMaxError o t | o -> t where
 
 
 withTransformerAndArg
-  :: SomeTransformer s a
+  :: Maybe SomeTransformer
   -> Maybe (RODataset s a)
   -> Maybe Geotransform
   -> (TransformerFunPtr -> Ptr () -> IO c)
   -> IO c
-withTransformerAndArg DefaultTransformer  _   _   act = act nullFunPtr nullPtr
-withTransformerAndArg (SomeTransformer t) sDs mGt act =
+withTransformerAndArg Nothing _ _ act = act nullFunPtr nullPtr
+withTransformerAndArg (Just (SomeTransformer t)) sDs mGt act =
   mask $ \restore -> do
     arg <- createTransformerArg t sDs
     case mGt of
@@ -183,7 +179,7 @@ withTransformerAndArg (SomeTransformer t) sDs mGt act =
               `onException` destroyTransformerArg arg
 
 
-newtype TransformerFun (t :: * -> * -> *) s a
+newtype TransformerFun t
   = TransformerFun {getTransformerFunPtr :: TransformerFunPtr}
 
 {#pointer GDALTransformerFunc as TransformerFunPtr #}
@@ -194,40 +190,36 @@ newtype TransformerFun (t :: * -> * -> *) s a
 -- GenImgProjTransformer
 -- ############################################################################
 
-data GenImgProjTransformer s a =
+data GenImgProjTransformer =
      GenImgProjTransformer {
-      giptSrcDs    :: Maybe (RODataset s a)
-    , giptDstDs    :: Maybe (RWDataset s a)
-    , giptSrcSrs   :: Maybe SpatialReference
+      giptSrcSrs   :: Maybe SpatialReference
     , giptDstSrs   :: Maybe SpatialReference
     , giptUseGCP   :: Bool
     , giptMaxError :: Double
     , giptOrder    :: Int
   }
 
-gipt :: GenImgProjTransformer s a
+gipt :: GenImgProjTransformer
 gipt = def
 
-instance HasSrcSrs (GenImgProjTransformer s a) (Maybe SpatialReference) where
+instance HasSrcSrs (GenImgProjTransformer) (Maybe SpatialReference) where
   srcSrs = lens giptSrcSrs (\o a -> o {giptSrcSrs = a})
 
-instance HasDstSrs (GenImgProjTransformer s a) (Maybe SpatialReference) where
+instance HasDstSrs (GenImgProjTransformer) (Maybe SpatialReference) where
   dstSrs = lens giptDstSrs (\o a -> o {giptDstSrs = a})
 
-instance HasUseGCP (GenImgProjTransformer s a) Bool where
+instance HasUseGCP (GenImgProjTransformer) Bool where
   useGCP = lens giptUseGCP (\o a -> o {giptUseGCP = a})
 
-instance HasMaxError (GenImgProjTransformer s a) Double where
+instance HasMaxError (GenImgProjTransformer) Double where
   maxError = lens giptMaxError (\o a -> o {giptMaxError = a})
 
-instance HasOrder (GenImgProjTransformer s a) Int where
+instance HasOrder (GenImgProjTransformer) Int where
   order = lens giptOrder (\o a -> o {giptOrder = a})
 
-instance Default (GenImgProjTransformer s a) where
+instance Default (GenImgProjTransformer) where
   def = GenImgProjTransformer {
-          giptSrcDs    = Nothing
-        , giptDstDs    = Nothing
-        , giptSrcSrs   = Nothing
+          giptSrcSrs   = Nothing
         , giptDstSrs   = Nothing
         , giptUseGCP   = True
         , giptMaxError = 1
@@ -253,38 +245,34 @@ instance Transformer GenImgProjTransformer where
       {#call unsafe CreateGenImgProjTransformer as ^#}
         (maybe nullDatasetH unDataset srcDs)
         sSr
-        (maybe nullDatasetH unDataset giptDstDs)
+        nullDatasetH
         dSr
         (fromBool giptUseGCP)
         (realToFrac giptMaxError)
         (fromIntegral giptOrder)
 
 foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
-  c_GDALGenImgProjTransform :: TransformerFun GenImgProjTransformer s a
+  c_GDALGenImgProjTransform :: TransformerFun GenImgProjTransformer
 
 
 -- ############################################################################
 -- GenImgProjTransformer2
 -- ############################################################################
 
-data GenImgProjTransformer2 s a =
+data GenImgProjTransformer2 =
      GenImgProjTransformer2 {
-      gipt2SrcDs    :: Maybe (RODataset s a)
-    , gipt2DstDs    :: Maybe (RWDataset s a)
-    , gipt2Options  :: OptionList
+      gipt2Options  :: OptionList
   }
 
-instance HasOptions (GenImgProjTransformer2 s a) OptionList where
+instance HasOptions (GenImgProjTransformer2) OptionList where
   options = lens gipt2Options (\o a -> o {gipt2Options = a})
 
-gipt2 :: GenImgProjTransformer2 s a
+gipt2 :: GenImgProjTransformer2
 gipt2 = def
 
-instance Default (GenImgProjTransformer2 s a) where
+instance Default (GenImgProjTransformer2) where
   def = GenImgProjTransformer2 {
-          gipt2SrcDs   = Nothing
-        , gipt2DstDs   = Nothing
-        , gipt2Options = []
+          gipt2Options = []
         }
 
 instance Transformer GenImgProjTransformer2 where
@@ -296,17 +284,17 @@ instance Transformer GenImgProjTransformer2 where
     withOptionList gipt2Options $ \opts ->
       {#call unsafe CreateGenImgProjTransformer2 as ^#}
         (maybe nullDatasetH unDataset srcDs)
-        (maybe nullDatasetH unDataset gipt2DstDs)
+        nullDatasetH
         opts
 
 foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
-  c_GDALGenImgProjTransform2 :: TransformerFun GenImgProjTransformer2 s a
+  c_GDALGenImgProjTransform2 :: TransformerFun GenImgProjTransformer2
 
 -- ############################################################################
 -- GenImgProjTransformer3
 -- ############################################################################
 
-data GenImgProjTransformer3 s a =
+data GenImgProjTransformer3 =
      GenImgProjTransformer3 {
       gipt3SrcSrs :: Maybe SpatialReference
     , gipt3DstSrs :: Maybe SpatialReference
@@ -314,22 +302,22 @@ data GenImgProjTransformer3 s a =
     , gipt3DstGt  :: Maybe Geotransform
   }
 
-gipt3 :: GenImgProjTransformer3 s a
+gipt3 :: GenImgProjTransformer3
 gipt3 = def
 
-instance HasSrcSrs (GenImgProjTransformer3 s a) (Maybe SpatialReference) where
+instance HasSrcSrs (GenImgProjTransformer3) (Maybe SpatialReference) where
   srcSrs = lens gipt3SrcSrs (\o a -> o {gipt3SrcSrs = a})
 
-instance HasDstSrs (GenImgProjTransformer3 s a) (Maybe SpatialReference) where
+instance HasDstSrs (GenImgProjTransformer3) (Maybe SpatialReference) where
   dstSrs = lens gipt3DstSrs (\o a -> o {gipt3DstSrs = a})
 
-instance HasSrcGt (GenImgProjTransformer3 s a) (Maybe Geotransform) where
+instance HasSrcGt (GenImgProjTransformer3) (Maybe Geotransform) where
   srcGt = lens gipt3SrcGt (\o a -> o {gipt3SrcGt = a})
 
-instance HasDstGt (GenImgProjTransformer3 s a) (Maybe Geotransform) where
+instance HasDstGt (GenImgProjTransformer3) (Maybe Geotransform) where
   dstGt = lens gipt3DstGt (\o a -> o {gipt3DstGt = a})
 
-instance Default (GenImgProjTransformer3 s a) where
+instance Default (GenImgProjTransformer3) where
   def = GenImgProjTransformer3 {
           gipt3SrcSrs = Nothing
         , gipt3DstSrs = Nothing
@@ -369,36 +357,37 @@ withMaybeGeotransformPtr Nothing   f = f nullPtr
 withMaybeGeotransformPtr (Just g) f = alloca $ \gp -> poke gp g >> f gp
 
 foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
-  c_GDALGenImgProjTransform3 :: TransformerFun GenImgProjTransformer3 s a
+  c_GDALGenImgProjTransform3 :: TransformerFun GenImgProjTransformer3
 
 -- ############################################################################
 -- RasterizeSettings
 -- ############################################################################
 
-data RasterizeSettings s a =
+data RasterizeSettings =
   RasterizeSettings {
-    rsTransformer :: SomeTransformer s a
+    rsTransformer :: Maybe SomeTransformer
   , rsOptions     :: OptionList
   , rsProgressFun :: Maybe ProgressFun
   , rsBands       :: [Int]
   }
 
-instance Default (RasterizeSettings s a) where
+instance Default (RasterizeSettings) where
   def = RasterizeSettings def def def [1]
 
-instance HasOptions (RasterizeSettings s a) OptionList where
+instance HasOptions (RasterizeSettings) OptionList where
   options = lens rsOptions (\a b -> a {rsOptions = b})
 
-instance HasTransformer (RasterizeSettings s a) (SomeTransformer s a) where
-  transformer = lens rsTransformer (\a b -> a {rsTransformer = b})
+instance HasTransformer (RasterizeSettings) (Maybe SomeTransformer)
+  where
+    transformer = lens rsTransformer (\a b -> a {rsTransformer = b})
 
-instance HasProgressFun (RasterizeSettings s a) (Maybe ProgressFun) where
+instance HasProgressFun (RasterizeSettings) (Maybe ProgressFun) where
   progressFun = lens rsProgressFun (\a b -> a {rsProgressFun = b})
 
 class HasBands o a | o -> a where
   bands :: Lens' o a
 
-instance HasBands (RasterizeSettings s a) [Int] where
+instance HasBands (RasterizeSettings) [Int] where
   bands = lens rsBands (\a b -> a {rsBands = b})
 
 -- ############################################################################
@@ -414,7 +403,7 @@ rasterizeLayersBuf
   -> SpatialReference
   -> Size
   -> Geotransform
-  -> RasterizeSettings s a
+  -> RasterizeSettings
   -> GDAL s (U.Vector (Value a))
 rasterizeLayersBuf layers nodataValue burnValueOrAttr srs size gt cfg =
   liftIO $
@@ -450,7 +439,7 @@ rasterizeLayers
   :: forall s l b a. GDALType a
   => Either [(ROLayer s l b, a)] ([ROLayer s l b], Text)
   -> RWDataset s a
-  -> RasterizeSettings s a
+  -> RasterizeSettings
   -> GDAL s ()
 rasterizeLayers eLayers ds cfg =
   liftIO $
@@ -498,10 +487,10 @@ rasterizeLayers eLayers ds cfg =
 
 
 rasterizeGeometries
-  :: forall s l b a. GDALType a
+  :: forall s a. GDALType a
   => [(Geometry, [a])]
   -> RWDataset s a
-  -> RasterizeSettings s a
+  -> RasterizeSettings
   -> GDAL s ()
 rasterizeGeometries geomValues ds cfg = do
   values <- liftM concat $ forM geomValues $ \(_,vals) ->
