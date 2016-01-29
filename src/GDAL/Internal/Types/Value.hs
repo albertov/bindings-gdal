@@ -25,9 +25,10 @@ module GDAL.Internal.Types.Value (
   , toGVecWithNodata
   , toGVecWithMask
   , unValueVector
+  , catValues
 ) where
 
-import Control.Applicative (Applicative(..))
+import Control.Applicative (Applicative(..), liftA2)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (liftM, liftM2)
 
@@ -42,8 +43,8 @@ import qualified Data.Vector.Unboxed.Base as U
 import Foreign.Storable (Storable)
 
 data Value a
-  = Value {unValue :: !a}
-  | NoData
+  = NoData
+  | Value {unValue :: !a}
   deriving (Eq, Ord, Show, Typeable)
 
 instance NFData a => NFData (Value a) where
@@ -82,22 +83,13 @@ instance Monad Value where
   {-# INLINE fail #-}
 
 instance Num a => Num (Value a) where
-  Value a + Value b = Value (a+b)
-  Value a + NoData  = Value a
-  NoData  + Value a = Value a
-  NoData  + NoData  = NoData
+  (+) = liftA2 (+)
   {-# INLINE (+) #-}
 
-  Value a - Value b = Value (a-b)
-  Value a - NoData  = Value a
-  NoData  - Value a = Value a
-  NoData  - NoData  = NoData
+  (-) = liftA2 (-)
   {-# INLINE (-) #-}
 
-  Value a * Value b = Value (a*b)
-  Value _ * NoData  = NoData
-  NoData  * Value _ = NoData
-  NoData  * NoData  = NoData
+  (*) = liftA2 (*)
   {-# INLINE (*) #-}
 
   negate = fmap negate
@@ -113,10 +105,7 @@ instance Num a => Num (Value a) where
   {-# INLINE fromInteger #-}
 
 instance Fractional a => Fractional (Value a) where
-  Value a / Value b = Value (a/b)
-  Value _ / NoData  = NoData
-  NoData  / Value _ = NoData
-  NoData  / NoData  = NoData
+  (/) = liftA2 (/)
   {-# INLINE (/) #-}
 
   recip = fmap recip
@@ -229,6 +218,12 @@ unValueVector
   => U.Vector (Value a) -> Maybe (U.Vector a)
 unValueVector = fmap G.convert . toGVec
 {-# INLINE unValueVector #-}
+
+catValues
+  :: (Storable a, U.Unbox a, Eq a)
+  => U.Vector (Value a) -> U.Vector a
+catValues = G.map unValue . G.filter (not . isNoData)
+{-# INLINE catValues #-}
 
 instance (Storable a, Eq a) => M.MVector U.MVector (Value a) where
 

@@ -126,8 +126,8 @@ spec = setupAndTeardown $ do
         flushCache ds2
 
         v2 <- readBand b2 (allBand b2) sz2
-        v2 `shouldSatisfy` U.all (>(Value 0))
-        U.sum v2 `shouldBe` U.sum v1
+        catValues v2 `shouldSatisfy` U.all (> 0)
+        U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
 
   describe "createWarpedVRT" $ do
 
@@ -149,8 +149,8 @@ spec = setupAndTeardown $ do
 
       b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt opts
       v2 <- readBand b2 (allBand b2) sz2
-      v2 `shouldSatisfy` U.all (> Value 0)
-      U.sum v2 `shouldSatisfy` (< U.sum v1)
+      catValues v2 `shouldSatisfy` U.all (> 0)
+      U.sum (catValues v2) `shouldSatisfy` (< U.sum (catValues v1))
 
     forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
       it ("handles nodata (GenImgProjTransformer) " ++ show algo) $ do
@@ -172,8 +172,8 @@ spec = setupAndTeardown $ do
                        }
         b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt opts
         v2 <- readBand b2 (allBand b2) sz2
-        v2 `shouldSatisfy` U.all (>(Value 0))
-        U.sum v2 `shouldBe` U.sum v1
+        catValues v2 `shouldSatisfy` U.all (> 0)
+        U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
 
     forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
       it ("handles nodata (GenImgProjTransformer2) " ++ show algo) $ do
@@ -194,8 +194,8 @@ spec = setupAndTeardown $ do
                            SomeTransformer (def {gipt2SrcDs = Just ds})}
         b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt opts
         v2 <- readBand b2 (allBand b2) sz2
-        v2 `shouldSatisfy` U.all (>(Value 0))
-        U.sum v2 `shouldBe` U.sum v1
+        catValues v2 `shouldSatisfy` U.all (> 0)
+        U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
 
 
     forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
@@ -217,8 +217,8 @@ spec = setupAndTeardown $ do
                            SomeTransformer (def {gipt3SrcGt = Just gt})}
         b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt opts
         v2 <- readBand b2 (allBand b2) sz2
-        v2 `shouldSatisfy` U.all (>(Value 0))
-        U.sum v2 `shouldBe` U.sum v1
+        catValues v2 `shouldSatisfy` U.all (> 0)
+        U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
 
 resampleAlgorithmsWhichHandleNodata :: [ResampleAlg]
 resampleAlgorithmsWhichHandleNodata

@@ -47,6 +47,8 @@ module GDAL (
   , isNoData
   , fromValue
   , unValueVector
+  , catValues
+
   , create
   , createMem
   , delete
