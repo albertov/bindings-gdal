@@ -126,7 +126,7 @@ instance Exception GDALAlgorithmException where
 
 class Transformer t where
   transformerFun         :: t -> TransformerFun t
-  createTransformerArg   :: t -> Maybe (RODataset s a) -> IO (Ptr t)
+  createTransformerArg   :: t -> Maybe (Dataset s a m) -> IO (Ptr t)
   destroyTransformerArg  :: Ptr t -> IO ()
   setGeotransform        :: Geotransform -> Ptr t -> IO ()
 
@@ -163,7 +163,7 @@ class HasMaxError o t | o -> t where
 
 withTransformerAndArg
   :: Maybe SomeTransformer
-  -> Maybe (RODataset s a)
+  -> Maybe (Dataset s a t)
   -> Maybe Geotransform
   -> (TransformerFunPtr -> Ptr () -> IO c)
   -> IO c

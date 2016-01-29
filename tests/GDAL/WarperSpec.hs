@@ -26,10 +26,9 @@ spec = setupAndTeardown $ do
       let Right srs1 = srsFromEPSG 23030
           Right srs2 = srsFromEPSG 4326
 
-      ds' <- createMem (100 :+: 100) 1 GDT_Int16 []
-      setDatasetProjection srs1 ds'
-      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds'
-      ds <- unsafeToReadOnly ds'
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
+      setDatasetProjection srs1 ds
+      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds
 
       ds2 <- createMem (100 :+: 100) 1 GDT_Int16 []
       setDatasetProjection srs2 ds2
@@ -39,9 +38,8 @@ spec = setupAndTeardown $ do
     it "does not work with no geotransforms" $ do
       let Right srs1 = srsFromEPSG 23030
           Right srs2 = srsFromEPSG 4326
-      ds' <- createMem (100 :+: 100) 1 GDT_Int16 []
-      setDatasetProjection srs1 ds'
-      ds <- unsafeToReadOnly ds'
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
+      setDatasetProjection srs1 ds
       ds2 <- createMem (100 :+: 100) 1 GDT_Int16 []
       setDatasetProjection srs2 ds2
       reprojectImage ds ds2 def `shouldThrow` ((==AppDefined) . gdalErrNum)
@@ -49,9 +47,8 @@ spec = setupAndTeardown $ do
     it "works with SpatialReferences as args" $ do
       let Right srs1 = srsFromEPSG 23030
           Right srs2 = srsFromEPSG 4326
-      ds' <- createMem (100 :+: 100) 1 GDT_Int16 []
-      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds'
-      ds <- unsafeToReadOnly ds'
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
+      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds
       ds2 <- createMem (100 :+: 100) 1 GDT_Int16 []
       setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds2
       reprojectImage ds ds2 $ def
@@ -59,9 +56,8 @@ spec = setupAndTeardown $ do
         & dstSrs .~ Just srs2
 
     it "can be stopped with progressFun" $ do
-      ds' <- createMem (100 :+: 100) 1 GDT_Int16 []
-      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds'
-      ds <- unsafeToReadOnly ds'
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
+      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds
 
       ds2 <- createMem (100 :+: 100) 1 GDT_Int16 []
       setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds2
@@ -69,9 +65,8 @@ spec = setupAndTeardown $ do
       reprojectImage ds ds2 opts `shouldThrow` isInterruptedException
 
     it "can receive warp options" $ do
-      ds' <- createMem (100 :+: 100) 1 GDT_Int16 []
-      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds'
-      ds <- unsafeToReadOnly ds'
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
+      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds
 
       ds2 <- createMem (100 :+: 100) 1 GDT_Int16 []
       setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds2
@@ -85,13 +80,12 @@ spec = setupAndTeardown $ do
           Right cl = geomFromWkt Nothing
                      "POLYGON ((5 5, 95 5, 95 95, 5 95, 5 5))"
           v1  = U.generate (sizeLen sz) fromIntegral
-      ds' <- createMem sz 1 GDT_Int32 []
-      setDatasetGeotransform gt ds'
-      b <- getBand 1 ds'
+      ds <- createMem sz 1 GDT_Int32 []
+      setDatasetGeotransform gt ds
+      b <- getBand 1 ds
       setBandNodataValue (-1) b
       writeBand b (allBand b) sz v1
-      flushCache ds'
-      ds <- unsafeToReadOnly ds'
+      flushCache ds
 
       ds2 <- createMem sz 1 GDT_Int32 []
       setDatasetGeotransform gt ds2
@@ -105,9 +99,8 @@ spec = setupAndTeardown $ do
       U.sum (catValues v2) `shouldSatisfy` (< U.sum (catValues v1))
 
     it "cutline must be a polygon" $ do
-      ds' <- createMem (100 :+: 100) 1 GDT_Int16 []
-      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds'
-      ds <- unsafeToReadOnly ds'
+      ds <- createMem (100 :+: 100) 1 GDT_Int16 []
+      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds
 
       let Right cl = geomFromWkt Nothing "POINT (0 0)"
       ds2 <- createMem (100 :+: 100) 1 GDT_Int16 []
@@ -122,12 +115,11 @@ spec = setupAndTeardown $ do
             gt  = Geotransform 0 10 0 0 0 (-10)
             v1  = U.generate (sizeLen sz)
                   (\i -> if i<50 then NoData else Value (fromIntegral i))
-        ds' <- createMem sz 1 GDT_Int32 []
-        setDatasetGeotransform gt ds'
-        b <- getBand 1 ds'
+        ds <- createMem sz 1 GDT_Int32 []
+        setDatasetGeotransform gt ds
+        b <- getBand 1 ds
         setBandNodataValue (-1) b
         writeBand b (allBand b) sz v1
-        ds <- unsafeToReadOnly ds'
 
         ds2 <- createMem sz2 1 GDT_Int32 []
         setDatasetGeotransform gt ds2
@@ -148,13 +140,12 @@ spec = setupAndTeardown $ do
           sz2 = 200 :+: 200
           v1  = U.generate (sizeLen sz)
                 (\i -> if i<50 then NoData else Value (fromIntegral i))
-      ds' <- createMem sz 1 GDT_Int32 []
-      setDatasetGeotransform gt ds'
-      b <- getBand 1 ds'
+      ds <- createMem sz 1 GDT_Int32 []
+      setDatasetGeotransform gt ds
+      b <- getBand 1 ds
       setBandNodataValue (-1) b
       writeBand b (allBand b) sz v1
-      flushCache ds'
-      ds <- unsafeToReadOnly ds'
+      flushCache ds
       b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt def
       v2 <- readBand b2 (allBand b2) sz2
       catValues v2 `shouldSatisfy` U.all (> 0)
@@ -168,13 +159,12 @@ spec = setupAndTeardown $ do
                      "POLYGON ((5 5, 95 5, 95 95, 5 95, 5 5))"
           v1  = U.generate (sizeLen sz)
                 (\i -> if i<50 then NoData else Value (fromIntegral i))
-      ds' <- createMem sz 1 GDT_Int32 []
-      setDatasetGeotransform gt ds'
-      b <- getBand 1 ds'
+      ds <- createMem sz 1 GDT_Int32 []
+      setDatasetGeotransform gt ds
+      b <- getBand 1 ds
       setBandNodataValue (-1) b
       writeBand b (allBand b) sz v1
-      flushCache ds'
-      ds <- unsafeToReadOnly ds'
+      flushCache ds
       ds2 <- createWarpedVRT ds sz gt $ def
         & cutline .~ Just cl
       b2 <- getBand 1 ds2
@@ -189,12 +179,11 @@ spec = setupAndTeardown $ do
             gt  = Geotransform 0 10 0 0 0 (-10)
             v1  = U.generate (sizeLen sz)
                   (\i -> if i<50 then NoData else Value (fromIntegral i))
-        ds' <- createMem sz 1 GDT_Int32 []
-        setDatasetGeotransform gt ds'
-        b <- getBand 1 ds'
+        ds <- createMem sz 1 GDT_Int32 []
+        setDatasetGeotransform gt ds
+        b <- getBand 1 ds
         setBandNodataValue (-1) b
         writeBand b (allBand b) sz v1
-        ds <- unsafeToReadOnly ds'
 
         let opts = def
               & resampleAlg .~ algo
@@ -211,12 +200,11 @@ spec = setupAndTeardown $ do
             gt  = Geotransform 0 10 0 0 0 (-10)
             v1  = U.generate (sizeLen sz)
                   (\i -> if i<50 then NoData else Value (fromIntegral i))
-        ds' <- createMem sz 1 GDT_Int32 []
-        setDatasetGeotransform gt ds'
-        b <- getBand 1 ds'
+        ds <- createMem sz 1 GDT_Int32 []
+        setDatasetGeotransform gt ds
+        b <- getBand 1 ds
         setBandNodataValue (-1) b
         writeBand b (allBand b) sz v1
-        ds <- unsafeToReadOnly ds'
 
         let opts = def
               & resampleAlg .~ algo
@@ -234,12 +222,11 @@ spec = setupAndTeardown $ do
             gt  = Geotransform 0 10 0 0 0 (-10)
             v1  = U.generate (sizeLen sz)
                   (\i -> if i<50 then NoData else Value (fromIntegral i))
-        ds' <- createMem sz 1 GDT_Int32 []
-        setDatasetGeotransform gt ds'
-        b <- getBand 1 ds'
+        ds <- createMem sz 1 GDT_Int32 []
+        setDatasetGeotransform gt ds
+        b <- getBand 1 ds
         setBandNodataValue (-1) b
         writeBand b (allBand b) sz v1
-        ds <- unsafeToReadOnly ds'
 
         let opts = def
               & resampleAlg .~ algo

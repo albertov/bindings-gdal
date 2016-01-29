@@ -169,7 +169,7 @@ instance Default (WarpOptions a) where
 
 setOptionDefaults
   :: GDALType a
-  => RODataset s a -> Maybe (Dataset s a t) -> WarpOptions a
+  => Dataset s a t' -> Maybe (Dataset s a t) -> WarpOptions a
   -> GDAL s (WarpOptions a)
 setOptionDefaults ds moDs wo@WarpOptions{..} = do
   bs <- if null woBands
@@ -198,7 +198,7 @@ anyBandHasDstNoData wo = any (\BandOptions{..} -> isJust biDstNoData) (woBands w
 
 withWarpOptionsH
   :: GDALType a
-  => RODataset s a
+  => Dataset s a t
   -> Maybe Geotransform
   -> WarpOptions a
   -> (WarpOptionsH -> IO c)
@@ -245,7 +245,7 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
 
 reprojectImage
   :: GDALType a
-  => RODataset s a
+  => Dataset s a t
   -> RWDataset s a
   -> WarpOptions a
   -> GDAL s ()
@@ -273,7 +273,7 @@ reprojectImage srcDs dstDs cfg = do
 
 createWarpedVRT
   :: GDALType a
-  => RODataset s a
+  => Dataset s a t
   -> Size
   -> Geotransform
   -> WarpOptions a
