@@ -66,6 +66,7 @@ module GDAL.Internal.OGRGeometry (
   , geomPolygonize
 
   , withGeometry
+  , withGeometries
   , withMaybeGeometry
   , maybeCloneGeometryAndTransferOwnership
   , cloneGeometry
@@ -106,7 +107,9 @@ import Foreign.ForeignPtr (
   , withForeignPtr
   , newForeignPtr
   , mallocForeignPtrBytes
+  , touchForeignPtr
   )
+import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (toBool, with)
 import Foreign.Storable (Storable(..))
@@ -169,6 +172,12 @@ instance Projectable EnvelopeReal where
   } deriving (Eq, Show) #}
 
 {#pointer OGRGeometryH as Geometry foreign newtype#}
+
+withGeometries :: [Geometry] -> ([Ptr Geometry] -> IO a) -> IO a
+withGeometries geoms f = do
+  ret <- f $ map (\(Geometry fp) -> unsafeForeignPtrToPtr fp) geoms
+  mapM_ (\(Geometry fp) -> touchForeignPtr fp) geoms
+  return ret
 
 instance Show Geometry where
   show = unpack . geomToWkt

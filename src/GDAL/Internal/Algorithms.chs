@@ -21,6 +21,7 @@ module GDAL.Internal.Algorithms (
   , SomeTransformer (..)
   , HasTransformer (..)
   , HasBands (..)
+  , GDALAlgorithmException(..)
 
   , Contour (..)
 
@@ -34,10 +35,10 @@ module GDAL.Internal.Algorithms (
 
   , GridAlgorithmEnum (..)
 
-  , RasterizeLayersBuf
+  , RasterizeSettings
   , rasterizeLayersBuf
-  , RasterizeLayers
   , rasterizeLayers
+  , rasterizeGeometries
   , createGrid
   , createGridIO
   , computeProximity
@@ -58,7 +59,7 @@ import Control.Monad.Catch (
   , onException
   , try
   )
-import Control.Monad (liftM, when)
+import Control.Monad (liftM, when, forM)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
 import Data.Maybe (isJust)
@@ -106,6 +107,7 @@ import GDAL.Internal.DataType
 
 data GDALAlgorithmException
   = NullTransformer !Text
+  | GeomValueListLengthMismatch
   deriving (Typeable, Show, Eq)
 
 instance Exception GDALAlgorithmException where
@@ -291,31 +293,43 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
   c_GDALGenImgProjTransform3 :: TransformerFun GenImgProjTransformer3 s a
 
 -- ############################################################################
+-- RasterizeSettings
+-- ############################################################################
+
+data RasterizeSettings s a =
+  RasterizeSettings {
+    rsTransformer :: SomeTransformer s a
+  , rsOptions     :: OptionList
+  , rsProgressFun :: Maybe ProgressFun
+  , rsBands       :: [Int]
+  }
+
+instance Default (RasterizeSettings s a) where
+  def = RasterizeSettings def def def [1]
+
+instance HasOptions (RasterizeSettings s a) OptionList where
+  options = lens rsOptions (\a b -> a {rsOptions = b})
+
+instance HasTransformer (RasterizeSettings s a) (SomeTransformer s a) where
+  transformer = lens rsTransformer (\a b -> a {rsTransformer = b})
+
+instance HasProgressFun (RasterizeSettings s a) (Maybe ProgressFun) where
+  progressFun = lens rsProgressFun (\a b -> a {rsProgressFun = b})
+
+class HasBands o a | o -> a where
+  bands :: Lens' o a
+
+instance HasBands (RasterizeSettings s a) [Int] where
+  bands = lens rsBands (\a b -> a {rsBands = b})
+
+-- ############################################################################
 -- GDALRasterizeLayersBuf
 -- ############################################################################
 
-data RasterizeLayersBuf s a =
-  RasterizeLayersBuf {
-    rlbTransformer :: SomeTransformer s a
-  , rlbOptions     :: OptionList
-  , rlbProgressFun :: Maybe ProgressFun
-  }
-
-instance Default (RasterizeLayersBuf s a) where
-  def = RasterizeLayersBuf def def def
-
-instance HasOptions (RasterizeLayersBuf s a) OptionList where
-  options = lens rlbOptions (\a b -> a {rlbOptions = b})
-
-instance HasTransformer (RasterizeLayersBuf s a) (SomeTransformer s a) where
-  transformer = lens rlbTransformer (\a b -> a {rlbTransformer = b})
-
-instance HasProgressFun (RasterizeLayersBuf s a) (Maybe ProgressFun) where
-  progressFun = lens rlbProgressFun (\a b -> a {rlbProgressFun = b})
 
 rasterizeLayersBuf
   :: forall s l b a. GDALType a
-  => RasterizeLayersBuf s a
+  => RasterizeSettings s a
   -> [ROLayer s l b]
   -> a
   -> Either a Text
@@ -352,41 +366,16 @@ rasterizeLayersBuf cfg layers nodataValue burnValueOrAttr srs size gt =
 -- GDALRasterizeLayers
 -- ############################################################################
 
-data RasterizeLayers s a =
-  RasterizeLayers {
-    rlTransformer :: SomeTransformer s a
-  , rlOptions     :: OptionList
-  , rlProgressFun :: Maybe ProgressFun
-  , rlBands       :: [Int]
-  }
-
-instance Default (RasterizeLayers s a) where
-  def = RasterizeLayers def def def [1]
-
-instance HasOptions (RasterizeLayers s a) OptionList where
-  options = lens rlOptions (\a b -> a {rlOptions = b})
-
-instance HasTransformer (RasterizeLayers s a) (SomeTransformer s a) where
-  transformer = lens rlTransformer (\a b -> a {rlTransformer = b})
-
-instance HasProgressFun (RasterizeLayers s a) (Maybe ProgressFun) where
-  progressFun = lens rlProgressFun (\a b -> a {rlProgressFun = b})
-
-class HasBands o a | o -> a where
-  bands :: Lens' o a
-
-instance HasBands (RasterizeLayers s a) [Int] where
-  bands = lens rlBands (\a b -> a {rlBands = b})
 
 rasterizeLayers
   :: forall s l b a. GDALType a
-  => RasterizeLayers s a
+  => RasterizeSettings s a
   -> Either [(ROLayer s l b, a)] ([ROLayer s l b], Text)
   -> RWDataset s a
   -> GDAL s ()
 rasterizeLayers cfg eLayers ds =
   liftIO $
-  withProgressFun "rasterizeLayersBuf" (cfg^.progressFun) $ \pFun ->
+  withProgressFun "rasterizeLayers" (cfg^.progressFun) $ \pFun ->
   withTransformerAndArg (cfg^.transformer) Nothing $ \trans tArg ->
   withArrayLen (cfg^.bands) $ \nBands bListPtr ->
     case eLayers of
@@ -423,6 +412,44 @@ rasterizeLayers cfg eLayers ds =
           opts
           pFun
           nullPtr
+
+-- ############################################################################
+-- GDALRasterizeGeometries
+-- ############################################################################
+
+
+rasterizeGeometries
+  :: forall s l b a. GDALType a
+  => RasterizeSettings s a
+  -> [(Geometry, [a])]
+  -> RWDataset s a
+  -> GDAL s ()
+rasterizeGeometries cfg geomValues ds = do
+  values <- liftM concat $ forM geomValues $ \(_,vals) ->
+    if length vals == length (cfg^.bands)
+      then return vals
+      else throwBindingException GeomValueListLengthMismatch
+  liftIO $
+    withProgressFun "rasterizeGeometries" (cfg^.progressFun) $ \pFun ->
+    withTransformerAndArg (cfg^.transformer) Nothing $ \trans tArg ->
+    withArrayLen (cfg^.bands) $ \nBands bListPtr ->
+    withGeometries (map fst geomValues) $ \pGeoms ->
+    withArrayLen pGeoms $ \nGeoms gListPtr ->
+    withArrayLen (map toCDouble values) $ \_ valPtr ->
+    withOptionList (cfg^.options) $ \opts ->
+      checkCPLError "RasterizeGeometries" $
+      {#call GDALRasterizeGeometries as ^#}
+        (unDataset ds)
+        (fromIntegral nBands)
+        (castPtr bListPtr)
+        (fromIntegral nGeoms)
+        (castPtr gListPtr)
+        trans
+        tArg
+        valPtr
+        opts
+        pFun
+        nullPtr
 
 -- ############################################################################
 -- GDALCreateGrid

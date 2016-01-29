@@ -5,6 +5,7 @@ module GDAL.Algorithms (
   , GenImgProjTransformer3 (..)
   , HasTransformer (..)
   , HasBands (..)
+  , GDALAlgorithmException(..)
 
   , Contour (..)
   , GridPoint (..)
@@ -15,10 +16,10 @@ module GDAL.Algorithms (
   , GridDataMetrics (..)
   , MetricType (..)
 
-  , RasterizeLayersBuf
+  , RasterizeSettings
   , rasterizeLayersBuf
-  , RasterizeLayers
   , rasterizeLayers
+  , rasterizeGeometries
   , createGrid
   , createGridIO
   , computeProximity

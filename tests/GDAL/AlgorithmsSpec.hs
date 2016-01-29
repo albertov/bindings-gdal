@@ -228,6 +228,41 @@ spec = setupAndTeardown $ do
 
      w `shouldSatisfy` U.any (==(Value burnValue))
 
+  describe "rasterizeGeometries" $ do
+
+   it "produces a NoData vector when rasterizing an empty geom list " $ do
+     let size = 100
+         env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
+         gt   = northUpGeotransform size env
+     dDs <- GDAL.createMem size 1 GDT_Float64 []
+     setDatasetGeotransform gt dDs
+     b <- getBand 1 dDs
+     setBandNodataValue 0 b
+     rasterizeGeometries def [] dDs
+     readBand b (allBand b) (bandSize b) >>= (`shouldSatisfy` U.all (==NoData))
+
+   it "burns values associated with geometry" $ do
+     let size = 100
+         env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
+         gt   = northUpGeotransform size env
+         burnValue = 10
+         Just geom = do
+           g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
+           geomBuffer 0.05 10 g
+     dDs <- GDAL.createMem size 1 GDT_Float64 []
+     setDatasetGeotransform gt dDs
+     b <- getBand 1 dDs
+     setBandNodataValue 0 b
+     rasterizeGeometries def [(geom,[burnValue])] dDs
+     v <- readBand b (allBand b) (bandSize b)
+     v `shouldSatisfy` U.any (==(Value burnValue))
+
+   it "checks that value list length matches band list length" $ do
+     dDs <- GDAL.createMem 1 1 GDT_Float64 []
+     rasterizeGeometries def [(undefined,[])] dDs
+       `shouldThrow` (==GeomValueListLengthMismatch)
+
+
   createGridIOSpec GDT_Float64 (SGA (def :: GridInverseDistanceToAPower))
   createGridIOSpec GDT_Float64 (SGA (def :: GridMovingAverage))
   createGridIOSpec GDT_Float64 (SGA (def :: GridNearestNeighbor))
