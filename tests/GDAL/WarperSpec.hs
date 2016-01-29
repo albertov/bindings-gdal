@@ -79,17 +79,30 @@ spec = setupAndTeardown $ do
         & options .~ [("OPTIMIZE_SIZE","TRUE")]
 
     it "can receive cutline" $ do
-      ds' <- createMem (100 :+: 100) 1 GDT_Int16 []
-      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds'
+      let env = Envelope 100 200
+          gt  = northUpGeotransform sz env
+          sz  = 100 :+: 100
+          Right cl = geomFromWkt Nothing
+                     "POLYGON ((5 5, 95 5, 95 95, 5 95, 5 5))"
+          v1  = U.generate (sizeLen sz) fromIntegral
+      ds' <- createMem sz 1 GDT_Int32 []
+      setDatasetGeotransform gt ds'
+      b <- getBand 1 ds'
+      setBandNodataValue (-1) b
+      writeBand b (allBand b) sz v1
+      flushCache ds'
       ds <- unsafeToReadOnly ds'
 
-      let Right cl = geomFromWkt Nothing
-                     "POLYGON ((0 0, 0 100, 100 100, 100 0, 0 0))"
+      ds2 <- createMem sz 1 GDT_Int32 []
+      setDatasetGeotransform gt ds2
+      b2 <- getBand 1 ds2
+      setBandNodataValue (-1) b2
 
-      ds2 <- createMem (100 :+: 100) 1 GDT_Int16 []
-      setDatasetGeotransform (Geotransform 0 10 0 0 0 (-10)) ds2
       reprojectImage ds ds2 $ def
         & cutline .~ Just cl
+
+      v2 <- readBand b2 (allBand b2) sz
+      U.sum (catValues v2) `shouldSatisfy` (< U.sum (catValues v1))
 
     it "cutline must be a polygon" $ do
       ds' <- createMem (100 :+: 100) 1 GDT_Int16 []
@@ -147,13 +160,12 @@ spec = setupAndTeardown $ do
       catValues v2 `shouldSatisfy` U.all (> 0)
       U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
 
-{-
     it "can receive cutline" $ do
-      let gt = northUpGeotransform 100 (Envelope (-500) 500)
-          Right cl = geomFromWkt Nothing
-                     "POLYGON ((0 0, 0 100, 100 100, 100 0, 0 0))"
+      let env = Envelope 100 200
+          gt  = northUpGeotransform sz env
           sz  = 100 :+: 100
-          sz2 = 200 :+: 200
+          Right cl = geomFromWkt Nothing
+                     "POLYGON ((5 5, 95 5, 95 95, 5 95, 5 5))"
           v1  = U.generate (sizeLen sz)
                 (\i -> if i<50 then NoData else Value (fromIntegral i))
       ds' <- createMem sz 1 GDT_Int32 []
@@ -163,15 +175,13 @@ spec = setupAndTeardown $ do
       writeBand b (allBand b) sz v1
       flushCache ds'
       ds <- unsafeToReadOnly ds'
-      let opts = def
-            -- & cutline .~ Just cl
-               & transformer .~ SomeTransformer (gipt)
-
-      b2 <- getBand 1 =<< createWarpedVRT ds sz2 gt opts
-      v2 <- readBand b2 (allBand b2) sz2
+      ds2 <- createWarpedVRT ds sz gt $ def
+        & cutline .~ Just cl
+      b2 <- getBand 1 ds2
+      v2 <- readBand b2 (allBand b2) sz
       catValues v2 `shouldSatisfy` U.all (> 0)
       U.sum (catValues v2) `shouldSatisfy` (< U.sum (catValues v1))
--}
+
     forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
       it ("handles nodata (GenImgProjTransformer) " ++ show algo) $ do
         let sz  = 100 :+: 100
