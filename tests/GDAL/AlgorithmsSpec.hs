@@ -38,13 +38,14 @@ spec = setupAndTeardown $ do
          env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
      layer <- liftM unsafeToReadOnlyLayer $
                  createLayerWithDef ds fDef StrictOK []
-     v <- rasterizeLayersBuf def
+     v <- rasterizeLayersBuf
             [layer]
             (0 :: Double)
             (Left 1)
             srs4326
             size
             (northUpGeotransform size env)
+            def
      v `shouldSatisfy` U.all (==NoData)
 
    it "burns value passed as parameter" $ do
@@ -60,13 +61,14 @@ spec = setupAndTeardown $ do
      createFeature_ l feat
      syncLayerToDisk l
 
-     v <- rasterizeLayersBuf def
+     v <- rasterizeLayersBuf
             [unsafeToReadOnlyLayer l]
             (0 :: Double)
             (Left burnValue)
             srs4326
             size
             (northUpGeotransform size env)
+            def
      v `shouldSatisfy` U.any (==(Value burnValue))
      v `shouldSatisfy` U.all (/=(Value (tfField1 feat)))
      v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
@@ -83,13 +85,14 @@ spec = setupAndTeardown $ do
      createFeature_ l feat
      syncLayerToDisk l
 
-     v <- rasterizeLayersBuf def
+     v <- rasterizeLayersBuf
             [unsafeToReadOnlyLayer l]
             (0 :: Double)
             (Right "field1")
             srs4326
             size
             (northUpGeotransform size env)
+            def
      v `shouldSatisfy` U.any (==(Value (tfField1 feat)))
      v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
 
@@ -108,24 +111,26 @@ spec = setupAndTeardown $ do
      createFeature_ l feat
      syncLayerToDisk l
 
-     v <- rasterizeLayersBuf def
+     v <- rasterizeLayersBuf
             [unsafeToReadOnlyLayer l]
             (0 :: Double)
             (Left burnValue)
             srs23030
             size
             (northUpGeotransform size env4326)
+            def
      v `shouldSatisfy` U.all (==NoData)
      v `shouldSatisfy` U.all (/=(Value (tfField1 feat)))
      v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
 
-     w <- rasterizeLayersBuf def
+     w <- rasterizeLayersBuf
             [unsafeToReadOnlyLayer l]
             (0 :: Double)
             (Left burnValue)
             srs23030
             size
             (northUpGeotransform size env23030)
+            def
      w `shouldSatisfy` U.any (==(Value burnValue))
 
   describe "rasterizeLayers" $ do
@@ -142,7 +147,7 @@ spec = setupAndTeardown $ do
      setDatasetGeotransform gt dDs
      b <- getBand 1 dDs
      setBandNodataValue 0 b
-     rasterizeLayers def (Left [(layer,1)]) dDs
+     rasterizeLayers (Left [(layer,1)]) dDs def
      readBand b (allBand b) (bandSize b) >>= (`shouldSatisfy` U.all (==NoData))
 
    it "burns value passed as parameter" $ do
@@ -162,7 +167,7 @@ spec = setupAndTeardown $ do
      setDatasetGeotransform gt dDs
      b <- getBand 1 dDs
      setBandNodataValue 0 b
-     rasterizeLayers def (Left [(unsafeToReadOnlyLayer l, burnValue)]) dDs
+     rasterizeLayers (Left [(unsafeToReadOnlyLayer l, burnValue)]) dDs def
      v <- readBand b (allBand b) (bandSize b)
      v `shouldSatisfy` U.any (==(Value burnValue))
      v `shouldSatisfy` U.all (/=(Value (tfField1 feat)))
@@ -184,7 +189,7 @@ spec = setupAndTeardown $ do
      setDatasetGeotransform gt dDs
      b <- getBand 1 dDs
      setBandNodataValue 0 b
-     rasterizeLayers def (Right ([unsafeToReadOnlyLayer l], "field1")) dDs
+     rasterizeLayers (Right ([unsafeToReadOnlyLayer l], "field1")) dDs def
      v <- readBand b (allBand b) (bandSize b)
      v `shouldSatisfy` U.any (==(Value (tfField1 feat)))
      v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
@@ -211,7 +216,7 @@ spec = setupAndTeardown $ do
      setDatasetProjection srs23030 dDsV
      bV <- getBand 1 dDsV
      setBandNodataValue 0 bV
-     rasterizeLayers def (Left [(unsafeToReadOnlyLayer l, burnValue)]) dDsV
+     rasterizeLayers (Left [(unsafeToReadOnlyLayer l, burnValue)]) dDsV def
      v <- readBand bV (allBand bV) (bandSize bV)
 
      v `shouldSatisfy` U.all (==NoData)
@@ -223,7 +228,7 @@ spec = setupAndTeardown $ do
      setDatasetProjection srs23030 dDsW
      bW <- getBand 1 dDsW
      setBandNodataValue 0 bW
-     rasterizeLayers def (Left [(unsafeToReadOnlyLayer l, burnValue)]) dDsW
+     rasterizeLayers (Left [(unsafeToReadOnlyLayer l, burnValue)]) dDsW def
      w <- readBand bW (allBand bW) (bandSize bW)
 
      w `shouldSatisfy` U.any (==(Value burnValue))
@@ -238,7 +243,7 @@ spec = setupAndTeardown $ do
      setDatasetGeotransform gt dDs
      b <- getBand 1 dDs
      setBandNodataValue 0 b
-     rasterizeGeometries def [] dDs
+     rasterizeGeometries [] dDs def
      readBand b (allBand b) (bandSize b) >>= (`shouldSatisfy` U.all (==NoData))
 
    it "burns values associated with geometry" $ do
@@ -253,13 +258,13 @@ spec = setupAndTeardown $ do
      setDatasetGeotransform gt dDs
      b <- getBand 1 dDs
      setBandNodataValue 0 b
-     rasterizeGeometries def [(geom,[burnValue])] dDs
+     rasterizeGeometries [(geom,[burnValue])] dDs def
      v <- readBand b (allBand b) (bandSize b)
      v `shouldSatisfy` U.any (==(Value burnValue))
 
    it "checks that value list length matches band list length" $ do
      dDs <- GDAL.createMem 1 1 GDT_Float64 []
-     rasterizeGeometries def [(undefined,[])] dDs
+     rasterizeGeometries [(undefined,[])] dDs def
        `shouldThrow` (==GeomValueListLengthMismatch)
 
 

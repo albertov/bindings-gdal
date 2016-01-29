@@ -66,8 +66,10 @@ module GDAL.Internal.GDAL (
   , datasetSize
   , datasetFileList
   , datasetProjection
+  , datasetProjectionIO
   , setDatasetProjection
   , datasetGeotransform
+  , datasetGeotransformIO
   , setDatasetGeotransform
   , datasetGCPs
   , setDatasetGCPs
@@ -396,10 +398,13 @@ datasetFileList =
   {#call unsafe GetFileList as ^#} .
   unDataset
 
+datasetProjectionIO :: Dataset s a t -> IO (Maybe SpatialReference)
+datasetProjectionIO =
+  {#call unsafe GetProjectionRef as ^#} . unDataset
+              >=> maybeSpatialReferenceFromCString
+
 datasetProjection :: Dataset s a t -> GDAL s (Maybe SpatialReference)
-datasetProjection =
-  liftIO . ({#call unsafe GetProjectionRef as ^#} . unDataset
-              >=> maybeSpatialReferenceFromCString)
+datasetProjection = liftIO . datasetProjectionIO
 
 
 setDatasetProjection :: SpatialReference -> RWDataset s a -> GDAL s ()
@@ -581,12 +586,15 @@ instance Storable Geotransform where
                  <*> liftM realToFrac (peekElemOff p 5)
 
 
-datasetGeotransform :: Dataset s a t -> GDAL s (Maybe Geotransform)
-datasetGeotransform ds = liftIO $ alloca $ \p -> do
+datasetGeotransformIO :: Dataset s a t -> IO (Maybe Geotransform)
+datasetGeotransformIO ds = alloca $ \p -> do
   ret <- {#call unsafe GetGeoTransform as ^#} (unDataset ds) (castPtr p)
   if toEnumC ret == CE_None
     then liftM Just (peek p)
     else return Nothing
+
+datasetGeotransform :: Dataset s a t -> GDAL s (Maybe Geotransform)
+datasetGeotransform = liftIO . datasetGeotransformIO
 
 
 setDatasetGeotransform :: Geotransform -> RWDataset s a -> GDAL s ()

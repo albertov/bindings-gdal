@@ -15,11 +15,18 @@
 {-# LANGUAGE ViewPatterns #-}
 
 module GDAL.Internal.Algorithms (
-    GenImgProjTransformer (..)
-  , GenImgProjTransformer2 (..)
-  , GenImgProjTransformer3 (..)
+    GenImgProjTransformer
+  , GenImgProjTransformer2
+  , GenImgProjTransformer3
   , SomeTransformer (..)
   , HasTransformer (..)
+  , HasSrcSrs (..)
+  , HasDstSrs (..)
+  , HasSrcGt (..)
+  , HasDstGt (..)
+  , HasUseGCP (..)
+  , HasOrder (..)
+  , HasMaxError (..)
   , HasBands (..)
   , GDALAlgorithmException(..)
 
@@ -46,6 +53,9 @@ module GDAL.Internal.Algorithms (
   , contourGenerateVectorIO
 
   , withTransformerAndArg
+  , gipt
+  , gipt2
+  , gipt3
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
@@ -116,7 +126,7 @@ instance Exception GDALAlgorithmException where
 
 class Transformer t where
   transformerFun         :: t s a -> TransformerFun t s a
-  createTransformerArg   :: t s a -> IO (Ptr (t s a))
+  createTransformerArg   :: t s a -> Maybe (RODataset s a) -> IO (Ptr (t s a))
   destroyTransformerArg  :: Ptr (t s a) -> IO ()
   setGeotransform        :: Geotransform -> Ptr (t s a) -> IO ()
 
@@ -133,15 +143,38 @@ instance Default (SomeTransformer s a) where
 class HasTransformer o t | o -> t where
   transformer :: Lens' o t
 
+class HasSrcSrs o a | o -> a where
+  srcSrs :: Lens' o a
+
+class HasDstSrs o a | o -> a where
+  dstSrs :: Lens' o a
+
+class HasSrcGt o a | o -> a where
+  srcGt :: Lens' o a
+
+class HasDstGt o a | o -> a where
+  dstGt :: Lens' o a
+
+class HasUseGCP o a | o -> a where
+  useGCP :: Lens' o a
+
+class HasOrder o a | o -> a where
+  order :: Lens' o a
+
+class HasMaxError o t | o -> t where
+  maxError :: Lens' o t
+
+
 withTransformerAndArg
   :: SomeTransformer s a
+  -> Maybe (RODataset s a)
   -> Maybe Geotransform
   -> (TransformerFunPtr -> Ptr () -> IO c)
   -> IO c
-withTransformerAndArg DefaultTransformer _ act  = act nullFunPtr nullPtr
-withTransformerAndArg (SomeTransformer t) mGt act =
+withTransformerAndArg DefaultTransformer  _   _   act = act nullFunPtr nullPtr
+withTransformerAndArg (SomeTransformer t) sDs mGt act =
   mask $ \restore -> do
-    arg <- createTransformerArg t
+    arg <- createTransformerArg t sDs
     case mGt of
       Just gt -> setGeotransform gt arg
       Nothing -> return ()
@@ -172,6 +205,24 @@ data GenImgProjTransformer s a =
     , giptOrder    :: Int
   }
 
+gipt :: GenImgProjTransformer s a
+gipt = def
+
+instance HasSrcSrs (GenImgProjTransformer s a) (Maybe SpatialReference) where
+  srcSrs = lens giptSrcSrs (\o a -> o {giptSrcSrs = a})
+
+instance HasDstSrs (GenImgProjTransformer s a) (Maybe SpatialReference) where
+  dstSrs = lens giptDstSrs (\o a -> o {giptDstSrs = a})
+
+instance HasUseGCP (GenImgProjTransformer s a) Bool where
+  useGCP = lens giptUseGCP (\o a -> o {giptUseGCP = a})
+
+instance HasMaxError (GenImgProjTransformer s a) Double where
+  maxError = lens giptMaxError (\o a -> o {giptMaxError = a})
+
+instance HasOrder (GenImgProjTransformer s a) Int where
+  order = lens giptOrder (\o a -> o {giptOrder = a})
+
 instance Default (GenImgProjTransformer s a) where
   def = GenImgProjTransformer {
           giptSrcDs    = Nothing
@@ -183,6 +234,7 @@ instance Default (GenImgProjTransformer s a) where
         , giptOrder    = 0
         }
 
+
 checkCreateTransformer :: Text -> IO (Ptr ()) -> IO (Ptr ())
 checkCreateTransformer msg = checkGDALCall checkit
   where
@@ -193,13 +245,13 @@ checkCreateTransformer msg = checkGDALCall checkit
 instance Transformer GenImgProjTransformer where
   transformerFun _ = c_GDALGenImgProjTransform
   setGeotransform = setGenImgProjTransfomerGeotransform
-  createTransformerArg GenImgProjTransformer{..} =
+  createTransformerArg GenImgProjTransformer{..} srcDs =
     liftM castPtr $
     checkCreateTransformer "GenImgProjTransformer" $
     withMaybeSRAsCString giptSrcSrs $ \sSr ->
     withMaybeSRAsCString giptDstSrs $ \dSr ->
       {#call unsafe CreateGenImgProjTransformer as ^#}
-        (maybe nullDatasetH unDataset giptSrcDs)
+        (maybe nullDatasetH unDataset srcDs)
         sSr
         (maybe nullDatasetH unDataset giptDstDs)
         dSr
@@ -222,6 +274,12 @@ data GenImgProjTransformer2 s a =
     , gipt2Options  :: OptionList
   }
 
+instance HasOptions (GenImgProjTransformer2 s a) OptionList where
+  options = lens gipt2Options (\o a -> o {gipt2Options = a})
+
+gipt2 :: GenImgProjTransformer2 s a
+gipt2 = def
+
 instance Default (GenImgProjTransformer2 s a) where
   def = GenImgProjTransformer2 {
           gipt2SrcDs   = Nothing
@@ -232,12 +290,12 @@ instance Default (GenImgProjTransformer2 s a) where
 instance Transformer GenImgProjTransformer2 where
   transformerFun _ = c_GDALGenImgProjTransform2
   setGeotransform = setGenImgProjTransfomerGeotransform
-  createTransformerArg GenImgProjTransformer2{..} =
+  createTransformerArg GenImgProjTransformer2{..} srcDs =
     liftM castPtr $
     checkCreateTransformer "GenImgProjTransformer2" $
     withOptionList gipt2Options $ \opts ->
       {#call unsafe CreateGenImgProjTransformer2 as ^#}
-        (maybe nullDatasetH unDataset gipt2SrcDs)
+        (maybe nullDatasetH unDataset srcDs)
         (maybe nullDatasetH unDataset gipt2DstDs)
         opts
 
@@ -256,6 +314,21 @@ data GenImgProjTransformer3 s a =
     , gipt3DstGt  :: Maybe Geotransform
   }
 
+gipt3 :: GenImgProjTransformer3 s a
+gipt3 = def
+
+instance HasSrcSrs (GenImgProjTransformer3 s a) (Maybe SpatialReference) where
+  srcSrs = lens gipt3SrcSrs (\o a -> o {gipt3SrcSrs = a})
+
+instance HasDstSrs (GenImgProjTransformer3 s a) (Maybe SpatialReference) where
+  dstSrs = lens gipt3DstSrs (\o a -> o {gipt3DstSrs = a})
+
+instance HasSrcGt (GenImgProjTransformer3 s a) (Maybe Geotransform) where
+  srcGt = lens gipt3SrcGt (\o a -> o {gipt3SrcGt = a})
+
+instance HasDstGt (GenImgProjTransformer3 s a) (Maybe Geotransform) where
+  dstGt = lens gipt3DstGt (\o a -> o {gipt3DstGt = a})
+
 instance Default (GenImgProjTransformer3 s a) where
   def = GenImgProjTransformer3 {
           gipt3SrcSrs = Nothing
@@ -267,15 +340,21 @@ instance Default (GenImgProjTransformer3 s a) where
 instance Transformer GenImgProjTransformer3 where
   transformerFun _ = c_GDALGenImgProjTransform3
   setGeotransform = setGenImgProjTransfomerGeotransform
-  createTransformerArg GenImgProjTransformer3{..} =
+  createTransformerArg GenImgProjTransformer3{..} srcDs = do
+    sSrs <- case (gipt3SrcSrs, srcDs) of
+              (Nothing, Just ds) -> datasetProjectionIO ds
+              _                  -> return gipt3SrcSrs
+    sGt <- case (gipt3SrcGt, srcDs) of
+              (Nothing, Just ds) -> datasetGeotransformIO ds
+              _                  -> return gipt3SrcGt
     liftM castPtr $
-    checkCreateTransformer "GenImgProjTransformer3" $
-    withMaybeSRAsCString gipt3SrcSrs $ \sSr ->
-    withMaybeSRAsCString gipt3DstSrs $ \dSr ->
-    withMaybeGeotransformPtr gipt3SrcGt $ \sGt ->
-    withMaybeGeotransformPtr gipt3DstGt $ \dGt ->
-      {#call unsafe CreateGenImgProjTransformer3 as ^#}
-        sSr (castPtr sGt) dSr (castPtr dGt)
+      checkCreateTransformer "GenImgProjTransformer3" $
+      withMaybeSRAsCString sSrs $ \sSrsPtr ->
+      withMaybeSRAsCString gipt3DstSrs $ \dSrsPtr ->
+      withMaybeGeotransformPtr sGt $ \sGtPtr ->
+      withMaybeGeotransformPtr gipt3DstGt $ \dGtPtr ->
+        {#call unsafe CreateGenImgProjTransformer3 as ^#}
+          sSrsPtr (castPtr sGtPtr) dSrsPtr (castPtr dGtPtr)
 
 setGenImgProjTransfomerGeotransform :: Geotransform -> Ptr a -> IO ()
 setGenImgProjTransfomerGeotransform geotransform pArg =
@@ -329,21 +408,21 @@ instance HasBands (RasterizeSettings s a) [Int] where
 
 rasterizeLayersBuf
   :: forall s l b a. GDALType a
-  => RasterizeSettings s a
-  -> [ROLayer s l b]
+  => [ROLayer s l b]
   -> a
   -> Either a Text
   -> SpatialReference
   -> Size
   -> Geotransform
+  -> RasterizeSettings s a
   -> GDAL s (U.Vector (Value a))
-rasterizeLayersBuf cfg layers nodataValue burnValueOrAttr srs size gt =
+rasterizeLayersBuf layers nodataValue burnValueOrAttr srs size gt cfg =
   liftIO $
   withProgressFun "rasterizeLayersBuf" (cfg^.progressFun) $ \pFun ->
   withArrayLen (map unLayer layers) $ \len lPtrPtr ->
   withMaybeSRAsCString (Just srs) $ \srsPtr ->
   withOptionList options' $ \opts ->
-  withTransformerAndArg (cfg^.transformer) (Just gt) $ \trans tArg ->
+  withTransformerAndArg (cfg^.transformer) Nothing (Just gt) $ \trans tArg ->
   with gt $ \pGt -> do
     vec <- GM.replicate (sizeLen size) nodataValue
     Stm.unsafeWith vec $ \vecPtr ->
@@ -369,14 +448,14 @@ rasterizeLayersBuf cfg layers nodataValue burnValueOrAttr srs size gt =
 
 rasterizeLayers
   :: forall s l b a. GDALType a
-  => RasterizeSettings s a
-  -> Either [(ROLayer s l b, a)] ([ROLayer s l b], Text)
+  => Either [(ROLayer s l b, a)] ([ROLayer s l b], Text)
   -> RWDataset s a
+  -> RasterizeSettings s a
   -> GDAL s ()
-rasterizeLayers cfg eLayers ds =
+rasterizeLayers eLayers ds cfg =
   liftIO $
   withProgressFun "rasterizeLayers" (cfg^.progressFun) $ \pFun ->
-  withTransformerAndArg (cfg^.transformer) Nothing $ \trans tArg ->
+  withTransformerAndArg (cfg^.transformer) Nothing Nothing $ \trans tArg ->
   withArrayLen (cfg^.bands) $ \nBands bListPtr ->
     case eLayers of
       Left (unzip -> (layers, values)) ->
@@ -420,18 +499,18 @@ rasterizeLayers cfg eLayers ds =
 
 rasterizeGeometries
   :: forall s l b a. GDALType a
-  => RasterizeSettings s a
-  -> [(Geometry, [a])]
+  => [(Geometry, [a])]
   -> RWDataset s a
+  -> RasterizeSettings s a
   -> GDAL s ()
-rasterizeGeometries cfg geomValues ds = do
+rasterizeGeometries geomValues ds cfg = do
   values <- liftM concat $ forM geomValues $ \(_,vals) ->
     if length vals == length (cfg^.bands)
       then return vals
       else throwBindingException GeomValueListLengthMismatch
   liftIO $
     withProgressFun "rasterizeGeometries" (cfg^.progressFun) $ \pFun ->
-    withTransformerAndArg (cfg^.transformer) Nothing $ \trans tArg ->
+    withTransformerAndArg (cfg^.transformer) Nothing Nothing $ \trans tArg ->
     withArrayLen (cfg^.bands) $ \nBands bListPtr ->
     withGeometries (map fst geomValues) $ \pGeoms ->
     withArrayLen pGeoms $ \nGeoms gListPtr ->

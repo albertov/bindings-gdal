@@ -1,9 +1,16 @@
 module GDAL.Algorithms (
     SomeTransformer (..)
-  , GenImgProjTransformer (..)
-  , GenImgProjTransformer2 (..)
-  , GenImgProjTransformer3 (..)
+  , GenImgProjTransformer
+  , GenImgProjTransformer2
+  , GenImgProjTransformer3
   , HasTransformer (..)
+  , HasSrcSrs (..)
+  , HasDstSrs (..)
+  , HasSrcGt (..)
+  , HasDstGt (..)
+  , HasUseGCP (..)
+  , HasOrder (..)
+  , HasMaxError (..)
   , HasBands (..)
   , GDALAlgorithmException(..)
 
@@ -25,6 +32,9 @@ module GDAL.Algorithms (
   , computeProximity
   , contourGenerateVector
   , contourGenerateVectorIO
+  , gipt
+  , gipt2
+  , gipt3
 ) where
 
 import GDAL.Internal.Algorithms
