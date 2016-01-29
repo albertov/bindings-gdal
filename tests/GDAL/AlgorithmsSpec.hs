@@ -8,7 +8,6 @@
 {-# LANGUAGE DataKinds #-}
 module GDAL.AlgorithmsSpec (main, spec) where
 
-import Data.Default (def)
 import Data.Monoid (mempty)
 import Data.Proxy (Proxy(Proxy))
 import qualified Data.Vector.Unboxed as U
@@ -37,16 +36,12 @@ spec = setupAndTeardown $ do
      let fDef = featureDef (Proxy :: Proxy (TestFeature Double Double))
          size = 100
          env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
-         mkLayer = liftM unsafeToReadOnlyLayer $
-                     createLayerWithDef ds fDef StrictOK []
-     v <- rasterizeLayersBuf
-            GDT_Float64
-            (sequence [mkLayer])
-            DefaultTransformer
-            0
-            1
-            []
-            Nothing
+     layer <- liftM unsafeToReadOnlyLayer $
+                 createLayerWithDef ds fDef StrictOK []
+     v <- rasterizeLayersBuf def
+            [layer]
+            (0 :: Double)
+            (Left 1)
             srs4326
             size
             (northUpGeotransform size env)
@@ -65,14 +60,10 @@ spec = setupAndTeardown $ do
      createFeature_ l feat
      syncLayerToDisk l
 
-     v <- rasterizeLayersBuf
-            GDT_Float64
-            (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
-            DefaultTransformer
-            0
-            burnValue
-            []
-            Nothing
+     v <- rasterizeLayersBuf def
+            [unsafeToReadOnlyLayer l]
+            (0 :: Double)
+            (Left burnValue)
             srs4326
             size
             (northUpGeotransform size env)
@@ -92,14 +83,10 @@ spec = setupAndTeardown $ do
      createFeature_ l feat
      syncLayerToDisk l
 
-     v <- rasterizeLayersBuf
-            GDT_Float64
-            (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
-            DefaultTransformer
-            0
-            0
-            [("attribute","field1")]
-            Nothing
+     v <- rasterizeLayersBuf def
+            [unsafeToReadOnlyLayer l]
+            (0 :: Double)
+            (Right "field1")
             srs4326
             size
             (northUpGeotransform size env)
@@ -121,14 +108,10 @@ spec = setupAndTeardown $ do
      createFeature_ l feat
      syncLayerToDisk l
 
-     v <- rasterizeLayersBuf
-            GDT_Float64
-            (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
-            DefaultTransformer
-            0
-            burnValue
-            []
-            Nothing
+     v <- rasterizeLayersBuf def
+            [unsafeToReadOnlyLayer l]
+            (0 :: Double)
+            (Left burnValue)
             srs23030
             size
             (northUpGeotransform size env4326)
@@ -136,19 +119,114 @@ spec = setupAndTeardown $ do
      v `shouldSatisfy` U.all (/=(Value (tfField1 feat)))
      v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
 
-     w <- rasterizeLayersBuf
-            GDT_Float64
-            (sequence [liftM unsafeToReadOnlyLayer (getLayer 0 ds)])
-            DefaultTransformer
-            0
-            burnValue
-            []
-            Nothing
+     w <- rasterizeLayersBuf def
+            [unsafeToReadOnlyLayer l]
+            (0 :: Double)
+            (Left burnValue)
             srs23030
             size
             (northUpGeotransform size env23030)
      w `shouldSatisfy` U.any (==(Value burnValue))
 
+  describe "rasterizeLayers" $ do
+
+   it "produces a NoData vector when rasterizing an empty layer" $ do
+     ds <- OGR.createMem []
+     let fDef = featureDef (Proxy :: Proxy (TestFeature Double Double))
+         size = 100
+         env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
+         gt   = northUpGeotransform size env
+     layer <- liftM unsafeToReadOnlyLayer $
+                 createLayerWithDef ds fDef StrictOK []
+     dDs <- GDAL.createMem size 1 GDT_Float64 []
+     setDatasetGeotransform gt dDs
+     b <- getBand 1 dDs
+     setBandNodataValue 0 b
+     rasterizeLayers def (Left [(layer,1)]) dDs
+     readBand b (allBand b) (bandSize b) >>= (`shouldSatisfy` U.all (==NoData))
+
+   it "burns value passed as parameter" $ do
+     ds <- OGR.createMem []
+     let size = 100
+         env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
+         gt   = northUpGeotransform size env
+         burnValue = 10
+         Just geom = do
+           g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
+           geomBuffer 0.05 10 g
+         feat = TestFeature geom 87 99
+     l <- createLayer ds StrictOK []
+     createFeature_ l feat
+     syncLayerToDisk l
+     dDs <- GDAL.createMem size 1 GDT_Float64 []
+     setDatasetGeotransform gt dDs
+     b <- getBand 1 dDs
+     setBandNodataValue 0 b
+     rasterizeLayers def (Left [(unsafeToReadOnlyLayer l, burnValue)]) dDs
+     v <- readBand b (allBand b) (bandSize b)
+     v `shouldSatisfy` U.any (==(Value burnValue))
+     v `shouldSatisfy` U.all (/=(Value (tfField1 feat)))
+     v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
+
+   it "burns attribute from feature" $ do
+     ds <- OGR.createMem []
+     let size = 100
+         env  = Envelope ((-3) :+: 42) ((-2) :+: 43)
+         gt   = northUpGeotransform size env
+         Just geom = do
+           g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
+           geomBuffer 0.05 10 g
+         feat = TestFeature geom 15 0
+     l <- createLayer ds StrictOK []
+     createFeature_ l feat
+     syncLayerToDisk l
+     dDs <- GDAL.createMem size 1 GDT_Float64 []
+     setDatasetGeotransform gt dDs
+     b <- getBand 1 dDs
+     setBandNodataValue 0 b
+     rasterizeLayers def (Right ([unsafeToReadOnlyLayer l], "field1")) dDs
+     v <- readBand b (allBand b) (bandSize b)
+     v `shouldSatisfy` U.any (==(Value (tfField1 feat)))
+     v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
+
+   it "transforms geometries" $ do
+     ds <- OGR.createMem []
+     let size = 100
+         burnValue = 10
+         Just geom = do
+           g <- liftMaybe (geomFromWkt (Just srs4326) "POINT (-2.5 42.5)")
+           geomBuffer 0.05 10 g
+         feat = TestFeature geom 7 9
+         Right ct = coordinateTransformation srs4326 srs23030
+         env4326  = Envelope ((-3) :+: 42) ((-2) :+: 43)
+         Just env23030 = env4326 `transformWith` ct
+         gtV = northUpGeotransform size env4326
+         gtW = northUpGeotransform size env23030
+     l <- createLayer ds StrictOK []
+     createFeature_ l feat
+     syncLayerToDisk l
+
+     dDsV <- GDAL.createMem size 1 GDT_Float64 []
+     setDatasetGeotransform gtV dDsV
+     setDatasetProjection srs23030 dDsV
+     bV <- getBand 1 dDsV
+     setBandNodataValue 0 bV
+     rasterizeLayers def (Left [(unsafeToReadOnlyLayer l, burnValue)]) dDsV
+     v <- readBand bV (allBand bV) (bandSize bV)
+
+     v `shouldSatisfy` U.all (==NoData)
+     v `shouldSatisfy` U.all (/=(Value (tfField1 feat)))
+     v `shouldSatisfy` U.all (/=(Value (tfField2 feat)))
+
+     dDsW <- GDAL.createMem size 1 GDT_Float64 []
+     setDatasetGeotransform gtW dDsW
+     setDatasetProjection srs23030 dDsW
+     bW <- getBand 1 dDsW
+     setBandNodataValue 0 bW
+     rasterizeLayers def (Left [(unsafeToReadOnlyLayer l, burnValue)]) dDsW
+     w <- readBand bW (allBand bW) (bandSize bW)
+
+     w `shouldSatisfy` U.any (==(Value burnValue))
 
   createGridIOSpec GDT_Float64 (SGA (def :: GridInverseDistanceToAPower))
   createGridIOSpec GDT_Float64 (SGA (def :: GridMovingAverage))

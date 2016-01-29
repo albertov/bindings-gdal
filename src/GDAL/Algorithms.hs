@@ -3,6 +3,8 @@ module GDAL.Algorithms (
   , GenImgProjTransformer (..)
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)
+  , HasTransformer (..)
+  , HasBands (..)
 
   , Contour (..)
   , GridPoint (..)
@@ -13,7 +15,10 @@ module GDAL.Algorithms (
   , GridDataMetrics (..)
   , MetricType (..)
 
+  , RasterizeLayersBuf
   , rasterizeLayersBuf
+  , RasterizeLayers
+  , rasterizeLayers
   , createGrid
   , createGridIO
   , computeProximity

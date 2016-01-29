@@ -1,8 +1,10 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE FunctionalDependencies #-}
 module GDAL.Internal.CPLString (
     OptionList
+  , HasOptions (..)
   , withOptionList
   , toOptionListPtr
   , peekCPLString
@@ -37,9 +39,14 @@ import Foreign.Marshal.Array (lengthArray0, advancePtr)
 
 import GDAL.Internal.CPLConv (cplFinalizerFree, cplFree)
 
+import Lens.Micro (Lens')
+
 #include "cpl_string.h"
 
 type OptionList = [(Text,Text)]
+
+class HasOptions o a | o -> a where
+  options :: Lens' o a
 
 withOptionList :: OptionList -> (Ptr CString -> IO c) -> IO c
 withOptionList opts = bracket (toOptionListPtr opts) freeOptionList

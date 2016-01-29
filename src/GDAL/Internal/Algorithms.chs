@@ -1,7 +1,9 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveDataTypeable #-}
@@ -9,12 +11,16 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module GDAL.Internal.Algorithms (
     GenImgProjTransformer (..)
   , GenImgProjTransformer2 (..)
   , GenImgProjTransformer3 (..)
   , SomeTransformer (..)
+  , HasTransformer (..)
+  , HasBands (..)
 
   , Contour (..)
 
@@ -28,7 +34,10 @@ module GDAL.Internal.Algorithms (
 
   , GridAlgorithmEnum (..)
 
+  , RasterizeLayersBuf
   , rasterizeLayersBuf
+  , RasterizeLayers
+  , rasterizeLayers
   , createGrid
   , createGridIO
   , computeProximity
@@ -53,6 +62,7 @@ import Control.Monad (liftM, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Default (Default(..))
 import Data.Maybe (isJust)
+import Data.Proxy (Proxy(Proxy))
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import qualified Data.Vector.Unboxed as U
@@ -60,6 +70,7 @@ import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Generic.Mutable as GM
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
+import Lens.Micro
 
 import Foreign.C.Types (CDouble(..), CInt(..), CUInt(..), CChar(..))
 import Foreign.Marshal.Utils (fromBool)
@@ -116,6 +127,9 @@ data SomeTransformer s a
 
 instance Default (SomeTransformer s a) where
   def = DefaultTransformer
+
+class HasTransformer o t | o -> t where
+  transformer :: Lens' o t
 
 withTransformerAndArg
   :: SomeTransformer s a
@@ -280,43 +294,135 @@ foreign import ccall "gdal_alg.h &GDALGenImgProjTransform"
 -- GDALRasterizeLayersBuf
 -- ############################################################################
 
+data RasterizeLayersBuf s a =
+  RasterizeLayersBuf {
+    rlbTransformer :: SomeTransformer s a
+  , rlbOptions     :: OptionList
+  , rlbProgressFun :: Maybe ProgressFun
+  }
+
+instance Default (RasterizeLayersBuf s a) where
+  def = RasterizeLayersBuf def def def
+
+instance HasOptions (RasterizeLayersBuf s a) OptionList where
+  options = lens rlbOptions (\a b -> a {rlbOptions = b})
+
+instance HasTransformer (RasterizeLayersBuf s a) (SomeTransformer s a) where
+  transformer = lens rlbTransformer (\a b -> a {rlbTransformer = b})
+
+instance HasProgressFun (RasterizeLayersBuf s a) (Maybe ProgressFun) where
+  progressFun = lens rlbProgressFun (\a b -> a {rlbProgressFun = b})
+
 rasterizeLayersBuf
-  :: GDALType (HsType d)
-  => DataType d
-  -> GDAL s [ROLayer s l b]
-  -> SomeTransformer s (HsType d)
-  -> HsType d
-  -> HsType d
-  -> OptionList
-  -> Maybe ProgressFun
+  :: forall s l b a. GDALType a
+  => RasterizeLayersBuf s a
+  -> [ROLayer s l b]
+  -> a
+  -> Either a Text
   -> SpatialReference
   -> Size
   -> Geotransform
-  -> GDAL s (U.Vector (Value (HsType d)))
-rasterizeLayersBuf dt getLayers mTransformer nodataValue
-                      burnValue options progressFun
-                      srs size geotransform =
-  runOGR $
-  bracket (liftOGR getLayers) (mapM_ closeLayer) $ \layers ->
+  -> GDAL s (U.Vector (Value a))
+rasterizeLayersBuf cfg layers nodataValue burnValueOrAttr srs size gt =
   liftIO $
-  withProgressFun "rasterizeLayersBuf" progressFun $ \pFun ->
+  withProgressFun "rasterizeLayersBuf" (cfg^.progressFun) $ \pFun ->
   withArrayLen (map unLayer layers) $ \len lPtrPtr ->
   withMaybeSRAsCString (Just srs) $ \srsPtr ->
-  withOptionList options $ \opts ->
-  withTransformerAndArg mTransformer (Just geotransform) $ \trans tArg ->
-  with geotransform $ \gt -> do
+  withOptionList options' $ \opts ->
+  withTransformerAndArg (cfg^.transformer) (Just gt) $ \trans tArg ->
+  with gt $ \pGt -> do
     vec <- GM.replicate (sizeLen size) nodataValue
     Stm.unsafeWith vec $ \vecPtr ->
       checkCPLError "RasterizeLayersBuf" $
       {#call GDALRasterizeLayersBuf as ^#}
         (castPtr vecPtr) nx ny (fromEnumC dt) 0 0 (fromIntegral len)
-        lPtrPtr srsPtr (castPtr gt) trans
+        lPtrPtr srsPtr (castPtr pGt) trans
         tArg bValue opts pFun nullPtr
     liftM (mkValueUVector nodataValue) (G.unsafeFreeze vec)
   where
-    bValue    = toCDouble burnValue
+    options' = case burnValueOrAttr of
+      Left _  -> cfg^.options
+      Right a -> ("attribute",a):(cfg^.options)
+    dt = hsDataType (Proxy :: Proxy a)
+    bValue    = toCDouble (either id (const nodataValue) burnValueOrAttr)
     nx :+: ny  = fmap fromIntegral size
 
+
+-- ############################################################################
+-- GDALRasterizeLayers
+-- ############################################################################
+
+data RasterizeLayers s a =
+  RasterizeLayers {
+    rlTransformer :: SomeTransformer s a
+  , rlOptions     :: OptionList
+  , rlProgressFun :: Maybe ProgressFun
+  , rlBands       :: [Int]
+  }
+
+instance Default (RasterizeLayers s a) where
+  def = RasterizeLayers def def def [1]
+
+instance HasOptions (RasterizeLayers s a) OptionList where
+  options = lens rlOptions (\a b -> a {rlOptions = b})
+
+instance HasTransformer (RasterizeLayers s a) (SomeTransformer s a) where
+  transformer = lens rlTransformer (\a b -> a {rlTransformer = b})
+
+instance HasProgressFun (RasterizeLayers s a) (Maybe ProgressFun) where
+  progressFun = lens rlProgressFun (\a b -> a {rlProgressFun = b})
+
+class HasBands o a | o -> a where
+  bands :: Lens' o a
+
+instance HasBands (RasterizeLayers s a) [Int] where
+  bands = lens rlBands (\a b -> a {rlBands = b})
+
+rasterizeLayers
+  :: forall s l b a. GDALType a
+  => RasterizeLayers s a
+  -> Either [(ROLayer s l b, a)] ([ROLayer s l b], Text)
+  -> RWDataset s a
+  -> GDAL s ()
+rasterizeLayers cfg eLayers ds =
+  liftIO $
+  withProgressFun "rasterizeLayersBuf" (cfg^.progressFun) $ \pFun ->
+  withTransformerAndArg (cfg^.transformer) Nothing $ \trans tArg ->
+  withArrayLen (cfg^.bands) $ \nBands bListPtr ->
+    case eLayers of
+      Left (unzip -> (layers, values)) ->
+        withArrayLen (map unLayer layers) $ \nLayers lListPtr ->
+        withArrayLen (map toCDouble values) $ \_ valPtr ->
+        withOptionList (cfg^.options) $ \opts ->
+        checkCPLError "RasterizeLayers" $
+        {#call GDALRasterizeLayers as ^#}
+          (unDataset ds)
+          (fromIntegral nBands)
+          (castPtr bListPtr)
+          (fromIntegral nLayers)
+          (castPtr lListPtr)
+          trans
+          tArg
+          valPtr
+          opts
+          pFun
+          nullPtr
+      Right (layers, attr) ->
+        withArrayLen (map unLayer layers) $ \nLayers lListPtr ->
+        withOptionList (("attribute",attr):(cfg^.options)) $ \opts ->
+        checkCPLError "RasterizeLayers" $
+        {#call GDALRasterizeLayers as ^#}
+          (unDataset ds)
+          (fromIntegral nBands)
+          (castPtr bListPtr)
+          (fromIntegral nLayers)
+          (castPtr lListPtr)
+          trans
+          tArg
+          nullPtr
+          opts
+          pFun
+          nullPtr
 
 -- ############################################################################
 -- GDALCreateGrid

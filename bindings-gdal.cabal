@@ -55,6 +55,7 @@ library
                    , GDAL.Internal.Warper
   build-depends:     base >=4.5 && < 5
                    , vector
+                   , microlens
                    , conduit
                    , bytestring
                    , text

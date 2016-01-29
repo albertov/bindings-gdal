@@ -38,6 +38,8 @@ module GDAL (
   , MaskType (MaskPerBand, MaskPerDataset)
   , Value (..)
   , ProgressFun
+  , HasProgressFun (..)
+  , HasOptions (..)
   , ContinueOrStop (..)
 
   , dataType
@@ -130,11 +132,13 @@ module GDAL (
   , liftIO
 
   , module Data.Conduit
+  , def
 ) where
 
 import Control.Exception (finally)
 import Control.Monad.IO.Class (liftIO)
 
+import Data.Default (def)
 import Data.Conduit
 
 import GDAL.Internal.CPLError

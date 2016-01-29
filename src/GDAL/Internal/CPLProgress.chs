@@ -5,12 +5,14 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module GDAL.Internal.CPLProgress (
     ProgressFunPtr
   , ProgressFun
   , ProgressException (..)
   , ContinueOrStop (..)
+  , HasProgressFun (..)
   , withProgressFun
   , isProgressFunException
   , isInterruptedException
@@ -34,6 +36,9 @@ import Foreign.C.String (CString, peekCString)
 import Foreign.C.Types (CDouble(..), CInt(..))
 import Foreign.Ptr (Ptr, FunPtr, freeHaskellFunPtr, nullPtr)
 
+import Lens.Micro (Lens')
+
+
 import GDAL.Internal.CPLError (
     bindingExceptionToException
   , bindingExceptionFromException
@@ -42,6 +47,9 @@ import GDAL.Internal.CPLError (
 import GDAL.Internal.Util (fromEnumC)
 
 #include "cpl_progress.h"
+
+class HasProgressFun o a | o -> a where
+  progressFun :: Lens' o a
 
 data ProgressException
   = forall e. Exception e =>
