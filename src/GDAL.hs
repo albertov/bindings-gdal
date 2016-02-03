@@ -98,6 +98,7 @@ module GDAL (
   , bandConduit
   , unsafeBandConduit
   , bandSink
+  , bandSinkGeo
   , fillBand
   , blockConduit
   , unsafeBlockConduit
@@ -130,7 +131,7 @@ module GDAL (
   , inv
   , composeGeotransforms
   , (|.|)
-  , geotransformEnvelope
+  , geoEnvelopeTransformer
 
   , liftIO
 

@@ -41,7 +41,7 @@ module GDAL.Internal.GDAL (
   , inv
   , composeGeotransforms
   , (|.|)
-  , geotransformEnvelope
+  , geoEnvelopeTransformer
 
   , nullDatasetH
   , allRegister
@@ -96,6 +96,7 @@ module GDAL.Internal.GDAL (
   , bandConduit
   , unsafeBandConduit
   , bandSink
+  , bandSinkGeo
 
   , metadataDomains
   , metadata
@@ -200,6 +201,7 @@ data GDALRasterException
   | NullBand
   | UnknownDriver !ByteString
   | BandDoesNotAllowNoData
+  | CannotInvertGeotransform
   deriving (Typeable, Show, Eq)
 
 instance Exception GDALRasterException where
@@ -501,13 +503,6 @@ northUpGeotransform size envelope =
     , gtYDelta = negate (pSnd (envelopeSize envelope / fmap fromIntegral size))
   }
 
-geotransformEnvelope :: Size -> Geotransform -> Envelope Double
-geotransformEnvelope sz gt =
-  Envelope (min x0 x1 :+: min y0 y1) (max x0 x1 :+: max y0 y1)
-  where
-    x0 :+: y0 = applyGeotransform gt 0
-    x1 :+: y1 = applyGeotransform gt (fmap fromIntegral sz)
-
 gcpGeotransform :: [GroundControlPoint] -> ApproxOK -> Maybe Geotransform
 gcpGeotransform gcps approxOk =
   unsafePerformIO $
@@ -779,6 +774,29 @@ unsafeBandConduitM (bx :+: by) band = do
             0
 {-# INLINE unsafeBandConduitM #-}
 
+geoEnvelopeTransformer
+  :: Geotransform -> Maybe (Envelope Double -> Envelope Int)
+geoEnvelopeTransformer gt =
+  case (gtXDelta gt < 0, gtYDelta gt<0, invertGeotransform gt) of
+    (_,_,Nothing)          -> Nothing
+    (False,False,Just iGt) -> Just $ \(Envelope e0 e1) ->
+      let e0' = fmap round (applyGeotransform iGt e0)
+          e1' = fmap round (applyGeotransform iGt e1)
+      in Envelope e0' e1'
+    (True,False,Just iGt) -> Just $ \(Envelope e0 e1) ->
+      let x1 :+: y0 = fmap round (applyGeotransform iGt e0)
+          x0 :+: y1 = fmap round (applyGeotransform iGt e1)
+      in Envelope (x0 :+: y0) (x1 :+: y1)
+    (False,True,Just iGt) -> Just $ \(Envelope e0 e1) ->
+      let x0 :+: y1 = fmap round (applyGeotransform iGt e0)
+          x1 :+: y0 = fmap round (applyGeotransform iGt e1)
+      in Envelope (x0 :+: y0) (x1 :+: y1)
+    (True,True,Just iGt) -> Just $ \(Envelope e0 e1) ->
+      let x1 :+: y1 = fmap round (applyGeotransform iGt e0)
+          x0 :+: y0 = fmap round (applyGeotransform iGt e1)
+      in Envelope (x0 :+: y0) (x1 :+: y1)
+{-# INLINE geoEnvelopeTransformer #-}
+
 
 writeBand
   :: forall s a. GDALType a
@@ -840,6 +858,16 @@ bandSink band = lift (bandMaskType band) >>= \case
                  0
 {-# INLINE bandSink #-}
 
+bandSinkGeo
+  :: forall s a. GDALType a
+  => RWBand s a
+  -> Sink (Envelope Double, Size, U.Vector (Value a)) (GDAL s) ()
+bandSinkGeo band = do
+  mGt <- lift (bracket (bandDataset band) closeDataset datasetGeotransform)
+  case mGt >>= geoEnvelopeTransformer of
+    Just trans -> CL.map (\(e,s,v) -> (trans e,s,v)) =$= bandSink band
+    Nothing    -> lift (throwBindingException CannotInvertGeotransform)
+{-# INLINE bandSinkGeo #-}
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
 noDataOrFail = liftM (fromMaybe err) . bandNodataValue

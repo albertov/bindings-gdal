@@ -336,6 +336,22 @@ spec = setupAndTeardown $ do
             lr  = pFst (envelopeMax env) :+: pSnd (envelopeMin env)
         in gt |$| (pFst sz' :+: pSnd sz') ~== lr
 
+    describe "geoEnvelopeTransformer" $ do
+      prop "produces valid envelope" $ \(InversibleGeotransform gt, env) ->
+        case geoEnvelopeTransformer gt of
+          Nothing -> False
+          Just tr -> let Envelope (x0 :+: y0) (x1 :+: y1) = tr env
+                     in x0 <= x1 && y0 <= y1
+
+      prop "produces full size of northUpGeotransform" $ \(env, size) ->
+        let gt  = northUpGeotransform sz env
+            sz  = fmap getPositive size
+        in case geoEnvelopeTransformer gt of
+            Nothing -> False
+            Just tr -> case tr env of
+                         Envelope (0 :+: 0) (x1 :+: y1) ->
+                            x1 == pFst sz  && y1 == pSnd sz
+                         _ -> False
 
   describe "metadata stuff" $ do
 
