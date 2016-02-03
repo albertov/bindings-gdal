@@ -95,6 +95,9 @@ module GDAL (
   , writeBand
   , writeBandBlock
   , copyBand
+  , bandConduit
+  , unsafeBandConduit
+  , bandSink
   , fillBand
   , blockConduit
   , unsafeBlockConduit

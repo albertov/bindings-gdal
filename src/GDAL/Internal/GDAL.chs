@@ -93,6 +93,9 @@ module GDAL.Internal.GDAL (
   , writeBand
   , writeBandBlock
   , copyBand
+  , bandConduit
+  , unsafeBandConduit
+  , bandSink
 
   , metadataDomains
   , metadata
@@ -127,6 +130,7 @@ import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when, (>=>), void, forever)
 import Control.Monad.Trans (lift)
+import Control.Monad.Catch (bracket)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Bits ((.&.))
@@ -692,20 +696,61 @@ readBand :: forall s t a. GDALType a
   -> Envelope Int
   -> Size
   -> GDAL s (U.Vector (Value a))
-readBand band win (bx :+: by) =
-  bandMaskType band >>= \case
-    MaskNoData ->
-      liftM2 mkValueUVector (noDataOrFail band) (read_ band)
-    MaskAllValid ->
-      liftM mkAllValidValueUVector (read_ band)
-    _ ->
-      liftM2 mkMaskedValueUVector (read_ =<< bandMask band) (read_ band)
+readBand band win sz = liftM fromJust $ runConduit $
+  yield win =$= unsafeBandConduit sz band =$= CL.head
+{-# INLINE readBand #-}
+
+bandConduit
+  :: forall s a t. GDALType a
+  => Size
+  -> Band s a t
+  -> Conduit (Envelope Int) (GDAL s) (U.Vector (Value a))
+bandConduit sz band =
+  unsafeBandConduitM sz band =$= CL.mapM (liftIO . U.freeze)
+{-# INLINE bandConduit #-}
+
+unsafeBandConduit
+  :: forall s a t. GDALType a
+  => Size
+  -> Band s a t
+  -> Conduit (Envelope Int) (GDAL s) (U.Vector (Value a))
+unsafeBandConduit sz band =
+  unsafeBandConduitM sz band =$= CL.mapM (liftIO . U.unsafeFreeze)
+{-# INLINE unsafeBandConduit #-}
+
+
+unsafeBandConduitM
+  :: forall s a t. GDALType a
+  => Size
+  -> Band s a t
+  -> Conduit (Envelope Int) (GDAL s) (UM.IOVector (Value a))
+unsafeBandConduitM (bx :+: by) band = do
+  buf <- liftIO (M.new (bx*by))
+  lift (bandMaskType band) >>= \case
+    MaskNoData -> do
+      nd <- lift (noDataOrFail band)
+      let vec = mkValueUMVector nd buf
+      awaitForever $ \win -> do
+        liftIO (read_ band buf win)
+        yield vec
+    MaskAllValid -> do
+      let vec = mkAllValidValueUMVector buf
+      awaitForever $ \win -> do
+        liftIO (read_ band buf win)
+        yield vec
+    _ -> do
+      mBuf <- liftIO $ M.replicate (bx*by) 0
+      mask <- lift $ bandMask band
+      let vec = mkMaskedValueUMVector mBuf buf
+      awaitForever $ \win -> do
+        liftIO (read_ band buf win >> read_ mask mBuf win)
+        yield vec
   where
-    sx   :+: sy   = envelopeSize win
-    xoff :+: yoff = envelopeMin win
-    read_ :: forall a'. GDALType a' => Band s a' t -> GDAL s (St.Vector a')
-    read_ b = liftIO $ do
-      vec <- M.new (bx*by)
+    read_ :: forall a'. GDALType a'
+          => Band s a' t -> Stm.IOVector a' -> Envelope Int -> IO ()
+    read_ b vec win = do
+      let sx   :+: sy   = envelopeSize win
+          xoff :+: yoff = envelopeMin win
       Stm.unsafeWith vec $ \ptr -> do
         checkCPLError "RasterAdviseRead" $
           {#call unsafe RasterAdviseRead as ^#}
@@ -732,8 +777,8 @@ readBand band win (bx :+: by) =
             (fromEnumC (hsDataType (Proxy :: Proxy a')))
             0
             0
-      G.unsafeFreeze vec
-{-# INLINE readBand #-}
+{-# INLINE unsafeBandConduitM #-}
+
 
 writeBand
   :: forall s a. GDALType a
@@ -742,22 +787,37 @@ writeBand
   -> Size
   -> U.Vector (Value a)
   -> GDAL s ()
-writeBand band win sz@(bx :+: by) uvec =
-  bandMaskType band >>= \case
-    MaskNoData ->
-      noDataOrFail band >>= write band . flip toGVecWithNodata uvec
-    MaskAllValid ->
+writeBand band win sz uvec =
+  runConduit (yield (win, sz, uvec) =$= bandSink band)
+{-# INLINE writeBand #-}
+
+
+
+bandSink
+  :: forall s a. GDALType a
+  => RWBand s a
+  -> Sink (Envelope Int, Size, U.Vector (Value a)) (GDAL s) ()
+bandSink band = lift (bandMaskType band) >>= \case
+  MaskNoData -> do
+    nd <- lift (noDataOrFail band)
+    awaitForever $ \(win, sz, uvec) -> lift $
+      write band win sz (toGVecWithNodata nd uvec)
+  MaskAllValid ->
+    awaitForever $ \(win, sz, uvec) -> lift $
       maybe (throwBindingException BandDoesNotAllowNoData)
-            (write band)
+            (write band win sz)
             (toGVec uvec)
-    _ -> do let (mask, vec) = toGVecWithMask uvec
-            write band vec
-            mBand <- bandMask band
-            write mBand mask
+  _ -> do
+    mBand <- lift (bandMask band)
+    awaitForever $ \(win, sz, uvec) -> lift $ do
+      let (mask, vec) = toGVecWithMask uvec
+      write band win sz vec
+      write mBand win sz mask
   where
+
     write :: forall a'. GDALType a'
-          => RWBand s a' -> St.Vector a' -> GDAL s ()
-    write band' vec = do
+          => RWBand s a' -> Envelope Int -> Size -> St.Vector a' -> GDAL s ()
+    write band' win sz@(bx :+: by) vec = do
       let sx :+: sy     = envelopeSize win
           xoff :+: yoff = envelopeMin win
       if sizeLen sz /= G.length vec
@@ -778,7 +838,7 @@ writeBand band win sz@(bx :+: by) uvec =
                  (fromEnumC (hsDataType (Proxy :: Proxy a')))
                  0
                  0
-{-# INLINE writeBand #-}
+{-# INLINE bandSink #-}
 
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
@@ -894,7 +954,7 @@ blockSink
   :: forall s a. GDALType a
   => RWBand s a
   -> Sink (BlockIx, U.Vector (Value a)) (GDAL s) ()
-blockSink band = addCleanup flush $ do
+blockSink band = do
   writeBlock <-
     if dtBand==dtBuf
       then return writeNative
@@ -906,7 +966,6 @@ blockSink band = addCleanup flush $ do
     _            -> lift (bandMask band)     >>= sinkMask     writeBlock
 
   where
-    flush f = when f (bandDataset band >>= flushCache)
     len     = bandBlockLen band
     dtBand  = bandDataType (band)
     szBand  = sizeOfDataType dtBand
