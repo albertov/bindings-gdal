@@ -132,7 +132,10 @@ module OGR (
   , layerFeatureDef
   , layerFeatureCount
   , layerSpatialFilter
+  , layerSpatialReference
   , setLayerSpatialFilter
+  , setLayerSpatialFilterRect
+  , clearLayerSpatialFilter
 
 
   , createFeature

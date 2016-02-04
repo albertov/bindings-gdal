@@ -62,7 +62,10 @@ module GDAL.Internal.OGR (
   , syncToDisk
 
   , layerSpatialFilter
+  , layerSpatialReference
   , setLayerSpatialFilter
+  , setLayerSpatialFilterRect
+  , clearLayerSpatialFilter
 
   , dataSourceLayerCount
   , layerName
@@ -121,7 +124,7 @@ import Control.Monad.Trans.Resource (MonadResource)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Foreign.C.String (CString, peekCString, withCString)
-import Foreign.C.Types (CInt(..), CChar(..), CLong(..))
+import Foreign.C.Types (CInt(..), CChar(..), CLong(..), CDouble(..))
 #if GDAL_VERSION_MAJOR >= 2
 import Foreign.C.Types (CLLong(..))
 #endif
@@ -513,6 +516,13 @@ layerGeomFieldDef p =
           ({#call unsafe OGR_L_GetSpatialRef as ^#} p)
     <*> pure True
 
+layerSpatialReference :: Layer s l a t -> GDAL s (Maybe SpatialReference)
+layerSpatialReference
+  = liftIO
+  . maybeNewSpatialRefBorrowedHandle
+  . {#call unsafe OGR_L_GetSpatialRef as ^#}
+  . unLayer
+
 dataSourceLayerCount :: DataSource s t -> GDAL s Int
 dataSourceLayerCount = liftM fromIntegral
            . liftIO . {#call OGR_DS_GetLayerCount as ^#} . unDataSource
@@ -588,6 +598,18 @@ layerSpatialFilter l = liftIO $
 setLayerSpatialFilter :: Layer s l t a -> Geometry -> GDAL s ()
 setLayerSpatialFilter l g = liftIO $
   withGeometry g $ {#call unsafe OGR_L_SetSpatialFilter as ^#} (unLayer l)
+
+clearLayerSpatialFilter :: Layer s l t a -> GDAL s ()
+clearLayerSpatialFilter l = liftIO $
+  {#call unsafe OGR_L_SetSpatialFilter as ^#} (unLayer l) (nullPtr)
+
+setLayerSpatialFilterRect :: Layer s l t a -> EnvelopeReal -> GDAL s ()
+setLayerSpatialFilterRect l (Envelope (x0 :+: y0) (x1 :+: y1)) = liftIO $
+  {#call unsafe OGR_L_SetSpatialFilterRect as ^#} (unLayer l)
+    (realToFrac x0)
+    (realToFrac y0)
+    (realToFrac x1)
+    (realToFrac y1)
 
 driverHasCapability :: DriverH -> DriverCapability -> Bool
 driverHasCapability d c = unsafePerformIO $ do
