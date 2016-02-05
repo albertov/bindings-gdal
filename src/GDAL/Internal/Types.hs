@@ -31,6 +31,7 @@ module GDAL.Internal.Types (
   , release
   , sizeLen
   , unsafeGDALInterleaveIO
+  , getUnsafeRunGDAL
 ) where
 
 import Control.Applicative (Applicative(..), (<$>), liftA2)
@@ -65,7 +66,7 @@ import Foreign.Ptr (castPtr)
 import Foreign.Storable (Storable(..))
 
 import GDAL.Internal.CPLError
-import System.IO.Unsafe (unsafeInterleaveIO)
+import System.IO.Unsafe (unsafeInterleaveIO, unsafePerformIO)
 
 
 data AccessMode = ReadOnly | ReadWrite
@@ -228,3 +229,8 @@ getInternalState = GDAL ask
 unsafeGDALInterleaveIO :: GDAL s a -> GDAL s a
 unsafeGDALInterleaveIO (GDAL act) =
   liftIO . unsafeInterleaveIO . runReaderT act =<< getInternalState
+
+getUnsafeRunGDAL :: GDAL s (GDAL s a -> a)
+getUnsafeRunGDAL = do
+  state <- getInternalState
+  return (\(GDAL act) -> unsafePerformIO (runReaderT act state))
