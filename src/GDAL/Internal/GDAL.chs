@@ -351,7 +351,7 @@ unsafeToReadOnly ds = flushCache ds >> return (coerce ds)
 
 createCopy
   :: Driver -> String -> Dataset s a t -> Bool -> OptionList
-  -> Maybe ProgressFun -> GDAL s (RWDataset s a)
+  -> Maybe ProgressFun -> GDAL s (Dataset s a t)
 createCopy driver path ds strict options progressFun =
   newDatasetHandle $
   withProgressFun "createCopy" progressFun $ \pFunc -> do
