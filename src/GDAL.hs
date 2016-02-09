@@ -121,6 +121,8 @@ module GDAL (
 
   , foldl'
   , ifoldl'
+  , foldlWindow'
+  , ifoldlWindow'
   , version
 
   , gcpGeotransform

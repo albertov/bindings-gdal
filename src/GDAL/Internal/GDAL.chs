@@ -107,6 +107,8 @@ module GDAL.Internal.GDAL (
 
   , foldl'
   , ifoldl'
+  , foldlWindow'
+  , ifoldlWindow'
   , blockConduit
   , unsafeBlockConduit
   , blockSource
@@ -933,7 +935,7 @@ foldl' f = ifoldl' (\z _ v -> f z v)
 
 ifoldl'
   :: forall s t a b. GDALType a
-  => (b -> BlockIx -> Value a -> b) -> b -> Band s a t -> GDAL s b
+  => (b -> Pair Int -> Value a -> b) -> b -> Band s a t -> GDAL s b
 ifoldl' f z band =
   runConduit (unsafeBlockSource band =$= CL.fold folder z)
   where
@@ -956,6 +958,49 @@ ifoldl' f z band =
           | my /= 0 && jB==ny-1 = my
           | otherwise           = sy
 {-# INLINE ifoldl' #-}
+
+foldlWindow'
+  :: forall s t a b. GDALType a
+  => (b -> Value a -> b) -> b -> Band s a t -> Envelope Int -> GDAL s b
+foldlWindow' f b = ifoldlWindow' (\z _ v -> f z v) b
+{-# INLINE foldlWindow' #-}
+
+ifoldlWindow'
+  :: forall s t a b. GDALType a
+  => (b -> Pair Int -> Value a -> b)
+  -> b -> Band s a t -> Envelope Int -> GDAL s b
+ifoldlWindow' f z band (Envelope (x0 :+: y0) (x1 :+: y1)) = runConduit $
+  allBlocks band =$= CL.filter inRange
+                 =$= decorate (unsafeBlockConduit band)
+                 =$= CL.fold folder z
+  where
+    inRange bIx = bx0 < x1 && x0 < bx1 && by0 < y1 &&  y0 < by1
+      where
+        !b0@(bx0 :+: by0) = bIx * bSize
+        !(bx1 :+: by1)    = b0  + bSize
+    !(mx :+: my) = liftA2 mod (bandSize band) (bandBlockSize band)
+    !(nx :+: ny) = bandBlockCount band
+    !bSize@(sx :+: sy) = bandBlockSize band
+    {-# INLINE folder #-}
+    folder !acc !(!(iB :+: jB), !vec) = go SPEC 0 0 acc
+      where
+        go !_ !i !j !acc'
+          | i   < stopx = go SPEC (i+1) j acc''
+          | j+1 < stopy = go SPEC 0 (j+1) acc'
+          | otherwise   = acc'
+          where
+            !ix@(ixx :+: ixy) = iB*sx+i :+: jB*sy+j
+            acc''
+              | x0 <= ixx && ixx < x1 && y0 <= ixy && ixy < y1
+              = f acc' ix (vec `G.unsafeIndex` (j*sx+i))
+              | otherwise = acc'
+        !stopx
+          | mx /= 0 && iB==nx-1 = mx
+          | otherwise           = sx
+        !stopy
+          | my /= 0 && jB==ny-1 = my
+          | otherwise           = sy
+{-# INLINE ifoldlWindow' #-}
 
 unsafeBlockSource
   :: GDALType a

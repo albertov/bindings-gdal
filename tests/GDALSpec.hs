@@ -19,6 +19,7 @@ import System.FilePath (joinPath)
 
 import GDAL
 import OSR
+import OGR (envelopeSize)
 
 import Test.QuickCheck (getPositive)
 import Test.Hspec.QuickCheck (prop)
@@ -424,7 +425,6 @@ spec = setupAndTeardown $ do
         setDescription someDesc b
         description b >>= (`shouldBe` someDesc)
 
-
 ioSpec
   :: (GDALType (HsType d), Num (HsType d))
   => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
@@ -432,6 +432,7 @@ ioSpec dt f = do
   it_can_write_and_read_block dt f
   it_can_write_and_read_band dt f
   it_can_foldl dt f
+  it_can_foldlWindow dt f
 
 it_can_write_and_read_band
   :: (GDALType (HsType d), Num (HsType d))
@@ -568,6 +569,80 @@ it_can_foldl dt f = forM_ [[], [("TILED","YES")]] $ \options -> do
       writeBand band (allBand band) sz vec
       flushCache ds
       GDAL.foldl' (+) 0 band >>= (`shouldBe` U.foldl' (+) 0 vec)
+
+it_can_foldlWindow
+  :: forall d. (GDALType (HsType d), Num (HsType d))
+  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+it_can_foldlWindow dt f = forM_ [[], [("TILED","YES")]] $ \options -> do
+
+  let name = "can foldlWindow with options " ++ show options ++ " " ++ typeName
+      typeName = show dt
+
+  describe name $ do
+
+    withDir "is equivalent to foldl for whole band window" $ \tmpDir -> do
+      let p = joinPath [tmpDir, "test.tif"]
+          sz = 200 :+: 205
+      ds <- create "GTIFF" p sz 1 dt options
+      let vec = U.generate (sizeLen sz) f
+      band <- getBand 1 ds
+      writeBand band (allBand band) sz vec
+      flushCache ds
+      GDAL.foldlWindow' (+) 0 band (allBand band)
+        >>= (`shouldBe` U.foldl' (+) 0 vec)
+
+    withDir "works for proper subwindow" $ \tmpDir -> do
+      let p = joinPath [tmpDir, "test.tif"]
+          sz = 200 :+: 205
+      ds <- create "GTIFF" p sz 1 dt options
+      let vec = U.generate (sizeLen sz) f
+      band <- getBand 1 ds
+      writeBand band (allBand band) sz vec
+      flushCache ds
+      let env = Envelope 10 200
+      val <- GDAL.foldlWindow' (+) 0 band env
+      vec <- readBand band env (envelopeSize env)
+      val `shouldBe` U.foldl' (+) 0 vec
+
+    withDir "works for partially overlapping subwindow ll" $ \tmpDir -> do
+      let p = joinPath [tmpDir, "test.tif"]
+          sz = 200 :+: 205
+      ds <- create "GTIFF" p sz 1 dt options
+      let vec = U.generate (sizeLen sz) f
+      band <- getBand 1 ds
+      writeBand band (allBand band) sz vec
+      flushCache ds
+      let env = Envelope (-100) 200
+          env2 = Envelope 0 200
+      val <- GDAL.foldlWindow' (+) 0 band env
+      vec <- readBand band env2 (envelopeSize env2)
+      val `shouldBe` U.foldl' (+) 0 vec
+
+    withDir "works for partially overlapping subwindow ur" $ \tmpDir -> do
+      let p = joinPath [tmpDir, "test.tif"]
+          sz = 200 :+: 205
+      ds <- create "GTIFF" p sz 1 dt options
+      let vec = U.generate (sizeLen sz) f
+      band <- getBand 1 ds
+      writeBand band (allBand band) sz vec
+      flushCache ds
+      let env = Envelope 150 300
+          env2 = Envelope 150 sz
+      val <- GDAL.foldlWindow' (+) 0 band env
+      vec <- readBand band env2 (envelopeSize env2)
+      val `shouldBe` U.foldl' (+) 0 vec
+
+    withDir "works for non overlapping subwindow" $ \tmpDir -> do
+      let p = joinPath [tmpDir, "test.tif"]
+          sz = 200 :+: 205
+      ds <- create "GTIFF" p sz 1 dt options
+      let vec = U.generate (sizeLen sz) f
+      band <- getBand 1 ds
+      writeBand band (allBand band) sz vec
+      flushCache ds
+      let env = Envelope 1000 2000
+      val <- GDAL.foldlWindow' (+) 0 band env
+      val `shouldBe` 0
 
 infix 4 ~==
 (~==) :: (Fractional a, Ord a) => a -> a -> Bool
