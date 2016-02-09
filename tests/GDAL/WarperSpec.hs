@@ -236,6 +236,43 @@ spec = setupAndTeardown $ do
         catValues v2 `shouldSatisfy` U.all (> 0)
         U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
 
+  describe "autoCreateWarpedVRT" $ do
+    it "can be created with default options" $ do
+      let gt = northUpGeotransform 100 (Envelope (-500) 500)
+          sz  = 100 :+: 100
+          v1  = U.generate (sizeLen sz)
+                (\i -> if i<50 then NoData else Value (fromIntegral i))
+      ds <- createMem sz 1 GDT_Int32 []
+      setDatasetGeotransform gt ds
+      b <- getBand 1 ds
+      setBandNodataValue (-1) b
+      writeBand b (allBand b) sz v1
+      flushCache ds
+      b2 <- getBand 1 =<< autoCreateWarpedVRT ds def
+      v2 <- readBand b2 (allBand b2) sz
+      catValues v2 `shouldSatisfy` U.all (> 0)
+      U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
+
+    forM_ resampleAlgorithmsWhichHandleNodata $ \algo ->
+      it ("handles nodata (GenImgProjTransformer) " ++ show algo) $ do
+        let sz  = 100 :+: 100
+            gt  = Geotransform 0 10 0 0 0 (-10)
+            v1  = U.generate (sizeLen sz)
+                  (\i -> if i<50 then NoData else Value (fromIntegral i))
+        ds <- createMem sz 1 GDT_Int32 []
+        setDatasetGeotransform gt ds
+        b <- getBand 1 ds
+        setBandNodataValue (-1) b
+        writeBand b (allBand b) sz v1
+
+        let opts = def
+              & resampleAlg .~ algo
+              & transformer .~ Just (SomeTransformer gipt)
+        b2 <- getBand 1 =<< autoCreateWarpedVRT ds opts
+        v2 <- readBand b2 (allBand b2) sz
+        catValues v2 `shouldSatisfy` U.all (> 0)
+        U.sum (catValues v2) `shouldBe` (U.sum (catValues v1))
+
 resampleAlgorithmsWhichHandleNodata :: [ResampleAlg]
 resampleAlgorithmsWhichHandleNodata
   = filter (`notElem` bad) [minBound..maxBound]

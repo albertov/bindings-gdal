@@ -13,6 +13,7 @@ module GDAL.Warper (
   , HasMaxError (..)
   , reprojectImage
   , createWarpedVRT
+  , autoCreateWarpedVRT
 ) where
 
 import GDAL.Internal.Warper

@@ -20,6 +20,7 @@ module GDAL.Internal.Algorithms (
   , GenImgProjTransformer3
   , SomeTransformer (..)
   , HasTransformer (..)
+  , TransformerFunPtr (..)
   , HasSrcSrs (..)
   , HasDstSrs (..)
   , HasSrcGt (..)

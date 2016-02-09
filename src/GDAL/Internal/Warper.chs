@@ -24,6 +24,7 @@ module GDAL.Internal.Warper (
   , HasMaxError (..)
   , reprojectImage
   , createWarpedVRT
+  , autoCreateWarpedVRT
   , def
 ) where
 
@@ -43,6 +44,7 @@ import Foreign.Ptr (
   , nullPtr
   , castPtr
   )
+import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (with)
 import Foreign.Storable (Storable(..))
 import Lens.Micro
@@ -284,13 +286,37 @@ createWarpedVRT srcDs (nPixels :+: nLines) geotransform wo = do
   oDs <- newDatasetHandle $
          with geotransform $ \gt ->
          withWarpOptionsH srcDs (Just geotransform) wo' $
-         {#call unsafe GDALCreateWarpedVRT as ^#}
+         {#call GDALCreateWarpedVRT as ^#}
            (unDataset srcDs)
            (fromIntegral nPixels)
            (fromIntegral nLines)
            (castPtr gt)
   setDstNodata oDs wo'
   unsafeToReadOnly oDs
+
+autoCreateWarpedVRT
+  :: GDALType a
+  => Dataset s a t
+  -> WarpOptions a
+  -> GDAL s (RODataset s a)
+autoCreateWarpedVRT srcDs wo = do
+  wo' <- setOptionDefaults srcDs Nothing $ wo
+    & transformer %~ maybe (Just (SomeTransformer gipt)) Just
+  oDs <- newDatasetHandle $
+    alloca $ \nPxPtr ->
+    alloca $ \nLnsPtr ->
+    alloca $ \gtPtr ->
+    withTransformerAndArg (woTransfomer wo') (Just srcDs) Nothing $ \t ta -> do
+      checkCPLError "GDALSuggestedWarpOutput" $
+       {#call GDALSuggestedWarpOutput as ^#} dsPtr t ta gtPtr nPxPtr nLnsPtr
+      gt <- peek (castPtr gtPtr)
+      nPx <- peek nPxPtr
+      nLns <- peek nLnsPtr
+      withWarpOptionsH srcDs (Just gt) wo' $
+        {#call GDALCreateWarpedVRT as ^#} dsPtr nPx nLns gtPtr
+  setDstNodata oDs wo'
+  unsafeToReadOnly oDs
+  where dsPtr = unDataset srcDs
 
 setDstNodata :: GDALType a => RWDataset s a -> WarpOptions a -> GDAL s ()
 setDstNodata oDs cfg
