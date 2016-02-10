@@ -15,6 +15,7 @@ module GDAL.Internal.DataType (
   , GDALType (..)
   , DataTypeK (..)
   , HsType
+  , TypeK
   , IsComplex
   , GDT_Byte
   , GDT_UInt16

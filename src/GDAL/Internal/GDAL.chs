@@ -87,6 +87,7 @@ module GDAL.Internal.GDAL (
   , getBand
   , addBand
   , fillBand
+  , fmapBand
   , readBand
   , createBandMask
   , readBandBlock
@@ -129,6 +130,7 @@ module GDAL.Internal.GDAL (
 
 {#context lib = "gdal" prefix = "GDAL" #}
 
+import Control.Arrow (second)
 import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when, (>=>), void, forever)
@@ -1021,6 +1023,15 @@ writeBandBlock band blockIx uvec =
   runConduit (yield (blockIx, uvec) =$= blockSink band)
 {-# INLINE writeBandBlock #-}
 
+fmapBand
+  :: forall s a b t. (GDALType a, GDALType b)
+  => (Value a -> Value b)
+  -> Band s a t
+  -> RWBand s b 
+  -> GDAL s ()
+fmapBand f src dst = runConduit $
+  unsafeBlockSource src =$= CL.map (second (U.map f)) =$= blockSink dst
+{-# INLINE fmapBand #-}
 
 
 blockSink

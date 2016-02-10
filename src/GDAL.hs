@@ -4,6 +4,7 @@ module GDAL (
   , ApproxOK (..)
   , DataType (..)
   , HsType
+  , TypeK
   , IsComplex
   , Pair (..)
   , pFst
@@ -100,6 +101,7 @@ module GDAL (
   , bandSink
   , bandSinkGeo
   , fillBand
+  , fmapBand
   , blockConduit
   , unsafeBlockConduit
   , blockSink
