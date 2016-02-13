@@ -12,6 +12,7 @@ module GDAL.Internal.OSR (
   , srsFromWkt
   , srsFromProj4
   , srsFromEPSG
+  , srsFromEPSGIO
   , srsFromXML
 
   , srsToWkt
@@ -28,6 +29,7 @@ module GDAL.Internal.OSR (
   , getLinearUnits
 
   , coordinateTransformation
+  , coordinateTransformationIO
 
   , cleanup
   , initialize
@@ -164,13 +166,21 @@ srsFromEPSG :: Int -> Either OGRException SpatialReference
 srsFromEPSG = fromImporter importFromEPSG
 {-# NOINLINE srsFromEPSG #-}
 
+srsFromEPSGIO :: Int -> IO (Either OGRException SpatialReference)
+srsFromEPSGIO = fromImporterIO importFromEPSG
+
 fromImporter
   :: (SpatialReference -> a -> IO CInt) -> a
   -> Either OGRException SpatialReference
-fromImporter f s = unsafePerformIO $ do
+fromImporter f = unsafePerformIO . fromImporterIO f
+{-# NOINLINE fromImporter #-}
+
+fromImporterIO
+  :: (SpatialReference -> a -> IO CInt) -> a
+  -> IO (Either OGRException SpatialReference)
+fromImporterIO f s = do
   r <- emptySpatialRef
   try (checkOGRError "srsFrom" (f r s) >> return r)
-{-# NOINLINE fromImporter #-}
 
 
 {#fun ImportFromProj4 as ^
