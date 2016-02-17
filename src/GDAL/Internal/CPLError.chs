@@ -22,7 +22,6 @@ module GDAL.Internal.CPLError (
 
 {# context lib = "gdal" prefix = "CPL" #}
 
-import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
 import Control.Monad (void, liftM)
 import Control.Monad.Catch (MonadThrow(throwM))
 import Control.Exception (
@@ -43,7 +42,7 @@ import Foreign.Marshal.Utils (with)
 -- work around  https://github.com/haskell/c2hs/issues/151
 import qualified Foreign.C.Types as C2HSImp
 
-import GDAL.Internal.Util (toEnumC)
+import GDAL.Internal.Util (toEnumC, runBounded)
 import GDAL.Internal.CPLString (peekEncodedCString)
 
 #include "cpl_error.h"
@@ -145,11 +144,6 @@ withErrorHandler act = runBounded $ with nullPtr $ \stack ->
     `finally` ({#call unsafe pop_error_handler as ^#} stack)
 {-# INLINE withErrorHandler #-}
 
-runBounded :: IO a -> IO a
-runBounded
-  | rtsSupportsBoundThreads = runInBoundThread
-  | otherwise               = id
-{-# INLINE runBounded #-}
 
 withQuietErrorHandler :: IO a -> IO a
 withQuietErrorHandler a = runBounded ((pushIt >> a) `finally` popIt)
