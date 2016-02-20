@@ -33,7 +33,6 @@ module GDAL.Internal.OSR (
 
   , cleanup
   , initialize
-  , srsFromWktIO
   , withSpatialReference
   , withMaybeSRAsCString
   , withMaybeSpatialReference
@@ -49,12 +48,11 @@ module GDAL.Internal.OSR (
 
 {# context lib = "gdal" prefix = "OSR" #}
 
-import Control.Monad.Catch (throwM, mask_, try)
+import Control.Monad.Catch (mask_, try)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (useAsCString)
-import Data.ByteString.Unsafe (unsafeUseAsCString)
 
 import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector.Storable as St
@@ -65,7 +63,7 @@ import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Utils (toBool)
+import Foreign.Marshal.Utils (toBool, with)
 
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -101,7 +99,6 @@ exportWith fun srs =
   withSpatialReference srs $ \pSrs ->
   peekCPLString $
   checkOGRError "srsTo" . fun pSrs
-{-# NOINLINE exportWith #-}
 
 
 foreign import ccall "ogr_srs_api.h &OSRRelease"
@@ -136,35 +133,20 @@ maybeNewSpatialRefBorrowedHandle alloc = maybeNewSpatialRefHandle $ do
 
 emptySpatialRef :: IO SpatialReference
 emptySpatialRef =
-  newSpatialRefHandle ({#call unsafe NewSpatialReference as ^#} nullPtr)
+  newSpatialRefHandle
+  ({#call unsafe NewSpatialReference as c_newEmptySpatialRef #} nullPtr)
 
 srsFromWkt, srsFromProj4, srsFromXML
   :: ByteString -> Either OGRException SpatialReference
-srsFromWkt =
-  unsafePerformIO . flip useAsCString srsFromWktIO
-{-# NOINLINE srsFromWkt #-}
+srsFromWkt = fromImporter importFromWKT
 
-srsFromWktIO :: CString -> IO (Either OGRException SpatialReference)
-srsFromWktIO a =
-  try $
-  newSpatialRefHandle $
-  checkGDALCall checkIt ({#call unsafe NewSpatialReference as ^#} a)
-  where
-    checkIt e p
-      | p==nullPtr = Just (maybe defExc toOgrExc e)
-      | otherwise  = fmap toOgrExc e
-    defExc = NullSpatialReference
-    toOgrExc = gdalToOgrException Failure
 
 srsFromProj4 = fromImporter importFromProj4
-{-# NOINLINE srsFromProj4 #-}
 
 srsFromXML = fromImporter importFromXML
-{-# NOINLINE srsFromXML #-}
 
 srsFromEPSG :: Int -> Either OGRException SpatialReference
 srsFromEPSG = fromImporter importFromEPSG
-{-# NOINLINE srsFromEPSG #-}
 
 srsFromEPSGIO :: Int -> IO (Either OGRException SpatialReference)
 srsFromEPSGIO = fromImporterIO importFromEPSG
@@ -173,7 +155,6 @@ fromImporter
   :: (SpatialReference -> a -> IO CInt) -> a
   -> Either OGRException SpatialReference
 fromImporter f = unsafePerformIO . fromImporterIO f
-{-# NOINLINE fromImporter #-}
 
 fromImporterIO
   :: (SpatialReference -> a -> IO CInt) -> a
@@ -182,6 +163,11 @@ fromImporterIO f s = do
   r <- emptySpatialRef
   try (checkOGRError "srsFrom" (f r s) >> return r)
 
+importFromWKT :: SpatialReference -> ByteString -> IO CInt
+importFromWKT srs bs =
+  withSpatialReference srs $ \srsPtr ->
+  useAsCString bs $ \bsPtr ->
+  with bsPtr ({# call ImportFromWkt as ^ #} srsPtr)
 
 {#fun ImportFromProj4 as ^
    { withSpatialReference* `SpatialReference'
@@ -193,6 +179,7 @@ fromImporterIO f s = do
 {#fun ImportFromXML as ^
    { withSpatialReference* `SpatialReference'
    , useAsCString* `ByteString'} -> `CInt' #}
+
 
 {#fun pure unsafe IsGeographic as ^
    {withSpatialReference* `SpatialReference'} -> `Bool'#}
@@ -233,15 +220,22 @@ getUnitsWith fun s = alloca $ \p -> do
   return (realToFrac value, units)
 
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
-withMaybeSRAsCString =
-  unsafeUseAsCString . maybe "\0" srsToWkt
+withMaybeSRAsCString = useAsCString . maybe "" srsToWkt
 
 maybeSpatialReferenceFromCString :: CString -> IO (Maybe SpatialReference)
-maybeSpatialReferenceFromCString srs = do
-  c <- peek srs
-  if c == 0
-    then return Nothing
-    else srsFromWktIO srs >>= either throwM (return . Just)
+maybeSpatialReferenceFromCString str | str == nullPtr = return Nothing
+maybeSpatialReferenceFromCString str = do
+  c <- peek str
+  if c == 0 then return Nothing
+    else liftM Just $
+         newSpatialRefHandle $
+         checkGDALCall checkIt ({#call NewSpatialReference as ^#} str)
+  where
+    checkIt e p
+      | p==nullPtr = Just (maybe defExc toOgrExc e)
+      | otherwise  = fmap toOgrExc e
+    defExc = NullSpatialReference
+    toOgrExc = gdalToOgrException Failure
 
 withMaybeSpatialReference
   :: Maybe SpatialReference -> (Ptr SpatialReference -> IO a) -> IO a
@@ -256,7 +250,6 @@ coordinateTransformation
   -> Either OGRException CoordinateTransformation
 coordinateTransformation source =
   unsafePerformIO . coordinateTransformationIO source
-{-# NOINLINE coordinateTransformation #-}
 
 coordinateTransformationIO
   :: SpatialReference
