@@ -132,7 +132,6 @@ module GDAL.Internal.GDAL (
 
 import Control.Arrow (second)
 import Control.Applicative (Applicative(..), (<$>), liftA2)
-import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar)
 import Control.Exception (Exception(..))
 import Control.Monad (liftM, liftM2, when, (>=>), void, forever)
 import Control.Monad.Trans (lift)
@@ -345,16 +344,9 @@ openReadOnly p _ = openWithMode GA_ReadOnly p
 openReadWrite :: String -> DataType d -> GDAL s (RWDataset s (HsType d))
 openReadWrite p _ = openWithMode GA_Update p
 
--- Opening datasets is not thread-safe with some drivers (eg: GeoTIFF)
--- so we need a mutex
-openMutex :: MVar ()
-openMutex = unsafePerformIO (newMVar ())
-{-# NOINLINE openMutex #-}
-
 openWithMode :: GDALAccess -> String -> GDAL s (Dataset s a t)
 openWithMode m path =
   newDatasetHandle $
-  bracket (takeMVar openMutex) (putMVar openMutex) $ const $
   withCString path $
   flip {#call GDALOpen as ^#} (fromEnumC m)
 
