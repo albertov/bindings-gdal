@@ -1,6 +1,5 @@
 resolver: lts-3.12
 packages:
 - '.'
-extra-deps: 
-    - microlens-0.4.2.0
+extra-deps: []
 flags: {}
