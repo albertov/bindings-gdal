@@ -2,12 +2,17 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module Arbitrary (InversibleGeotransform(..), positivePair) where
+module Arbitrary (
+    InversibleGeotransform(..)
+  , positivePair
+  , (~==)
+) where
 
 import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (liftM)
+import Data.Fixed (Fixed, E3)
 
-import Test.QuickCheck
+import Test.QuickCheck hiding (Fixed)
 
 import GDAL (Pair(..), Geotransform(Geotransform))
 import OGR (Envelope(Envelope))
@@ -23,12 +28,21 @@ instance Arbitrary InversibleGeotransform where
   arbitrary =
     InversibleGeotransform
       <$> (Geotransform
-             <$> arbitrary
-             <*> liftM getNonZero arbitrary
+             <$> liftM getFixed        arbitrary
+             <*> liftM getFixedNonZero arbitrary
              <*> pure 0
-             <*> arbitrary
+             <*> liftM getFixed        arbitrary
              <*> pure 0
-             <*> liftM getNonZero arbitrary)
+             <*> liftM getFixedNonZero arbitrary)
+    where
+      getFixed :: Fixed E3 -> Double
+      getFixed = realToFrac
+      getFixedNonZero = getFixed . getNonZero
+
+infix 4 ~==
+(~==) :: (Fractional a, Ord a) => a -> a -> Bool
+a ~== b = abs(a-b)<epsilon
+  where epsilon = 1e-2
 
 instance Arbitrary Geotransform where
   arbitrary =

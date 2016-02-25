@@ -24,7 +24,7 @@ import OGR (envelopeSize)
 import Test.QuickCheck (getPositive)
 import Test.Hspec.QuickCheck (prop)
 import TestUtils
-import Arbitrary (InversibleGeotransform(..))
+import Arbitrary (InversibleGeotransform(..), (~==))
 
 main :: IO ()
 main = hspec spec
@@ -643,8 +643,3 @@ it_can_foldlWindow dt f = forM_ [[], [("TILED","YES")]] $ \options -> do
       let env = Envelope 1000 2000
       val <- GDAL.foldlWindow' (+) 0 band env
       val `shouldBe` 0
-
-infix 4 ~==
-(~==) :: (Fractional a, Ord a) => a -> a -> Bool
-a ~== b = abs(a-b)<epsilon
-  where epsilon = 1e-3
