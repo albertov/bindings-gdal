@@ -33,13 +33,13 @@ addons:
     - zlib1g-dev
 
 env:
-- ARGS="--resolver lts-2"   GDAL="1.10.1"
-- ARGS="--resolver lts-2"   GDAL="1.11.3"
-- ARGS="--resolver lts-2"   GDAL="2.0.1"
-- ARGS="--resolver lts-3"   GDAL="1.10.1"
-- ARGS="--resolver lts-3"   GDAL="1.11.3"
-- ARGS="--resolver lts-3"   GDAL="2.0.1"
-- ARGS="--resolver nightly" GDAL="2.0.1"
+- ARGS="--resolver lts-2"   GDAL="1.10.1" STACK_YAML="stack-lts-2.yaml"
+- ARGS="--resolver lts-2"   GDAL="1.11.3" STACK_YAML="stack-lts-2.yaml"
+- ARGS="--resolver lts-2"   GDAL="2.0.1"  STACK_YAML="stack-lts-2.yaml"
+- ARGS="--resolver lts-3"   GDAL="1.10.1" STACK_YAML="stack.yaml"
+- ARGS="--resolver lts-3"   GDAL="1.11.3" STACK_YAML="stack.yaml"
+- ARGS="--resolver lts-3"   GDAL="2.0.1"  STACK_YAML="stack.yaml"
+- ARGS="--resolver nightly" GDAL="2.0.1"  STACK_YAML="stack.yaml"
 
 before_install:
 # Download, install and setup stack
@@ -97,7 +97,7 @@ before_install:
 - gdal-config --version
 
 script:
-  - stack --flag bindings-gdal:examples $ARGS --no-terminal test
+- stack test --flag bindings-gdal:examples $ARGS --no-terminal --stack-yaml=$STACK_YAML
 
 cache:
   apt: true
