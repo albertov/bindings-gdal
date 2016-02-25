@@ -34,12 +34,12 @@ addons:
 
 env:
 - ARGS="--resolver lts-2"   GDAL="1.10.1" STACK_YAML="stack-lts-2.yaml"
-- ARGS="--resolver lts-2"   GDAL="1.11.3" STACK_YAML="stack-lts-2.yaml"
-- ARGS="--resolver lts-2"   GDAL="2.0.1"  STACK_YAML="stack-lts-2.yaml"
+- ARGS="--resolver lts-2"   GDAL="1.11.4" STACK_YAML="stack-lts-2.yaml"
+- ARGS="--resolver lts-2"   GDAL="2.0.2"  STACK_YAML="stack-lts-2.yaml"
 - ARGS="--resolver lts-3"   GDAL="1.10.1" STACK_YAML="stack.yaml"
-- ARGS="--resolver lts-3"   GDAL="1.11.3" STACK_YAML="stack.yaml"
-- ARGS="--resolver lts-3"   GDAL="2.0.1"  STACK_YAML="stack.yaml"
-- ARGS="--resolver nightly" GDAL="2.0.1"  STACK_YAML="stack.yaml"
+- ARGS="--resolver lts-3"   GDAL="1.11.4" STACK_YAML="stack.yaml"
+- ARGS="--resolver lts-3"   GDAL="2.0.2"  STACK_YAML="stack.yaml"
+- ARGS="--resolver nightly" GDAL="2.0.2"  STACK_YAML="stack.yaml"
 
 before_install:
 # Download, install and setup stack
