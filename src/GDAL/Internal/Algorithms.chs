@@ -418,7 +418,7 @@ rasterizeLayersBuf layers nodataValue burnValueOrAttr srs size gt cfg =
     Stm.unsafeWith vec $ \vecPtr ->
       checkCPLError "RasterizeLayersBuf" $
       {#call GDALRasterizeLayersBuf as ^#}
-        (castPtr vecPtr) nx ny (fromEnumC dt) 0 0 (fromIntegral len)
+        (castPtr vecPtr) nx ny (fromEnumC dt) pxSpace 0 (fromIntegral len)
         lPtrPtr srsPtr (castPtr pGt) trans
         tArg bValue opts pFun nullPtr
     liftM (mkValueUVector nodataValue) (G.unsafeFreeze vec)
@@ -429,6 +429,7 @@ rasterizeLayersBuf layers nodataValue burnValueOrAttr srs size gt cfg =
     dt = hsDataType (Proxy :: Proxy a)
     bValue    = toCDouble (either id (const nodataValue) burnValueOrAttr)
     nx :+: ny  = fmap fromIntegral size
+    pxSpace = fromIntegral (sizeOf (undefined :: a))
 
 
 -- ############################################################################
