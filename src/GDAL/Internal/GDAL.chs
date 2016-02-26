@@ -206,6 +206,7 @@ data GDALRasterException
   | UnknownDriver !ByteString
   | BandDoesNotAllowNoData
   | CannotInvertGeotransform
+  | NotImplemented !ByteString
   deriving (Typeable, Show, Eq)
 
 instance Exception GDALRasterException where
@@ -1029,8 +1030,16 @@ fmapBand
   -> Band s a t
   -> RWBand s b 
   -> GDAL s ()
-fmapBand f src dst = runConduit $
-  unsafeBlockSource src =$= CL.map (second (U.map f)) =$= blockSink dst
+fmapBand f src dst
+  | bandSize src /= bandSize dst
+  = throwBindingException (InvalidRasterSize (bandSize src))
+  | bandBlockSize src /= bandBlockSize dst
+  = throwBindingException notImplementedErr
+  | otherwise = runConduit
+      (unsafeBlockSource src =$= CL.map (second (U.map f)) =$= blockSink dst)
+  where
+    notImplementedErr = NotImplemented
+      "fmapBand: Not implemented for bands of different block size"
 {-# INLINE fmapBand #-}
 
 
