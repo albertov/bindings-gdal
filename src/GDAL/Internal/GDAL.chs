@@ -90,6 +90,7 @@ module GDAL.Internal.GDAL (
   , fmapBand
   , readBand
   , createBandMask
+  , bandMask
   , readBandBlock
   , writeBand
   , writeBandBlock
