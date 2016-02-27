@@ -47,6 +47,8 @@ module GDAL (
   , runGDAL
   , runGDAL_
   , withGDAL
+  , initializeGDAL
+  , cleanupGDAL
   , isNoData
   , fromValue
   , unValueVector
@@ -143,7 +145,7 @@ module GDAL (
   , def
 ) where
 
-import Control.Exception (finally)
+import Control.Exception (bracket_)
 import Control.Monad.IO.Class (liftIO)
 
 import Data.Default (def)
@@ -165,6 +167,8 @@ import qualified GDAL.Internal.OSR as OSR
 -- | Performs process-wide initialization and cleanup
 --   Should only be called from the main thread
 withGDAL :: IO a -> IO a
-withGDAL a =
-    (GDAL.allRegister >> OGR.registerAll >> OSR.initialize >> a)
-      `finally` (OGR.cleanupAll >> GDAL.destroyDriverManager >> OSR.cleanup)
+withGDAL = bracket_ initializeGDAL cleanupGDAL
+
+initializeGDAL, cleanupGDAL :: IO ()
+initializeGDAL = GDAL.allRegister >> OGR.registerAll >> OSR.initialize
+cleanupGDAL    = OGR.cleanupAll >> GDAL.destroyDriverManager >> OSR.cleanup
