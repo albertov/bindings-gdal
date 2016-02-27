@@ -646,7 +646,6 @@ bandBlockSize :: (Band s a t) -> Size
 bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    {#call unsafe GetBlockSize as ^#} (unBand band) xPtr yPtr
    liftM (fmap fromIntegral) (liftM2 (:+:) (peek xPtr) (peek yPtr))
-{-# NOINLINE bandBlockSize #-}
 
 bandBlockLen :: Band s a t -> Int
 bandBlockLen = (\(x :+: y) -> x*y) . bandBlockSize
@@ -656,7 +655,6 @@ bandSize band =
   fmap fromIntegral $
         ({#call pure unsafe GetRasterBandXSize as ^#} (unBand band))
     :+: ({#call pure unsafe GetRasterBandYSize as ^#} (unBand band))
-{-# NOINLINE bandSize #-}
 
 allBand :: Band s a t -> Envelope Int
 allBand = Envelope (pure 0) . bandSize
