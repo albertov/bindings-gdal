@@ -16,6 +16,9 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
 #include "bindings.h"
+#include "gdal.h"
+#include "ogr_api.h"
+
 
 module GDAL.Internal.OGR (
     DataSource
@@ -146,8 +149,6 @@ import GDAL.Internal.Common
 import GDAL.Internal.CPLError
 import GDAL.Internal.Util
 import GDAL.Internal.Types
-
-#include "ogr_api.h"
 
 {#fun RegisterAll as ^ {} -> `()'  #}
 {#fun CleanupAll  as ^ {} -> `()'  #}

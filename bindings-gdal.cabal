@@ -19,6 +19,11 @@ flag examples
   default: False
   manual: True
 
+flag autoconfig
+  description:
+    Use gdal-config to set extra-libraries, extra-lib-dirs and include-dirs.
+  default: True
+
 source-repository head
   type:              git
   location:          https://github.com/meteogrid/bindings-gdal.git
@@ -71,6 +76,7 @@ library
                    , unordered-containers
                    , ghc-prim
                    , monad-control
+  extra-libraries: gdal
   ghc-options:       -funbox-strict-fields -Wall
   install-includes: bindings.h
   default-extensions: CPP

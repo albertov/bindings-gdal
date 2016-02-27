@@ -8,6 +8,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 #include "bindings.h"
+#include "gdal.h"
+#include "ogr_core.h"
+#include "ogr_api.h"
+#include "cpl_string.h"
+
 
 module GDAL.Internal.OGRFeature (
     OGRFeature (..)
@@ -109,11 +114,6 @@ import GDAL.Internal.CPLString (peekEncodedCString, useAsEncodedCString)
 {#import GDAL.Internal.CPLError #}
 {#import GDAL.Internal.OGRGeometry #}
 {#import GDAL.Internal.OGRError #}
-
-#include "gdal.h"
-#include "ogr_core.h"
-#include "ogr_api.h"
-#include "cpl_string.h"
 
 newtype Fid = Fid { unFid :: Int64 }
   deriving (Eq, Num)

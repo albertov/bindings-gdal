@@ -3,25 +3,27 @@ import Data.Maybe
 import System.Process
 import System.IO
 import System.Exit
+import Data.List
 import Distribution.Simple
+import Distribution.Simple.Setup (configConfigurationsFlags)
 import Distribution.PackageDescription
 import Distribution.Simple.LocalBuildInfo
 
 main = defaultMainWithHooks simpleUserHooks {confHook = gdalConf}
 
 gdalConf (pkg0, pbi) flags = do
+ lbi <- confHook simpleUserHooks (pkg0, pbi) flags
+ case FlagName "autoconfig" `lookup` configConfigurationsFlags flags of
+   Just False -> putStrLn "NOT using gdal-config" >> return lbi
+   _          -> putStrLn "Using gdal-config" >> configureWithGdalConfig lbi
+
+configureWithGdalConfig lbi = do
  gdalInclude <- liftM (getFlagValues 'I') $ getOutput "gdal-config" ["--cflags"]
  gdalLibDirs <- liftM (getFlagValues 'L') $ getOutput "gdal-config" ["--libs"]
  gdalLibs    <- liftM (getFlagValues 'l') $ getOutput "gdal-config" ["--libs"]
- gdalVers    <- getOutput "gdal-config" ["--version"]
- let (vMajor,r) = break (=='.') gdalVers
-     (vMinor,_) = break (=='.') (tail r)
-     updBinfo bi = bi { extraLibDirs = extraLibDirs bi ++ gdalLibDirs
+ let updBinfo bi = bi { extraLibDirs = extraLibDirs bi ++ gdalLibDirs
                       , extraLibs    = extraLibs    bi ++ gdalLibs
                       , includeDirs  = includeDirs  bi ++ gdalInclude
-                      , cppOptions   = cppOptions   bi ++
-                                         [ "-DGDAL_VERSION_MAJOR=" ++ vMajor
-                                         , "-DGDAL_VERSION_MINOR=" ++ vMinor]
                       }
      updLib lib = lib { libBuildInfo  = updBinfo (libBuildInfo lib)}
      updTs  ts  = ts  { testBuildInfo = updBinfo (testBuildInfo ts)}
@@ -32,7 +34,6 @@ gdalConf (pkg0, pbi) flags = do
                       , benchmarks    = map updBm (benchmarks lpd)
                       , executables   = map updExe (executables lpd)
                       }
- lbi <- confHook simpleUserHooks (pkg0, pbi) flags
  return (lbi { localPkgDescr = updLpd (localPkgDescr lbi) })
 
 getOutput s a = readProcess s a ""
