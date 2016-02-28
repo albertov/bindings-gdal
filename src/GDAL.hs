@@ -140,7 +140,9 @@ module GDAL (
   , geoEnvelopeTransformer
 
   , liftIO
-
+  , withConfigOption
+  , setConfigOption
+  , getConfigOption
   , module Data.Conduit
   , def
 ) where
@@ -151,6 +153,7 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Default (def)
 import Data.Conduit
 
+import GDAL.Internal.CPLConv
 import GDAL.Internal.CPLError
 import GDAL.Internal.CPLString
 import GDAL.Internal.CPLProgress

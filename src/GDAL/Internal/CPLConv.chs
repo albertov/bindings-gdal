@@ -1,4 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module GDAL.Internal.CPLConv (
@@ -6,14 +7,23 @@ module GDAL.Internal.CPLConv (
   , cplMalloc
   , cplNewArray
   , cplFinalizerFree
+  , setConfigOption
+  , getConfigOption
+  , withConfigOption
   ) where
 
+import GDAL.Internal.Util (runBounded)
 import Control.Exception (bracketOnError)
 import Control.Monad (liftM)
+import Control.Monad.IO.Class (MonadIO(liftIO))
+import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Monad.Catch (MonadMask, bracket)
 
-import Foreign.C.Types (CULong(..))
+import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
+
+import Foreign.C.Types (CULong(..), CChar(..))
 import Foreign.ForeignPtr (FinalizerPtr)
-import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 
 #include "cpl_conv.h"
@@ -58,3 +68,23 @@ cplNewArray l =
 --   with 'cplMalloc', 'cplNewArray' or 'cplMallocArray'
 foreign import ccall unsafe "cpl_conv.h &VSIFree"
   cplFinalizerFree :: FinalizerPtr a
+
+{#fun unsafe CPLGetConfigOption as getConfigOption
+   { useAsCString* `ByteString'} -> `ByteString' packCString* #}
+
+{#fun unsafe CPLSetConfigOption as setConfigOption
+   { useAsCString* `ByteString', useAsCString* `ByteString' } -> `()' #}
+
+{#fun unsafe CPLSetThreadLocalConfigOption as setThreadLocalConfigOption
+   { useAsCString* `ByteString', useAsCString* `ByteString' } -> `()' #}
+
+withConfigOption
+  :: (MonadMask m, MonadBaseControl IO m, MonadIO m)
+  => ByteString -> ByteString -> m a -> m a
+withConfigOption key val = runBounded . bracket enter exit . const
+  where
+    enter = liftIO $ do
+      curVal <- getConfigOption key
+      setThreadLocalConfigOption key val
+      return curVal
+    exit = liftIO . setThreadLocalConfigOption key
