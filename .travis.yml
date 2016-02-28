@@ -36,10 +36,20 @@ env:
 - ARGS="--resolver lts-2"   GDAL="1.10.1" STACK_YAML="stack-lts-2.yaml"
 - ARGS="--resolver lts-2"   GDAL="1.11.4" STACK_YAML="stack-lts-2.yaml"
 - ARGS="--resolver lts-2"   GDAL="2.0.2"  STACK_YAML="stack-lts-2.yaml"
+
 - ARGS="--resolver lts-3"   GDAL="1.10.1" STACK_YAML="stack.yaml"
 - ARGS="--resolver lts-3"   GDAL="1.11.4" STACK_YAML="stack.yaml"
 - ARGS="--resolver lts-3"   GDAL="2.0.2"  STACK_YAML="stack.yaml"
+
+- ARGS="--resolver lts-4"   GDAL="1.10.1" STACK_YAML="stack.yaml"
+- ARGS="--resolver lts-4"   GDAL="1.11.4" STACK_YAML="stack.yaml"
+- ARGS="--resolver lts-4"   GDAL="2.0.2"  STACK_YAML="stack.yaml"
+
 - ARGS="--resolver nightly" GDAL="2.0.2"  STACK_YAML="stack.yaml"
+
+matrix:
+  allow_failures:
+  - env: ARGS="--resolver nightly" GDAL="2.0.2"  STACK_YAML="stack.yaml"
 
 before_install:
 # Download, install and setup stack
@@ -49,10 +59,8 @@ before_install:
 
   mkdir -p $HOME/.local/bin
 
-  if [ ! -f $HOME/.local/bin/stack ]; then
-    travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 \
-     | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
-  fi
+  travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 \
+   | tar xz --wildcards --strip-components=1 -C $HOME/.local/bin '*/stack'
 
   stack $ARGS --no-terminal --install-ghc setup
 
