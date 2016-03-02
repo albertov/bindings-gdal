@@ -21,7 +21,7 @@ import Control.Monad.Catch (MonadMask, bracket)
 
 import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 
-import Foreign.C.Types (CULong(..), CChar(..))
+import Foreign.C.Types
 import Foreign.ForeignPtr (FinalizerPtr)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
