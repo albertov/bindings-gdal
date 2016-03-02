@@ -88,6 +88,7 @@ module GDAL.Internal.GDAL (
   , addBand
   , fillBand
   , fmapBand
+  , foldBands
   , readBand
   , createBandMask
   , bandMask
@@ -143,6 +144,7 @@ import Data.Bits ((.&.))
 import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Coerce (coerce)
+import qualified Data.List as L
 import qualified Data.Conduit.List as CL
 import Data.Conduit
 import Data.Conduit.Internal (Pipe(..), ConduitM(..), injectLeftovers)
@@ -1040,6 +1042,23 @@ fmapBand f src dst
     notImplementedErr = NotImplemented
       "fmapBand: Not implemented for bands of different block size"
 {-# INLINE fmapBand #-}
+
+foldBands
+  :: forall s a b t. (GDALType a, GDALType b)
+  => (Value b -> Value a -> Value b)
+  -> RWBand s b
+  -> [Band s a t]
+  -> GDAL s ()
+foldBands fun zb bs =
+  runConduit (unsafeBlockSource zb =$= awaitForever foldThem =$= blockSink zb)
+  where
+    foldThem (bix, acc) = do
+      r <- liftM (L.foldl' (G.zipWith fun) acc)
+                 (lift (mapM (flip readBandBlock bix) bs))
+      yield (bix, r)
+    {-# INLINE foldThem #-}
+{-# INLINE foldBands #-}
+
 
 
 blockSink
