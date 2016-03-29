@@ -26,7 +26,7 @@ flag autoconfig
 
 source-repository head
   type:              git
-  location:          https://github.com/meteogrid/bindings-gdal.git
+  location:          https://github.com/albertov/bindings-gdal.git
 
 
 library
