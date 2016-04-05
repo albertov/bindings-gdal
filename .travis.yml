@@ -41,6 +41,10 @@ env:
 - ARGS="--resolver lts-3"   GDAL="1.11.4" STACK_YAML="stack.yaml"
 - ARGS="--resolver lts-3"   GDAL="2.0.2"  STACK_YAML="stack.yaml"
 
+- ARGS="--resolver lts-4"   GDAL="2.0.2"  STACK_YAML="stack.yaml"
+
+- ARGS="--resolver lts-5"   GDAL="2.0.2"  STACK_YAML="stack.yaml"
+
 - ARGS="--resolver nightly" GDAL="2.0.2"  STACK_YAML="stack.yaml"
 
 matrix:

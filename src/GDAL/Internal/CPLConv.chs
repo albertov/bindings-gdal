@@ -19,7 +19,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Catch (MonadMask, bracket)
 
-import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
+import Data.ByteString.Char8 (ByteString, packCString, useAsCString, empty)
 
 import Foreign.C.Types
 import Foreign.ForeignPtr (FinalizerPtr)
@@ -70,7 +70,9 @@ foreign import ccall unsafe "cpl_conv.h &VSIFree"
   cplFinalizerFree :: FinalizerPtr a
 
 {#fun unsafe CPLGetConfigOption as getConfigOption
-   { useAsCString* `ByteString'} -> `ByteString' packCString* #}
+   { useAsCString* `ByteString'
+   , useAsCString* `ByteString'
+   } -> `ByteString' packCString* #}
 
 {#fun unsafe CPLSetConfigOption as setConfigOption
    { useAsCString* `ByteString', useAsCString* `ByteString' } -> `()' #}
@@ -84,7 +86,7 @@ withConfigOption
 withConfigOption key val = runBounded . bracket enter exit . const
   where
     enter = liftIO $ do
-      curVal <- getConfigOption key
+      curVal <- getConfigOption key empty
       setThreadLocalConfigOption key val
       return curVal
     exit = liftIO . setThreadLocalConfigOption key
