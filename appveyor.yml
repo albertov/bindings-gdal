@@ -1,13 +1,13 @@
 cache:
-- "C:\\GDAL"
-- "C:\\sr"
+- "C:\GDAL"
+- "C:\sr"
 
 build: off
 
 init:
-  - if not exist "C:\\GDAL" appveyor DownloadFile "http://download.gisinternals.com/sdk/downloads/release-1500-gdal-1-11-3-mapserver-6-4-2.zip" -FileName archive.zip
-  - 7z x -y "archive.zip" -o"C:\" > nul
-  - ren "C:\\release-1500-gdal-1-11-3-mapserver-6-4-2-libs" "C:\\GDAL"
+  - if not exist "C:\GDAL" appveyor DownloadFile "http://download.gisinternals.com/sdk/downloads/release-1500-gdal-1-11-3-mapserver-6-4-2.zip" -FileName archive.zip
+  - 7z x -y "archive.zip" -o"C:\\" > nul
+  - ren "C:\release-1500-gdal-1-11-3-mapserver-6-4-2-libs" "C:\GDAL"
 
 before_test:
 - curl -ostack.zip -L --insecure http://www.stackage.org/stack/windows-i386
@@ -15,10 +15,10 @@ before_test:
 
 environment:
   global:
-    STACK_ROOT: "c:\\sr"
+    STACK_ROOT: "c:\sr"
 
 test_script:
 - stack setup > nul
 # The ugly echo "" hack is to avoid complaints about 0 being an invalid file
 # descriptor
-- echo "" | stack test --flag bindings-gdal:examples --flag bindings-gdal:-autoconfig --no-terminal --extra-lib-dirs="C:\\GDAL\\lib" --extra-include-dirs="C:\\GDAL\\include"
+- echo "" | stack test --flag bindings-gdal:examples --flag bindings-gdal:-autoconfig --no-terminal --extra-lib-dirs="C:\GDAL\lib" --extra-include-dirs="C:\GDAL\include"
