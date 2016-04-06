@@ -1,0 +1,10 @@
+resolver: lts-5.11
+packages:
+- '.'
+extra-deps: []
+extra-lib-dirs: C:\cygwin\lib
+extra-include-dirs: C:\cygwin\include
+flags:
+  bindings-gdal:
+    autoconfig: false
+    examples: true
