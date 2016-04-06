@@ -6,7 +6,7 @@ build: off
 
 init:
   - if not exist "C:\GDAL" appveyor DownloadFile "http://download.gisinternals.com/sdk/downloads/release-1500-gdal-1-11-3-mapserver-6-4-2.zip" -FileName archive.zip
-  - 7z x -y "archive.zip" -o"C:\\" > nul
+  - 7z x -y "archive.zip" -o"C:\" > nul
   - ren "C:\release-1500-gdal-1-11-3-mapserver-6-4-2-libs" "C:\GDAL"
 
 before_test:
