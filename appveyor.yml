@@ -1,6 +1,6 @@
 cache:
-- "C:\GDAL"
-- "C:\sr"
+- "C:\\GDAL"
+- "C:\\sr"
 
 build: off
 
@@ -15,7 +15,7 @@ before_test:
 
 environment:
   global:
-    STACK_ROOT: "c:\sr"
+    STACK_ROOT: "c:\\sr"
 
 test_script:
 - stack setup > nul
