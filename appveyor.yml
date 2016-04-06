@@ -25,4 +25,4 @@ test_script:
 - stack setup > nul
 # The ugly echo "" hack is to avoid complaints about 0 being an invalid file
 # descriptor
-- echo "" | stack build --flag bindings-gdal:examples --flag bindings-gdal:-autoconfig --no-terminal
+- "echo \"\" | stack build --flag bindings-gdal:examples --flag bindings-gdal:-autoconfig --no-terminal --extra-lib-dirs=C:\\cygwin\\lib --extra-include-dirs=C:\\cygwin\\include"
