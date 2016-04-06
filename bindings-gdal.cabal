@@ -105,8 +105,12 @@ test-suite spec
                   , time
                   , data-default
                   , conduit
-                  , unix
                   , microlens
+  if os(windows)
+    cpp-options: -DWINDOWS
+  else
+    build-depends: unix
+
   hs-source-dirs:   tests
   main-is:          Main.hs
   other-modules:    Spec

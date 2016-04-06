@@ -29,7 +29,10 @@ import Data.Typeable (Typeable, typeOf)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 
+#ifndef WINDOWS
 import System.Posix.Files (setFileMode, nullFileMode)
+#endif
+
 import System.FilePath (joinPath)
 
 import GDAL (
@@ -116,6 +119,7 @@ spec = setupAndTeardown $ do
                           , fdGeom   = pointDef {gfdSrs = Just srs23030}
                           , fdGeoms  = mempty})
 
+#ifndef WINDOWS
       withDir "throws if destination not writable" $ \tmpDir -> do
         let fd = FeatureDef { fdName   = "Barça Players"
                             , fdFields = [strField "contraseña"]
@@ -125,6 +129,7 @@ spec = setupAndTeardown $ do
         ds <- create "ESRI Shapefile" (joinPath [tmpDir, "foo.shp"]) []
         createLayerWithDef ds fd StrictOK []
           `shouldThrow` ((==OpenFailed) . gdalErrNum)
+#endif
 
       when canCreateMultipleGeometryFields $ do
         it "works with several geometry field with no srs" $ do
