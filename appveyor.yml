@@ -1,0 +1,28 @@
+# Disabled cache in hope of improving reliability of AppVeyor builds
+#cache:
+#- "c:\\sr" # stack root, short paths == fewer problems
+
+build: off
+
+init:
+  - mkdir %systemdrive%\OSGeo4w
+  - cd %systemdrive%\OSGeo4w
+  - ps: (new-object net.webclient).DownloadFile('http://download.osgeo.org/osgeo4w/osgeo4w-setup-x86_64.exe', 'osgeo4w-setup-x86_64.exe')
+  - osgeo4w-setup-x86_64.exe --quiet-mode --upgrade-also --delete-orphans --no-desktop --advanced  --root %systemdrive%\OSGeo4w --packages gdal gdal-autotest gdal-filegdb --site http://download.osgeo.org/osgeo4w
+  - cd %APPVEYOR_BUILD_FOLDER%
+
+
+before_test:
+- curl -ostack.zip -L --insecure http://www.stackage.org/stack/windows-i386
+- 7z x stack.zip stack.exe
+
+clone_folder: "c:\\stack"
+environment:
+  global:
+    STACK_ROOT: "c:\\sr"
+
+test_script:
+- stack setup > nul
+# The ugly echo "" hack is to avoid complaints about 0 being an invalid file
+# descriptor
+- echo "" | stack test --flag bindings-gdal:examples --no-terminal
