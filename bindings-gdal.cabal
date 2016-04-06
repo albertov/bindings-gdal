@@ -76,7 +76,12 @@ library
                    , unordered-containers
                    , ghc-prim
                    , monad-control
-  extra-libraries: gdal
+
+  if os(windows)
+    extra-libraries: gdal_i
+  else
+    extra-libraries: gdal
+
   ghc-options:       -funbox-strict-fields -Wall
   install-includes: bindings.h
   default-extensions: CPP
