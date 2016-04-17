@@ -18,9 +18,12 @@ gdalConf (pkg0, pbi) flags = do
    _          -> putStrLn "Using gdal-config" >> configureWithGdalConfig lbi
 
 configureWithGdalConfig lbi = do
- gdalInclude <- liftM (getFlagValues 'I') $ getOutput "gdal-config" ["--cflags"]
- gdalLibDirs <- liftM (getFlagValues 'L') $ getOutput "gdal-config" ["--libs"]
- gdalLibs    <- liftM (getFlagValues 'l') $ getOutput "gdal-config" ["--libs"]
+ gdalInclude <- liftM (getFlagValues 'I') $
+   getOutput "gdal-config" ["--cflags"]
+ gdalLibDirs <- liftM (getFlagValues 'L') $
+   getOutput "gdal-config" ["--libs", "--dep-libs"]
+ gdalLibs    <- liftM (getFlagValues 'l') $
+   getOutput "gdal-config" ["--libs", "--dep-libs"]
  let updBinfo bi = bi { extraLibDirs = extraLibDirs bi ++ gdalLibDirs
                       , extraLibs    = extraLibs    bi ++ gdalLibs
                       , includeDirs  = includeDirs  bi ++ gdalInclude
