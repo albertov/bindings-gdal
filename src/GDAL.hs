@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 module GDAL (
     GDAL
   , GDALType
@@ -145,6 +146,9 @@ module GDAL (
   , getConfigOption
   , module Data.Conduit
   , def
+#if HAVE_EMBEDDED_DATA
+  , ensureDataExists
+#endif
 ) where
 
 import Control.Exception (bracket_)
@@ -166,6 +170,12 @@ import OGR (Envelope(..))
 
 import qualified GDAL.Internal.OGR as OGR
 import qualified GDAL.Internal.OSR as OSR
+
+#if HAVE_EMBEDDED_DATA
+import qualified GDAL.Internal.GDALData as GD
+ensureDataExists :: IO ()
+ensureDataExists = GD.ensureExists
+#endif
 
 -- | Performs process-wide initialization and cleanup
 --   Should only be called from the main thread

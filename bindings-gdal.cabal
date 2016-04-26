@@ -24,6 +24,11 @@ flag autoconfig
     Use gdal-config to set extra-libraries, extra-lib-dirs and include-dirs.
   default: True
 
+flag embed-data
+  description: Embed GDAL_DATA in executable
+  default: False
+  manual: True
+
 source-repository head
   type:              git
   location:          https://github.com/albertov/bindings-gdal.git
@@ -76,6 +81,13 @@ library
                    , unordered-containers
                    , ghc-prim
                    , monad-control
+  if flag(embed-data)
+    build-depends: file-embed
+                 , directory
+                 , filepath
+                 , process
+    exposed-modules: GDAL.Internal.GDALData
+    cpp-options: -DHAVE_EMBEDDED_DATA
 
   if !flag(autoconfig)
     if os(windows)
