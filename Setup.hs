@@ -3,6 +3,7 @@ import Data.Maybe
 import System.Process
 import System.IO
 import System.Exit
+import System.FilePath.Posix
 import Data.List
 import Distribution.Simple
 import Distribution.Simple.Setup (configConfigurationsFlags)
@@ -22,12 +23,17 @@ configureWithGdalConfig lbi = do
    getOutput "gdal-config" ["--cflags"]
  gdalLibDirs <- liftM (getFlagValues 'L') $
    getOutput "gdal-config" ["--libs", "--dep-libs"]
- gdalLibs    <- liftM (getFlagValues 'l') $
-   getOutput "gdal-config" ["--libs", "--dep-libs"]
- let updBinfo bi = bi { extraLibDirs = extraLibDirs bi ++ gdalLibDirs
-                      , extraLibs    = extraLibs    bi ++ gdalLibs
+ (gdalLibs, staticDirs) <- liftM (unzip . parseLibraries . words)
+                            (getOutput "gdal-config" ["--libs", "--dep-libs"])
+ let updBinfo bi = bi { extraLibDirs = extraLibDirs bi
+                                    ++ gdalLibDirs
+                                    ++ catMaybes staticDirs
+                      , extraLibs    = extraLibs bi
+                                    ++ gdalLibs
+                                    ++ if hasStaticLibs then [stdCpp] else []
                       , includeDirs  = includeDirs  bi ++ gdalInclude
                       }
+     hasStaticLibs = not (null (catMaybes staticDirs))
      updLib lib = lib { libBuildInfo  = updBinfo (libBuildInfo lib)}
      updTs  ts  = ts  { testBuildInfo = updBinfo (testBuildInfo ts)}
      updBm  bm  = bm  { benchmarkBuildInfo = updBinfo (benchmarkBuildInfo bm)}
@@ -41,5 +47,27 @@ configureWithGdalConfig lbi = do
 
 getOutput s a = readProcess s a ""
 
+parseLibraries :: [String] -> [(String, Maybe FilePath)]
+parseLibraries = concatMap go
+  where
+    go ('-':'l':name) = [(name, Nothing)]
+    go ('-':_)        = []
+    go p              = case staticLibNameAndPath p of
+                          Just (n,p)  -> [(n,Just p)]
+                          Nothing     -> []
+
 getFlagValues f s = map (\(_:_:v) -> v) filtered
   where filtered = filter (\(_:f':_) -> f==f') (words . init $ s)
+ 
+staticLibNameAndPath :: FilePath -> Maybe (String, FilePath)
+staticLibNameAndPath p
+  | takeExtension p == staticLibSuffix
+  , staticLibPrefix `isPrefixOf` takeBaseName p
+  = Just (drop (length staticLibPrefix) (takeBaseName p), takeDirectory p)
+staticLibNameAndPath _ = Nothing
+
+-- FIXME: make portable
+staticLibPrefix, staticLibSuffix, stdCpp :: String
+staticLibPrefix = "lib"
+staticLibSuffix = ".a"
+stdCpp = "stdc++"

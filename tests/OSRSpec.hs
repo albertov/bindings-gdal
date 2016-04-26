@@ -6,6 +6,7 @@ import Data.Either (isRight, isLeft)
 import qualified Data.Vector.Storable as St
 
 import TestUtils
+import Arbitrary ((~==))
 
 import OSR
 import GDAL (Pair(..))
@@ -41,4 +42,8 @@ spec = do
           points   = [ 10000 :+: 10000 , 20000 :+: 20000]
           expected = [ (-7.399954586233987) :+: 8.910802667504762e-2
                      , (-7.31036658723297)  :+: 0.17933194077993758]
-      (points `transformWith` ct) `shouldBe` Just expected
+          almostEq (a:+:b) (a':+:b') = a ~== a' && b ~== b'
+      case points `transformWith` ct of
+        Just result ->
+          St.all id (St.zipWith almostEq result expected) `shouldBe` True
+        Nothing     -> expectationFailure "transform returns Nothing"
