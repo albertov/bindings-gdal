@@ -36,15 +36,14 @@ env:
 - ARGS="--resolver lts-2"   GDAL="2.0.2"  STACK_YAML="stack-lts-2.yaml"
 - ARGS="--resolver lts-3"   GDAL="2.0.2"  STACK_YAML="stack.yaml"
 - ARGS="--resolver lts-4"   GDAL="2.0.2"  STACK_YAML="stack.yaml"
-- ARGS="--resolver lts-3"   GDAL="1.10.1" STACK_YAML="stack.yaml"
-- ARGS="--resolver lts-3"   GDAL="1.11.4" STACK_YAML="stack.yaml"
+- ARGS="--resolver lts-5"   GDAL="1.10.1" STACK_YAML="stack.yaml"
+- ARGS="--resolver lts-5"   GDAL="1.11.4" STACK_YAML="stack.yaml"
 - ARGS="--resolver lts-5"   GDAL="2.0.2"  STACK_YAML="stack.yaml"
-- ARGS="--resolver lts-5"   GDAL="2.1.0"  STACK_YAML="stack.yaml"
-- ARGS="--resolver nightly" GDAL="2.1.0"  STACK_YAML="stack.yaml"
+- ARGS="--resolver nightly" GDAL="trunk"  STACK_YAML="stack.yaml"
 
 matrix:
   allow_failures:
-  - env: ARGS="--resolver nightly" GDAL="2.0.2"  STACK_YAML="stack.yaml"
+  - env: ARGS="--resolver nightly" GDAL="trunk"  STACK_YAML="stack.yaml"
 
 before_install:
 # Download, install and setup stack
@@ -65,14 +64,13 @@ before_install:
   echo "Installing GDAL"
   set -e
 
-  if [ ${GDAL} = "2.1.0" ]; then
-    SUFFIX="RC4"
-  else
-    SUFFIX=""
-  fi
-  export GDAL_URL=http://download.osgeo.org/gdal/${GDAL}/gdal-${GDAL}${SUFFIX}.tar.gz
   export PATH=$HOME/.local/bin:$PATH
-  export GDAL_PREFIX=$HOME/.local/gdal-$GDAL
+  if [ ${GDAL} = "trunk" ]; then
+    export GDAL_PREFIX=$HOME/gdal-$GDAL # avoid cache
+  else
+    export GDAL_URL=http://download.osgeo.org/gdal/${GDAL}/gdal-${GDAL}.tar.gz
+    export GDAL_PREFIX=$HOME/.local/gdal-$GDAL
+  fi
   export GDAL_BIN=$GDAL_PREFIX/bin
   export GDAL_LIB=$GDAL_PREFIX/lib
   export GDAL_SRC=$HOME/gdal-$GDAL-src
@@ -80,7 +78,11 @@ before_install:
   if [ ! -f $GDAL_BIN/gdal-config ]; then
     mkdir -p $GDAL_PREFIX
     mkdir -p $GDAL_SRC
-    travis_retry curl -L $GDAL_URL | tar xz --strip-components=1 -C $GDAL_SRC
+    if [ ${GDAL} = "trunk" ]; then
+      git clone --depth 1 https://github.com/OSGeo/gdal.git ${GDAL_SRC}  
+    else
+      travis_retry curl -L $GDAL_URL | tar xz --strip-components=1 -C $GDAL_SRC
+    fi
     pushd $GDAL_SRC
     ./configure --prefix=$GDAL_PREFIX \
                 --enable-debug \
@@ -97,10 +99,6 @@ before_install:
   fi
 
   export PATH=$GDAL_BIN:$PATH
-  # It seems stack doesn't use the extraLibs and extraLibDirs that we set in
-  # Setup.hs so the test suite can't link to the library unless we set
-  # LD_LIBRARY_PATH
-  export LD_LIBRARY_PATH=$GDAL_LIB:$LD_LIBRARY_PATH
 
 - gdal-config --version
 
