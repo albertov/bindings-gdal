@@ -19,9 +19,10 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Catch (MonadMask, bracket)
 
-import Data.ByteString.Char8 (ByteString, packCString, useAsCString, empty)
+import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 
 import Foreign.C.Types
+import Foreign.C.String (CString)
 import Foreign.ForeignPtr (FinalizerPtr)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
@@ -69,24 +70,34 @@ cplNewArray l =
 foreign import ccall unsafe "cpl_conv.h &VSIFree"
   cplFinalizerFree :: FinalizerPtr a
 
-{#fun unsafe CPLGetConfigOption as getConfigOption
-   { useAsCString* `ByteString'
-   , useAsCString* `ByteString'
-   } -> `ByteString' packCString* #}
+getConfigOption :: ByteString -> IO (Maybe ByteString)
+getConfigOption key = useAsCString key $ \keyPtr -> do
+  valPtr <- {#call unsafe CPLGetConfigOption as ^#} keyPtr nullPtr
+  if valPtr == nullPtr then return Nothing else liftM Just (packCString valPtr)
 
-{#fun unsafe CPLSetConfigOption as setConfigOption
-   { useAsCString* `ByteString', useAsCString* `ByteString' } -> `()' #}
+setConfigOptionWith
+  :: (CString -> CString -> IO ()) -> ByteString -> Maybe ByteString -> IO ()
+setConfigOptionWith fun key mVal =
+  useAsCString key $ \keyPtr ->
+  case mVal of
+    Just val -> useAsCString val (fun keyPtr)
+    Nothing  -> fun keyPtr nullPtr
 
-{#fun unsafe CPLSetThreadLocalConfigOption as setThreadLocalConfigOption
-   { useAsCString* `ByteString', useAsCString* `ByteString' } -> `()' #}
+setConfigOption :: ByteString -> Maybe ByteString -> IO ()
+setConfigOption = setConfigOptionWith {#call unsafe CPLSetConfigOption as ^#}
+
+setThreadLocalConfigOption :: ByteString -> Maybe ByteString -> IO ()
+setThreadLocalConfigOption =
+  setConfigOptionWith {#call unsafe CPLSetThreadLocalConfigOption as ^#}
+
 
 withConfigOption
   :: (MonadMask m, MonadBaseControl IO m, MonadIO m)
-  => ByteString -> ByteString -> m a -> m a
+  => ByteString -> Maybe ByteString -> m a -> m a
 withConfigOption key val = runBounded . bracket enter exit . const
   where
     enter = liftIO $ do
-      curVal <- getConfigOption key empty
+      curVal <- getConfigOption key
       setThreadLocalConfigOption key val
       return curVal
     exit = liftIO . setThreadLocalConfigOption key

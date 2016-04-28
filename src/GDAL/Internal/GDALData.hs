@@ -51,4 +51,4 @@ ensureExists = do
       exists <- doesDirectoryExist dataDir
       when (not exists) (unpackAt dataDir)
       setEnv "GDAL_DATA" dataDir
-      setConfigOption (BS.pack "GDAL_DATA") (BS.pack dataDir)
+      setConfigOption (BS.pack "GDAL_DATA") (Just (BS.pack dataDir))

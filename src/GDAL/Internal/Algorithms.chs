@@ -105,6 +105,7 @@ import GDAL.Internal.Util (fromEnumC)
 import GDAL.Internal.Types
 import GDAL.Internal.Types.Value
 import GDAL.Internal.DataType
+import GDAL.Internal.CPLConv (withConfigOption)
 {#import GDAL.Internal.CPLString#}
 {#import GDAL.Internal.OSR #}
 {#import GDAL.Internal.CPLProgress#}
@@ -544,6 +545,8 @@ createGridIO
   -> Size
   -> IO (U.Vector (Value (HsType d)))
 createGridIO dt options noDataVal progressFun points envelope size =
+  --FIXME: Need to set this to 1 or else it will hang with GDAL 2.1
+  withConfigOption "GDAL_NUM_THREADS" (Just "1") $
   withProgressFun "createGridIO" progressFun $ \pFun ->
   with options $ \opts -> do
     setNodata opts (toCDouble noDataVal)
