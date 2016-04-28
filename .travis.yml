@@ -80,10 +80,11 @@ before_install:
     mkdir -p $GDAL_SRC
     if [ ${GDAL} = "trunk" ]; then
       git clone --depth 1 https://github.com/OSGeo/gdal.git ${GDAL_SRC}  
+      pushd $GDAL_SRC/gdal
     else
       travis_retry curl -L $GDAL_URL | tar xz --strip-components=1 -C $GDAL_SRC
+      pushd $GDAL_SRC
     fi
-    pushd $GDAL_SRC
     ./configure --prefix=$GDAL_PREFIX \
                 --enable-debug \
                 --without-libtool \
@@ -99,6 +100,10 @@ before_install:
   fi
 
   export PATH=$GDAL_BIN:$PATH
+  # It seems stack doesn't use the extraLibs and extraLibDirs that we set in
+  # Setup.hs so the test suite can't link to the library unless we set
+  # LD_LIBRARY_PATH
+  export LD_LIBRARY_PATH=$GDAL_LIB:$LD_LIBRARY_PATH
 
 - gdal-config --version
 
