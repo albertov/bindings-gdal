@@ -48,6 +48,7 @@ module GDAL.Internal.OSR (
 
 {# context lib = "gdal" prefix = "OSR" #}
 
+import Control.DeepSeq (NFData(..))
 import Control.Monad.Catch (mask_, try)
 import Control.Monad (liftM, (>=>), when, void)
 
@@ -73,6 +74,9 @@ import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLString (peekCPLString)
 
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
+
+instance NFData SpatialReference where
+  rnf SpatialReference{} = ()
 
 instance Show SpatialReference where
    show = show . srsToWkt

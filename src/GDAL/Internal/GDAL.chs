@@ -135,6 +135,7 @@ module GDAL.Internal.GDAL (
 import Control.Arrow (second)
 import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.Exception (Exception(..))
+import Control.DeepSeq (NFData(..))
 import Control.Monad (liftM, liftM2, when, (>=>), void, forever)
 import Control.Monad.Trans (lift)
 import Control.Monad.Catch (bracket)
@@ -499,6 +500,9 @@ data Geotransform
     , gtYRot   :: {-# UNPACK #-} !Double
     , gtYDelta :: {-# UNPACK #-} !Double
   } deriving (Eq, Show)
+
+instance NFData Geotransform where
+  rnf Geotransform{} = ()
 
 northUpGeotransform :: Size -> Envelope Double -> Geotransform
 northUpGeotransform size envelope =
