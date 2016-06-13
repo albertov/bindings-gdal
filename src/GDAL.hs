@@ -183,5 +183,10 @@ withGDAL :: IO a -> IO a
 withGDAL = bracket_ initializeGDAL cleanupGDAL
 
 initializeGDAL, cleanupGDAL :: IO ()
-initializeGDAL = GDAL.allRegister >> OGR.registerAll >> OSR.initialize
+initializeGDAL = do
+#if HAVE_EMBEDDED_DATA
+  ensureDataExists
+#endif
+  GDAL.allRegister >> OGR.registerAll >> OSR.initialize
+
 cleanupGDAL    = OGR.cleanupAll >> GDAL.destroyDriverManager >> OSR.cleanup
