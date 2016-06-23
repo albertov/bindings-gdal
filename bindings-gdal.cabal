@@ -178,6 +178,8 @@ executable rasterstats-hs
   if flag(static)
     ghc-options: -optl-static -optl-static-libstdc++ -optl-static-libgcc
   hs-source-dirs:      exe
+  if flag(static)
+    ghc-options:       -static -optl-static
   main-is:             RasterStats.hs
   default-language:    Haskell2010
   if !flag(examples)

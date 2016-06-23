@@ -2,6 +2,7 @@ import Control.Monad
 import Data.Maybe
 import System.Process
 import System.IO
+import System.Environment (lookupEnv)
 import System.Exit
 import System.FilePath.Posix
 import Data.List
@@ -19,12 +20,10 @@ gdalConf (pkg0, pbi) flags = do
    _          -> putStrLn "Using gdal-config" >> configureWithGdalConfig lbi
 
 configureWithGdalConfig lbi = do
- gdalInclude <- liftM (getFlagValues 'I') $
-   getOutput "gdal-config" ["--cflags"]
- gdalLibDirs <- liftM (getFlagValues 'L') $
-   getOutput "gdal-config" ["--libs", "--dep-libs"]
+ gdalInclude <- liftM (getFlagValues 'I') $ gdalConfig ["--cflags"]
+ gdalLibDirs <- liftM (getFlagValues 'L') $ gdalConfig ["--libs", "--dep-libs"]
  (gdalLibs, staticDirs) <- liftM (unzip . parseLibraries . words)
-                            (getOutput "gdal-config" ["--libs", "--dep-libs"])
+                            (gdalConfig ["--libs", "--dep-libs"])
  let updBinfo bi = bi { extraLibDirs = extraLibDirs bi
                                     ++ gdalLibDirs
                                     ++ catMaybes staticDirs
@@ -46,6 +45,11 @@ configureWithGdalConfig lbi = do
  return (lbi { localPkgDescr = updLpd (localPkgDescr lbi) })
 
 getOutput s a = readProcess s a ""
+
+gdalConfig args = do
+  mCmd <- lookupEnv "GDAL_CONFIG"
+  cmd <- maybe (getOutput "bash" ["-c", "which gdal-config"]) return mCmd
+  getOutput "bash" (cmd:args)
 
 parseLibraries :: [String] -> [(String, Maybe FilePath)]
 parseLibraries = concatMap go
