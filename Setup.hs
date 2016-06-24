@@ -48,7 +48,7 @@ getOutput s a = readProcess s a ""
 
 gdalConfig args = do
   mCmd <- lookupEnv "GDAL_CONFIG"
-  cmd <- maybe (getOutput "bash" ["-c", "which gdal-config"]) return mCmd
+  cmd <- maybe (liftM init (getOutput "bash" ["-c", "which gdal-config"])) return mCmd
   getOutput "bash" (cmd:args)
 
 parseLibraries :: [String] -> [(String, Maybe FilePath)]
