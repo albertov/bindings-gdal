@@ -1,10 +1,8 @@
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE BangPatterns #-}
 module GDAL.Internal.Util (
     fromEnumC
   , toEnumC
-  , createEnum
   , runBounded
 ) where
 
@@ -20,12 +18,6 @@ fromEnumC = fromIntegral . fromEnum
 toEnumC :: Enum a => CInt -> a
 toEnumC = toEnum . fromIntegral
 {-# INLINE toEnumC #-}
-
-createEnum :: String -> IO [String] -> Q [Dec]
-createEnum name getNames = do
-  names <- runIO getNames
-  let ctors = map (\n -> NormalC (mkName n) []) names
-  return $ [DataD [] (mkName name) [] ctors [''Show, ''Enum, ''Eq, ''Read]]
 
 runBounded :: MonadBaseControl IO m => m a -> m a
 runBounded
