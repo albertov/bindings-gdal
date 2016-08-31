@@ -46,9 +46,15 @@ configureWithGdalConfig lbi = do
 
 getOutput s a = readProcess s a ""
 
+rstrip :: String -> String
+rstrip = reverse . lstrip . reverse
+  where
+    lstrip ('\n':others) = lstrip others
+    lstrip r = r
+
 gdalConfig args = do
   mCmd <- lookupEnv "GDAL_CONFIG"
-  cmd <- maybe (getOutput "bash" ["-c", "which gdal-config"]) return mCmd
+  cmd <- rstrip <$> maybe (getOutput "bash" ["-c", "which gdal-config"]) return mCmd
   getOutput "bash" (cmd:args)
 
 parseLibraries :: [String] -> [(String, Maybe FilePath)]
