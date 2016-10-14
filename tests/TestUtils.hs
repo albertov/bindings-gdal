@@ -29,7 +29,7 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Typeable (typeOf)
 
-import System.IO (IOMode(ReadMode), withBinaryFile, hFileSize)
+import System.IO (IOMode(ReadMode), withBinaryFile, hFileSize, hFlush, stdout)
 import System.IO.Error (isDoesNotExistError)
 import System.IO.Temp (withSystemTempDirectory)
 
@@ -52,7 +52,7 @@ describe :: String -> SpecWith (Arg (IO ())) -> SpecWith (Arg (IO ()))
 describe name = Hspec.describe name . Hspec.parallel
 
 it :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
-it n a = Hspec.it n (runGDAL' a)
+it n a = Hspec.it n (hFlush stdout >> runGDAL' a)
 
 -- For things that we want to make sure that can run outside of the GDAL monad
 itIO :: String -> IO () -> SpecWith (Arg (IO ()))

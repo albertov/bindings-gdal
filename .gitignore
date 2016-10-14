@@ -10,3 +10,5 @@ cabal-dev
 *.bak
 codex.tags
 hscope.out
+.stack
+core

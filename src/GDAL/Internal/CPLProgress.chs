@@ -116,7 +116,7 @@ withProgressFun ctxMsg (Just f) act = do
     _  -> throwBindingException (ErrorCall "withProgressFun: shouldn't happen")
 
 
-foreign import ccall "wrapper"
+foreign import ccall safe "wrapper"
   c_wrapProgressFun :: CProgressFun -> IO ProgressFunPtr
 
 foreign import ccall "cpl_progress.h &GDALDummyProgress"
