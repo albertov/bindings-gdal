@@ -1,3 +1,4 @@
+import Control.Applicative
 import Control.Monad
 import Data.Maybe
 import System.Process
@@ -20,18 +21,29 @@ gdalConf (pkg0, pbi) flags = do
    _          -> putStrLn "Using gdal-config" >> configureWithGdalConfig lbi
 
 configureWithGdalConfig lbi = do
- gdalInclude <- liftM (getFlagValues 'I') $ gdalConfig ["--cflags"]
- gdalLibDirs <- liftM (getFlagValues 'L') $ gdalConfig ["--libs", "--dep-libs"]
- (gdalLibs, staticDirs) <- liftM (unzip . parseLibraries . words)
-                            (gdalConfig ["--libs", "--dep-libs"])
- let updBinfo bi = bi { extraLibDirs = extraLibDirs bi
+ gdalInclude <- getFlagValues 'I' <$> gdalConfig ["--cflags"]
+ libArgs <- intercalate " "  <$> sequence [gdalConfig ["--libs"], gdalConfig ["--dep-libs"]]
+ let gdalLibDirs = getFlagValues 'L' libArgs
+     (gdalLibs', staticDirs) = unzip . parseLibraries . words $ libArgs
+     hasPg    = any ("pq" `isInfixOf`) gdalLibs'
+     hasCurl  = any ("curl" `isInfixOf`) gdalLibs'
+     hasGeos  = any ("geos" `isInfixOf`) gdalLibs'
+     gdalLibs = (if hasGeos then (++["geos"]) else id)
+              -- assumes curl or pg are compile with ssl support
+              . (if hasCurl || hasPg then (++["ssl","crypto"]) else id) 
+              $ gdalLibs'
+     updBinfo bi = bi { extraLibDirs = extraLibDirs bi
                                     ++ gdalLibDirs
                                     ++ catMaybes staticDirs
                       , extraLibs    = extraLibs bi
                                     ++ gdalLibs
-                                    ++ if hasStaticLibs then [stdCpp] else []
                       , includeDirs  = includeDirs  bi ++ gdalInclude
                       }
+     -- | appendGeos: makes sure 'geos_c' is included before 'geos' so symbols
+     --   can be resolved when linking statically
+     appendGeos [] = []
+     appendGeos ("geos_c":xs) = "geos_c" : "geos" : xs
+     appendGeos (x:xs)        = x : appendGeos xs
      hasStaticLibs = not (null (catMaybes staticDirs))
      updLib lib = lib { libBuildInfo  = updBinfo (libBuildInfo lib)}
      updTs  ts  = ts  { testBuildInfo = updBinfo (testBuildInfo ts)}
@@ -49,7 +61,10 @@ getOutput s a = readProcess s a ""
 gdalConfig args = do
   mCmd <- lookupEnv "GDAL_CONFIG"
   cmd <- maybe (liftM init (getOutput "bash" ["-c", "which gdal-config"])) return mCmd
-  getOutput "bash" (cmd:args)
+  rstrip '\n' <$> getOutput "bash" (cmd:args)
+
+rstrip :: Char -> String -> String
+rstrip c = reverse . dropWhile (==c) . reverse
 
 parseLibraries :: [String] -> [(String, Maybe FilePath)]
 parseLibraries = concatMap go
@@ -71,7 +86,6 @@ staticLibNameAndPath p
 staticLibNameAndPath _ = Nothing
 
 -- FIXME: make portable
-staticLibPrefix, staticLibSuffix, stdCpp :: String
+staticLibPrefix, staticLibSuffix :: String
 staticLibPrefix = "lib"
 staticLibSuffix = ".a"
-stdCpp = "stdc++"

@@ -102,7 +102,6 @@ library
 
   ghc-options:       -funbox-strict-fields -Wall
   install-includes: bindings.h
-  default-extensions: CPP
   default-language: Haskell2010
   include-dirs:    include cbits
   cc-options:      -Wall -O2 -g
@@ -149,8 +148,7 @@ test-suite spec
   default-language: Haskell2010
   ghc-options:     -Wall -rtsopts -threaded -with-rtsopts=-N
   if flag(static)
-    ghc-options: -optl-static -optl-static-libstdc++ -optl-static-libgcc
-  default-extensions: CPP
+    ghc-options: -optl-static -optl-static-libstdc++ -optl-static-libgcc -pgml=g++
   include-dirs:    src/GDAL/Internal/
 
 executable ogrinfo-hs
