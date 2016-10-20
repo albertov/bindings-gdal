@@ -14,6 +14,9 @@ Data-Files:
   tests/fixtures/fondo.shp
   tests/fixtures/fondo.shx
 
+custom-setup
+  setup-depends: base, Cabal, filepath, process
+
 flag examples
   description: Build example apps
   default: False
