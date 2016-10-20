@@ -71,24 +71,24 @@ library
                    , GDAL.Internal.GDAL
                    , GDAL.Internal.Algorithms
                    , GDAL.Internal.Warper
-  build-depends:     base >=4.5 && < 5
-                   , vector
-                   , microlens
-                   , conduit
-                   , bytestring
-                   , text
-                   , time
-                   , template-haskell
-                   , resourcet
-                   , exceptions
-                   , transformers
-                   , transformers-base
-                   , mtl
-                   , deepseq
-                   , data-default
-                   , unordered-containers
-                   , ghc-prim
-                   , monad-control
+  build-depends:     base                              >= 4.5    && < 5
+                     ghc-prim                          >= 0.5.0  && < 0.6
+                     bytestring                        >= 0.10.8 && < 0.11
+                     deepseq                           >= 1.4.2  && < 1.5
+                     conduit                           >= 1.2.8  && < 1.3
+                     exceptions                        >= 0.8.3  && < 0.9
+                     mtl                               >= 2.2.1  && < 2.3
+                     transformers                      >= 0.5.2  && < 0.6
+                     template-haskell                  >= 2.11.0 && < 2.12
+                     monad-control                     >= 1.0.1  && < 1.1
+                     transformers-base                 >= 0.4.4  && < 0.5
+                     resourcet                         >= 1.1.8  && < 1.2
+                     data-default                      >= 0.7.1  && < 0.8
+                     microlens                         >= 0.4.7  && < 0.5
+                     text                              >= 1.2.2  && < 1.3
+                     time                              >= 1.6.0  && < 1.7
+                     unordered-containers              >= 0.2.7  && < 0.3
+                     vector                            >= 0.11.0 && < 0.12
   if flag(embed-data)
     build-depends: file-embed
                  , directory
