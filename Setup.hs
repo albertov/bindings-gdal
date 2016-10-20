@@ -25,9 +25,9 @@ configureWithGdalConfig lbi = do
  libArgs <- intercalate " "  <$> sequence [gdalConfig ["--libs"], gdalConfig ["--dep-libs"]]
  let gdalLibDirs = getFlagValues 'L' libArgs
      (gdalLibs', staticDirs) = unzip . parseLibraries . words $ libArgs
-     hasPg    = any ("pq" `isInfixOf`) gdalLibs'
-     hasCurl  = any ("curl" `isInfixOf`) gdalLibs'
-     hasGeos  = any ("geos" `isInfixOf`) gdalLibs'
+     hasPg    = any (=="pq"    ) gdalLibs'
+     hasCurl  = any (=="curl"  ) gdalLibs'
+     hasGeos  = any (=="geos_c") gdalLibs'
      gdalLibs = (if hasGeos then (++["geos"]) else id)
               -- assumes curl or pg are compile with ssl support
               . (if hasCurl || hasPg then (++["ssl","crypto"]) else id) 

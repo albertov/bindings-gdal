@@ -34,11 +34,7 @@ addons:
 
 env:
 - ARGS="--resolver lts-2"   GDAL="2.1.1"  STACK_YAML="stack-lts-2.yaml"
-- ARGS="--resolver lts-3"   GDAL="2.1.1"  STACK_YAML="stack.yaml"
-- ARGS="--resolver lts-4"   GDAL="2.1.1"  STACK_YAML="stack.yaml"
-- ARGS="--resolver lts-5"   GDAL="2.1.1"  STACK_YAML="stack.yaml"
-- ARGS="--resolver lts-6"   GDAL="2.1.1"  STACK_YAML="stack.yaml"
-- ARGS="--resolver lts-6"   GDAL="1.11.5"  STACK_YAML="stack.yaml"
+- ARGS="--resolver lts-2"   GDAL="1.11.5"  STACK_YAML="stack-lts-2.yaml"
 - ARGS="--resolver lts-7"   GDAL="2.1.1"  STACK_YAML="stack.yaml"
 - ARGS="--resolver nightly" GDAL="trunk"  STACK_YAML="stack.yaml"
 
