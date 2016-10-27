@@ -18,25 +18,29 @@ gdalConf (pkg0, pbi) flags = do
  lbi <- confHook simpleUserHooks (pkg0, pbi) flags
  case FlagName "autoconfig" `lookup` configConfigurationsFlags flags of
    Just False -> putStrLn "NOT using gdal-config" >> return lbi
-   _          -> putStrLn "Using gdal-config" >> configureWithGdalConfig lbi
+   _          -> putStrLn "Using gdal-config" >> configureWithGdalConfig lbi flags
 
-configureWithGdalConfig lbi = do
+configureWithGdalConfig lbi flags = do
  gdalInclude <- getFlagValues 'I' <$> gdalConfig ["--cflags"]
- libArgs <- intercalate " "  <$> sequence [gdalConfig ["--libs"], gdalConfig ["--dep-libs"]]
+ let isStatic = maybe False id $
+                FlagName "static" `lookup` configConfigurationsFlags flags
+     getLibArgs = gdalConfig ["--libs"]
+                : if isStatic then [gdalConfig ["--dep-libs"]] else []
+ libArgs <- intercalate " "  <$> sequence  getLibArgs
  let gdalLibDirs = getFlagValues 'L' libArgs
-     (gdalLibs', staticDirs) = unzip . parseLibraries . words $ libArgs
-     hasPg    = any (=="pq"    ) gdalLibs'
-     hasCurl  = any (=="curl"  ) gdalLibs'
-     hasGeos  = any (=="geos_c") gdalLibs'
-     gdalLibs = (if hasGeos then (++["geos"]) else id)
+     (gdalLibs, staticDirs) = unzip . parseLibraries . words $ libArgs
+     hasPg    = any (=="pq"    ) gdalLibs
+     hasCurl  = any (=="curl"  ) gdalLibs
+     hasGeos  = any (=="geos_c") gdalLibs
+     gdalLibsStatic = (if hasGeos then (++["geos"]) else id)
               -- assumes curl or pg are compile with ssl support
               . (if hasCurl || hasPg then (++["ssl","crypto"]) else id) 
-              $ gdalLibs'
+              $ gdalLibs
      updBinfo bi = bi { extraLibDirs = extraLibDirs bi
                                     ++ gdalLibDirs
                                     ++ catMaybes staticDirs
                       , extraLibs    = extraLibs bi
-                                    ++ gdalLibs
+                                    ++ (if isStatic then gdalLibsStatic else gdalLibs)
                       , includeDirs  = includeDirs  bi ++ gdalInclude
                       }
      -- | appendGeos: makes sure 'geos_c' is included before 'geos' so symbols
