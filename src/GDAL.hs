@@ -146,9 +146,7 @@ module GDAL (
   , getConfigOption
   , module Data.Conduit
   , def
-#if HAVE_EMBEDDED_DATA
   , ensureDataExists
-#endif
 ) where
 
 import Control.Exception (bracket_)
@@ -175,6 +173,12 @@ import qualified GDAL.Internal.OSR as OSR
 import qualified GDAL.Internal.GDALData as GD
 ensureDataExists :: IO ()
 ensureDataExists = GD.ensureExists
+#else
+import System.IO
+ensureDataExists :: IO ()
+ensureDataExists =
+  hPutStrLn stderr
+  "WARNING: bindingsr-gdal have not been compiled with embeded GDAL_DATA" 
 #endif
 
 -- | Performs process-wide initialization and cleanup
