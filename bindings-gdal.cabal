@@ -93,6 +93,7 @@ library
                  , directory
                  , filepath
                  , process
+                 , template-haskell
     exposed-modules: GDAL.Internal.GDALData
     cpp-options: -DHAVE_EMBEDDED_DATA
 
