@@ -358,6 +358,7 @@ spec = setupAndTeardown $ do
 
     describe "metadataDomains" $ do
 
+      {- These tests are too version dependant and redundant
       it "mem driver dataset" $
         createMem 200 1 GDT_Int16 [] >>= metadataDomains >>= (`shouldBe` [])
 
@@ -367,6 +368,7 @@ spec = setupAndTeardown $ do
         if version > (1,11)
            then doms `shouldBe` ["IMAGE_STRUCTURE"]
            else doms `shouldBe` []
+      -}
 
       withDir "GTIFF driver band" $ \tmpDir -> do
         ds <- create "GTIFF" (joinPath [tmpDir, "foo"]) 200 1 GDT_Int16 []
