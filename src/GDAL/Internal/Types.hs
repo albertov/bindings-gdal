@@ -33,6 +33,7 @@ module GDAL.Internal.Types (
   , sizeLen
   , createGDALInternalState
   , closeGDALInternalState
+  , getInternalState
   , runWithInternalState
 ) where
 
@@ -200,12 +201,12 @@ deriving instance MonadBase IO (GDAL s)
 deriving instance MonadFix (GDAL s)
 
 instance MonadResource (GDAL s) where
-  liftResourceT act = liftIO . runInternalState act =<< getInternalState
+  liftResourceT act = liftIO . runInternalState act . unState =<< getInternalState
 
 instance MonadBaseControl IO (GDAL s) where
   type StM (GDAL s) a = a
   liftBaseWith runInBase = do
-    state <- getInternalState
+    GDALInternalState state <- getInternalState
     liftIO $ runInBase (flip runReaderT state . unGDAL)
   restoreM = return
 
@@ -237,8 +238,8 @@ allocateGDAL
   -> (a -> GDAL s ())
   -> GDAL s (ReleaseKey, a)
 allocateGDAL (GDAL alloc) free = do
-  state <- getInternalState
+  GDALInternalState state <- getInternalState
   allocate (runReaderT alloc state) (flip runReaderT state . unGDAL . free)
 
-getInternalState :: GDAL s InternalState
-getInternalState = GDAL ask
+getInternalState :: GDAL s (GDALInternalState s)
+getInternalState = GDALInternalState <$> GDAL ask
