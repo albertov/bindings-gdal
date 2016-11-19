@@ -23,6 +23,7 @@ module GDAL.Internal.CPLError (
 {# context lib = "gdal" prefix = "CPL" #}
 
 import Control.Monad (void, liftM)
+import Control.DeepSeq (NFData(..))
 import Control.Monad.Catch (MonadThrow(throwM))
 import Control.Exception (
     Exception (..)
@@ -49,6 +50,9 @@ import GDAL.Internal.CPLString (peekEncodedCString)
 #include "errorhandler.h"
 
 {# enum CPLErr as ErrorType {upcaseFirstLetter} deriving (Eq, Show) #}
+
+instance NFData ErrorType where
+  rnf e = seq e ()
 
 
 data GDALException
@@ -98,6 +102,8 @@ isBindingException e
   , CPLE_ObjectNull      as ObjectNull
   } deriving (Eq, Bounded, Show) #}
 
+instance NFData ErrorNum where
+  rnf e = seq e ()
 
 checkGDALCall
   :: Exception e
