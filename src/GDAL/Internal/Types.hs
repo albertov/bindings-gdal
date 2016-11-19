@@ -14,6 +14,7 @@
 
 module GDAL.Internal.Types (
     GDAL
+  , GDALInternalState
   , Pair (..)
   , pFst
   , pSnd
@@ -30,6 +31,9 @@ module GDAL.Internal.Types (
   , unprotect
   , release
   , sizeLen
+  , createGDALInternalState
+  , closeGDALInternalState
+  , runWithInternalState
 ) where
 
 import Control.Applicative (Applicative(..), (<$>), liftA2)
@@ -83,7 +87,7 @@ pSnd (_ :+: a) = a
 {-# INLINE pFst #-}
 {-# INLINE pSnd #-}
 
-instance NFData a => NFData (Pair a) where
+instance NFData (Pair a) where
   rnf (_ :+: _) = ()
 
 type Size    = Pair Int
@@ -206,12 +210,27 @@ instance MonadBaseControl IO (GDAL s) where
   restoreM = return
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
-runGDAL (GDAL a) = runBounded $
-  bracket createInternalState closeInternalState $
-    try . evaluate . force <=< runReaderT a
+runGDAL a = runBounded $
+  bracket createGDALInternalState closeGDALInternalState
+  (try . runWithInternalState a)
+
+createGDALInternalState :: IO (GDALInternalState s)
+createGDALInternalState = GDALInternalState <$> createInternalState
+
+closeGDALInternalState :: GDALInternalState s -> IO ()
+closeGDALInternalState = closeInternalState . unState
 
 runGDAL_ :: NFData a => (forall s. GDAL s a) -> IO a
 runGDAL_ a = either throw return =<< runGDAL a
+
+newtype GDALInternalState s =
+  GDALInternalState { unState :: InternalState }
+
+runWithInternalState
+  :: NFData a
+  => GDAL s a -> GDALInternalState s -> IO a
+runWithInternalState (GDAL a) =
+  (evaluate . force <=< runReaderT a) . unState
 
 allocateGDAL
   :: GDAL s a
