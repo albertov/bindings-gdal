@@ -17,12 +17,16 @@
 {-# LANGUAGE LambdaCase #-}
 
 #include "bindings.h"
+#include "driver.h"
 
 module GDAL.Internal.GDAL (
     GDALRasterException (..)
   , Geotransform (..)
   , OverviewResampling (..)
+  , DriverName (..)
   , Driver (..)
+  , DriverInfo (..)
+  , DriverH (..)
   , Dataset
   , DatasetH (..)
   , RWDataset
@@ -43,6 +47,13 @@ module GDAL.Internal.GDAL (
   , (|.|)
   , geoEnvelopeTransformer
 
+  , driverByName
+  , createDriver
+  , withDriver
+  , registerDriver
+  , deregisterDriver
+  , deleteDriver
+
   , nullDatasetH
   , allRegister
   , destroyDriverManager
@@ -53,6 +64,9 @@ module GDAL.Internal.GDAL (
   , copyFiles
   , flushCache
   , closeDataset
+  , openDatasetH
+  , createDatasetH
+  , nullDatasetH
   , openReadOnly
   , openReadWrite
   , unsafeToReadOnly
@@ -63,6 +77,7 @@ module GDAL.Internal.GDAL (
   , bandAs
 
   , datasetDriver
+  , datasetDriverName
   , datasetSize
   , datasetFileList
   , datasetProjection
@@ -134,11 +149,11 @@ module GDAL.Internal.GDAL (
 
 import Control.Arrow (second)
 import Control.Applicative (Applicative(..), (<$>), liftA2)
-import Control.Exception (Exception(..))
+import Control.Exception (Exception(..), SomeException, try)
 import Control.DeepSeq (NFData(..))
 import Control.Monad (liftM, liftM2, when, (>=>), void, forever)
 import Control.Monad.Trans (lift)
-import Control.Monad.Catch (bracket)
+import Control.Monad.Catch (MonadMask, bracket)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Bits ((.&.))
@@ -174,6 +189,7 @@ import Foreign.Marshal.Utils (toBool, fromBool, with)
 
 import GHC.Types (SPEC(..))
 
+import System.IO (stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
@@ -191,11 +207,11 @@ import GDAL.Internal.OGRGeometry (Envelope(..), envelopeSize)
 
 #include "gdal.h"
 
-newtype Driver = Driver ByteString
+newtype DriverName = DriverName ByteString
   deriving (Eq, IsString)
 
-instance Show Driver where
-  show (Driver s) = show s
+instance Show DriverName where
+  show (DriverName s) = show s
 
 version :: (Int, Int)
 version = ({#const GDAL_VERSION_MAJOR#} , {#const GDAL_VERSION_MINOR#})
@@ -235,6 +251,7 @@ nullDatasetH :: DatasetH
 nullDatasetH = DatasetH nullPtr
 
 deriving instance Eq DatasetH
+deriving instance NFData DatasetH
 
 newtype Dataset s a (t::AccessMode) =
   Dataset (ReleaseKey, DatasetH)
@@ -264,7 +281,6 @@ newtype Band s a (t::AccessMode) = Band (RasterBandH, DataTypeK)
 
 unBand :: Band s a t -> RasterBandH
 unBand (Band (p,_)) = p
-{-# INLINE unBand #-}
 
 bandDataType :: Band s a t -> DataTypeK
 bandDataType (Band (_,t)) = t
@@ -283,22 +299,32 @@ type ROBand s a = Band s a ReadOnly
 type RWBand s a = Band s a ReadWrite
 
 
-{#pointer DriverH #}
+{#pointer DriverH newtype #}
+
+newtype Driver (t::AccessMode) = Driver { unDriver :: DriverH }
+
+instance MajorObject Driver t where
+  majorObject d =
+    let DriverH p = unDriver d
+    in MajorObjectH (castPtr p)
 
 {#fun AllRegister as ^ {} -> `()'  #}
 
 {#fun DestroyDriverManager as ^ {} -> `()'#}
 
-driverByName :: Driver -> IO DriverH
-driverByName (Driver s) = do
+driverByName :: MonadIO m => DriverName -> m (Driver t)
+driverByName (DriverName s) = liftIO $ do
   d <- useAsCString s {#call unsafe GetDriverByName as ^#}
-  if d == nullPtr
+  let DriverH p = d in if p == nullPtr
     then throwBindingException (UnknownDriver s)
-    else return d
+    else return (Driver d)
 
-driverCreationOptionList :: Driver -> ByteString
+driverHByName :: MonadIO m => DriverName -> m DriverH
+driverHByName s = (\(Driver h) -> h) <$> driverByName s
+
+driverCreationOptionList :: DriverName -> ByteString
 driverCreationOptionList driver = unsafePerformIO $ do
-  d <- driverByName driver
+  d <- driverHByName driver
   {#call GetDriverCreationOptionList	as ^#} d >>= packCString
 
 validateCreationOptions :: DriverH -> Ptr CString -> IO ()
@@ -307,39 +333,47 @@ validateCreationOptions d o = do
   when (not valid) (throwBindingException InvalidDriverOptions)
 
 create
-  :: Driver -> String -> Size -> Int -> DataType d -> OptionList
+  :: DriverName -> String -> Size -> Int -> DataType d -> OptionList
   -> GDAL s (Dataset s (HsType d) ReadWrite)
-create drv path (nx :+: ny) bands dtype  options =
-  newDatasetHandle $ withCString path $ \path' -> do
+create drv path size bands dtype optList = do
+  d <- driverByName drv
+  newDatasetHandle $ createDatasetH  d path size bands dtype optList
+
+createDatasetH
+  :: MonadIO m
+  => Driver t -> String -> Size -> Int -> DataType d -> OptionList
+  -> m DatasetH
+createDatasetH drv path (nx :+: ny) bands dtype  options = liftIO $
+  withCString path $ \path' -> do
     let nx'    = fromIntegral nx
         ny'    = fromIntegral ny
         bands' = fromIntegral bands
         dtype' = fromEnumC dtype
-    d <- driverByName drv
+        d      = unDriver drv
     withOptionList options $ \opts -> do
       validateCreationOptions d opts
       {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' opts
 
-delete :: Driver -> String -> GDAL s ()
+delete :: DriverName -> String -> GDAL s ()
 delete driver path =
   liftIO $
   checkCPLError "deleteDataset" $ do
-    d <- driverByName driver
+    d <- driverHByName driver
     withCString path ({#call DeleteDataset as ^#} d)
 
-rename :: Driver -> String -> String -> GDAL s ()
+rename :: DriverName -> String -> String -> GDAL s ()
 rename driver newName oldName =
   liftIO $
   checkCPLError "renameDataset" $ do
-    d <- driverByName driver
+    d <- driverHByName driver
     withCString newName $
       withCString oldName . ({#call RenameDataset as ^#} d)
 
-copyFiles :: Driver -> String -> String -> GDAL s ()
+copyFiles :: DriverName -> String -> String -> GDAL s ()
 copyFiles driver newName oldName =
   liftIO $
   checkCPLError "copyFiles" $ do
-    d <- driverByName driver
+    d <- driverHByName driver
     withCString newName $
       withCString oldName . ({#call CopyDatasetFiles as ^#} d)
 
@@ -350,8 +384,11 @@ openReadWrite :: String -> DataType d -> GDAL s (RWDataset s (HsType d))
 openReadWrite p _ = openWithMode GA_Update p
 
 openWithMode :: GDALAccess -> String -> GDAL s (Dataset s a t)
-openWithMode m path =
-  newDatasetHandle $
+openWithMode m = newDatasetHandle . openDatasetH m
+
+openDatasetH :: MonadIO m => GDALAccess -> String -> m DatasetH
+openDatasetH m path =
+  liftIO $
   withCString path $
   flip {#call GDALOpen as ^#} (fromEnumC m)
 
@@ -359,12 +396,12 @@ unsafeToReadOnly :: RWDataset s a -> GDAL s (RODataset s a)
 unsafeToReadOnly ds = flushCache ds >> return (coerce ds)
 
 createCopy
-  :: Driver -> String -> Dataset s a t -> Bool -> OptionList
+  :: DriverName -> String -> Dataset s a t -> Bool -> OptionList
   -> Maybe ProgressFun -> GDAL s (RWDataset s a)
 createCopy driver path ds strict options progressFun =
   newDatasetHandle $
   withProgressFun "createCopy" progressFun $ \pFunc -> do
-    d <- driverByName driver
+    d <- driverHByName driver
     withOptionList options $ \o -> do
       validateCreationOptions d o
       withCString path $ \p ->
@@ -393,12 +430,15 @@ createMem = create "Mem" ""
 flushCache :: RWDataset s a -> GDAL s ()
 flushCache = liftIO . {#call GDALFlushCache as ^#} . unDataset
 
-datasetDriver :: Dataset s a t -> Driver
+datasetDriver :: Dataset s a t -> Driver t'
 datasetDriver ds =
   unsafePerformIO $
-  liftM Driver $ do
-    driver <-{#call unsafe GetDatasetDriver as ^#} (unDataset ds)
-    {#call unsafe GetDriverShortName as ^#} driver >>= packCString
+  Driver <$> {#call unsafe GetDatasetDriver as ^#} (unDataset ds)
+
+datasetDriverName :: Dataset s a t -> DriverName
+datasetDriverName ds = unsafePerformIO $
+  DriverName <$> (packCString =<< {#call unsafe GetDriverShortName as ^#} d)
+  where Driver d = datasetDriver ds
 
 datasetSize :: Dataset s a t -> Size
 datasetSize ds =
@@ -531,7 +571,6 @@ gcpGeotransform gcps approxOk =
 applyGeotransform :: Geotransform -> Pair Double -> Pair Double
 applyGeotransform Geotransform{..} (x :+: y) =
   (gtXOff + gtXDelta*x + gtXRot * y) :+: (gtYOff + gtYRot  *x + gtYDelta * y)
-{-# INLINE applyGeotransform #-}
 
 infixr 5 |$|
 (|$|) :: Geotransform -> Pair Double -> Pair Double
@@ -552,7 +591,6 @@ invertGeotransform (Geotransform g0 g1 g2 g3 g4 g5)
   where
     idet = 1/det
     det  = g1*g5 - g2*g4
-{-# INLINE invertGeotransform #-}
 
 inv :: Geotransform -> Geotransform
 inv = fromMaybe (error "Could not invert geotransform") . invertGeotransform
@@ -570,7 +608,6 @@ b `composeGeotransforms` a =
   where
     Geotransform a0 a1 a2 a3 a4 a5 = a
     Geotransform b0 b1 b2 b3 b4 b5 = b
-{-# INLINE composeGeotransforms #-}
 
 infixr 9 |.|
 (|.|) :: Geotransform -> Geotransform -> Geotransform
@@ -681,7 +718,6 @@ bandNodataValue b =
     value <- {#call unsafe GetRasterNoDataValue as ^#} (unBand b) p
     hasNodata <- liftM toBool $ peek p
     return (if hasNodata then Just (fromCDouble value) else Nothing)
-{-# NOINLINE bandNodataValue #-}
 
 
 setBandNodataValue :: GDALType a => a -> RWBand s a -> GDAL s ()
@@ -703,7 +739,7 @@ readBand :: forall s t a. GDALType a
   -> GDAL s (U.Vector (Value a))
 readBand band win sz = liftM fromJust $ runConduit $
   yield win =$= unsafeBandConduit sz band =$= CL.head
-{-# INLINE readBand #-}
+{-# INLINEABLE readBand #-}
 
 bandConduit
   :: forall s a t. GDALType a
@@ -712,7 +748,7 @@ bandConduit
   -> Conduit (Envelope Int) (GDAL s) (U.Vector (Value a))
 bandConduit sz band =
   unsafeBandConduitM sz band =$= CL.mapM (liftIO . U.freeze)
-{-# INLINE bandConduit #-}
+{-# INLINEABLE bandConduit #-}
 
 unsafeBandConduit
   :: forall s a t. GDALType a
@@ -721,7 +757,7 @@ unsafeBandConduit
   -> Conduit (Envelope Int) (GDAL s) (U.Vector (Value a))
 unsafeBandConduit sz band =
   unsafeBandConduitM sz band =$= CL.mapM (liftIO . U.unsafeFreeze)
-{-# INLINE unsafeBandConduit #-}
+{-# INLINEABLE unsafeBandConduit #-}
 
 
 unsafeBandConduitM
@@ -782,7 +818,7 @@ unsafeBandConduitM (bx :+: by) band = do
             (fromEnumC (hsDataType (Proxy :: Proxy a')))
             0
             0
-{-# INLINE unsafeBandConduitM #-}
+{-# INLINEABLE unsafeBandConduitM #-}
 
 geoEnvelopeTransformer
   :: Geotransform -> Maybe (Envelope Double -> Envelope Int)
@@ -805,7 +841,6 @@ geoEnvelopeTransformer gt =
       let x1 :+: y1 = fmap round (applyGeotransform iGt e0)
           x0 :+: y0 = fmap round (applyGeotransform iGt e1)
       in Envelope (x0 :+: y0) (x1 :+: y1)
-{-# INLINE geoEnvelopeTransformer #-}
 
 
 writeBand
@@ -817,7 +852,7 @@ writeBand
   -> GDAL s ()
 writeBand band win sz uvec =
   runConduit (yield (win, sz, uvec) =$= bandSink band)
-{-# INLINE writeBand #-}
+{-# INLINEABLE writeBand #-}
 
 
 
@@ -866,7 +901,7 @@ bandSink band = lift (bandMaskType band) >>= \case
                  (fromEnumC (hsDataType (Proxy :: Proxy a')))
                  0
                  0
-{-# INLINE bandSink #-}
+{-# INLINEABLE bandSink #-}
 
 bandSinkGeo
   :: forall s a. GDALType a
@@ -877,7 +912,6 @@ bandSinkGeo band = do
   case mGt >>= geoEnvelopeTransformer of
     Just trans -> CL.map (\(e,s,v) -> (trans e,s,v)) =$= bandSink band
     Nothing    -> lift (throwBindingException CannotInvertGeotransform)
-{-# INLINE bandSinkGeo #-}
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
 noDataOrFail = liftM (fromMaybe err) . bandNodataValue
@@ -939,7 +973,7 @@ foldl'
   :: forall s t a b. GDALType a
   => (b -> Value a -> b) -> b -> Band s a t -> GDAL s b
 foldl' f = ifoldl' (\z _ v -> f z v)
-{-# INLINE foldl' #-}
+{-# INLINEABLE foldl' #-}
 
 ifoldl'
   :: forall s t a b. GDALType a
@@ -950,7 +984,6 @@ ifoldl' f z band =
     !(mx :+: my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(nx :+: ny) = bandBlockCount band
     !(sx :+: sy) = bandBlockSize band
-    {-# INLINE folder #-}
     folder !acc !(!(iB :+: jB), !vec) = go SPEC 0 0 acc
       where
         go !_ !i !j !acc'
@@ -965,13 +998,13 @@ ifoldl' f z band =
         !stopy
           | my /= 0 && jB==ny-1 = my
           | otherwise           = sy
-{-# INLINE ifoldl' #-}
+{-# INLINEABLE ifoldl' #-}
 
 foldlWindow'
   :: forall s t a b. GDALType a
   => (b -> Value a -> b) -> b -> Band s a t -> Envelope Int -> GDAL s b
 foldlWindow' f b = ifoldlWindow' (\z _ v -> f z v) b
-{-# INLINE foldlWindow' #-}
+{-# INLINEABLE foldlWindow' #-}
 
 ifoldlWindow'
   :: forall s t a b. GDALType a
@@ -989,7 +1022,6 @@ ifoldlWindow' f z band (Envelope (x0 :+: y0) (x1 :+: y1)) = runConduit $
     !(mx :+: my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(nx :+: ny) = bandBlockCount band
     !bSize@(sx :+: sy) = bandBlockSize band
-    {-# INLINE folder #-}
     folder !acc !(!(iB :+: jB), !vec) = go SPEC 0 0 acc
       where
         go !_ !i !j !acc'
@@ -1008,26 +1040,26 @@ ifoldlWindow' f z band (Envelope (x0 :+: y0) (x1 :+: y1)) = runConduit $
         !stopy
           | my /= 0 && jB==ny-1 = my
           | otherwise           = sy
-{-# INLINE ifoldlWindow' #-}
+{-# INLINEABLE ifoldlWindow' #-}
 
 unsafeBlockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
 unsafeBlockSource band = allBlocks band =$= decorate (unsafeBlockConduit band)
-{-# INLINE unsafeBlockSource #-}
+{-# INLINEABLE unsafeBlockSource #-}
 
 blockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
 blockSource band = allBlocks band =$= decorate (blockConduit band)
-{-# INLINE blockSource #-}
+{-# INLINEABLE blockSource #-}
 
 writeBandBlock
   :: forall s a. GDALType a
   => RWBand s a -> BlockIx  -> U.Vector (Value a) -> GDAL s ()
 writeBandBlock band blockIx uvec =
   runConduit (yield (blockIx, uvec) =$= blockSink band)
-{-# INLINE writeBandBlock #-}
+{-# INLINEABLE writeBandBlock #-}
 
 fmapBand
   :: forall s a b t. (GDALType a, GDALType b)
@@ -1045,7 +1077,7 @@ fmapBand f src dst
   where
     notImplementedErr = NotImplemented
       "fmapBand: Not implemented for bands of different block size"
-{-# INLINE fmapBand #-}
+{-# INLINEABLE fmapBand #-}
 
 foldBands
   :: forall s a b t. (GDALType a, GDALType b)
@@ -1060,8 +1092,7 @@ foldBands fun zb bs =
       r <- liftM (L.foldl' (G.zipWith fun) acc)
                  (lift (mapM (flip readBandBlock bix) bs))
       yield (bix, r)
-    {-# INLINE foldThem #-}
-{-# INLINE foldBands #-}
+{-# INLINEABLE foldBands #-}
 
 
 
@@ -1148,7 +1179,7 @@ blockSink band = do
         (pSnd bi)
         (castPtr pBuf)
       where bi = fmap fromIntegral blockIx
-{-# INLINE blockSink #-}
+{-# INLINEABLE blockSink #-}
 
 
 readBandBlock
@@ -1156,14 +1187,14 @@ readBandBlock
   => Band s a t -> BlockIx -> GDAL s (U.Vector (Value a))
 readBandBlock band blockIx = liftM fromJust $ runConduit $
   yield blockIx =$= unsafeBlockConduit band =$= CL.head
-{-# INLINE readBandBlock #-}
+{-# INLINEABLE readBandBlock #-}
 
 
 allBlocks :: Monad m => Band s a t -> Producer m BlockIx
 allBlocks band = CL.sourceList [x :+: y | y <- [0..ny-1], x <- [0..nx-1]]
   where
     !(nx :+: ny) = bandBlockCount band
-{-# INLINE allBlocks #-}
+{-# INLINEABLE allBlocks #-}
 
 blockConduit
   :: forall s a t. GDALType a
@@ -1171,7 +1202,7 @@ blockConduit
   -> Conduit BlockIx (GDAL s) (U.Vector (Value a))
 blockConduit band =
   unsafeBlockConduitM band =$= CL.mapM (liftIO . U.freeze)
-{-# INLINE blockConduit #-}
+{-# INLINEABLE blockConduit #-}
 
 unsafeBlockConduit
   :: forall s a t. GDALType a
@@ -1179,7 +1210,7 @@ unsafeBlockConduit
   -> Conduit BlockIx (GDAL s) (U.Vector (Value a))
 unsafeBlockConduit band =
   unsafeBlockConduitM band =$= CL.mapM (liftIO . U.unsafeFreeze)
-{-# INLINE unsafeBlockConduit #-}
+{-# INLINEABLE unsafeBlockConduit #-}
 
 
 unsafeBlockConduitM
@@ -1205,7 +1236,6 @@ unsafeBlockConduitM band = do
     dtBand   = bandDataType band
     dtBuf    = hsDataType (Proxy :: Proxy a)
 
-    {-# INLINE blockReader #-}
     blockReader vec buf extra
       | isNative = awaitForever $ \ix -> do
           liftIO (Stm.unsafeWith buf (loadBlock ix))
@@ -1220,7 +1250,6 @@ unsafeBlockConduitM band = do
             extra ix
             yield vec
 
-    {-# INLINE loadBlock #-}
     loadBlock ix pBuf = 
       checkCPLError "ReadBlock" $
       {#call ReadBlock as ^#}
@@ -1229,7 +1258,6 @@ unsafeBlockConduitM band = do
         (fromIntegral (pSnd ix))
         (castPtr pBuf)
 
-    {-# INLINE translateBlock #-}
     translateBlock pTemp pBuf  = 
       {#call unsafe CopyWords as ^#}
         (castPtr pTemp)
@@ -1242,7 +1270,6 @@ unsafeBlockConduitM band = do
     szBand = sizeOfDataType dtBand
     szBuf = sizeOfDataType dtBuf
 
-    {-# INLINE readMask #-}
     readMask mask vMask ix =
       liftIO $
       Stm.unsafeWith vMask $ \pMask ->
@@ -1266,7 +1293,7 @@ unsafeBlockConduitM band = do
         win = liftA2 min bs (rs  - off)
     bs  = fmap fromIntegral (bandBlockSize band)
     rs  = fmap fromIntegral (bandSize band)
-{-# INLINE unsafeBlockConduitM #-}
+{-# INLINEABLE unsafeBlockConduitM #-}
 
 openDatasetCount :: IO Int
 openDatasetCount =
@@ -1392,4 +1419,81 @@ decorate (ConduitM c0) = ConduitM $ \rest -> let
   go2 i (PipeM mp)         = PipeM (liftM (go2 i) mp)
   go2 i (Leftover p i')    = Leftover (go2 i p) i'
   in go1 (c0 Done)
-{-# INLINE decorate #-}
+{-# INLINEABLE decorate #-}
+
+
+data DriverInfo = DriverInfo
+  { diName     :: DriverName
+  , diIdentify :: ByteString -> IO Bool
+  , diOpen     :: ByteString -> IO DatasetH
+  }
+
+{#pointer GDALOpenInfoH#}
+{#pointer HsDriverIdentify#}
+{#pointer HsDriverOpen#}
+
+foreign import ccall "wrapper" c_wrapHsDriverIdentify ::
+  (GDALOpenInfoH -> IO CInt) -> IO HsDriverIdentify
+foreign import ccall "wrapper" c_wrapHsDriverOpen ::
+  (GDALOpenInfoH -> IO DatasetH) -> IO HsDriverOpen
+
+createDriver
+  :: MonadIO m => DriverInfo -> m (Driver t)
+createDriver DriverInfo{..} = liftIO $ useAsCString diName' $ \name -> do
+  identify <- c_wrapHsDriverIdentify $ \oinfo -> do
+    eValid <- try (diIdentify (openInfoFilename oinfo))
+    case eValid of
+      Right True -> return true
+      Right False -> return false
+      Left (e :: SomeException) -> do
+        hPutStrLn stderr ("ERROR: Unhandled exception in diIdentify: " ++ show e)
+        return false
+  open <- c_wrapHsDriverOpen $ \oinfo -> do
+    eDs <- try $ do
+      -- Make sure we identify it, gdal might still call us after
+      -- identify returns false
+      !eValid <- diIdentify (openInfoFilename oinfo)
+      if eValid then diOpen (openInfoFilename oinfo)
+                else return nullDatasetH
+    case eDs of
+      Right ptr -> return ptr
+      Left (e :: SomeException) -> do
+        hPutStrLn stderr ("ERROR: Unhandled exception in diOpen: " ++ show e)
+        return nullDatasetH
+
+  Driver <$> {#call unsafe hs_gdal_new_driver#} name identify open
+  where
+    DriverName diName' = diName
+
+withDriver :: (MonadIO m, MonadMask m) => DriverInfo -> m a -> m a
+withDriver info = bracket acquire deleteDriver . const
+  where
+    acquire = do
+      d <- createDriver info
+      registerDriver d
+      return d
+
+registerDriver :: MonadIO m => Driver t -> m ()
+registerDriver =
+  liftIO . void . {#call unsafe GDALRegisterDriver as ^#} . unDriver
+
+deregisterDriver :: MonadIO m => Driver t -> m ()
+deregisterDriver =
+  liftIO . {#call unsafe GDALDeregisterDriver as ^#} . unDriver
+
+
+deleteDriver :: MonadIO m => Driver t -> m ()
+deleteDriver d = do
+  -- first deregister if it is or bad things shall happen
+  deregisterDriver d
+  liftIO ({#call unsafe hs_gdal_delete_driver as ^#} (unDriver d))
+  
+
+true, false :: CInt
+true = {#const TRUE #}
+false = {#const FALSE #}
+
+openInfoFilename :: GDALOpenInfoH -> ByteString
+openInfoFilename info = unsafePerformIO $ do
+  s <- {#call unsafe hs_gdal_openinfo_filename#} info
+  if s==nullPtr then return "" else packCString s

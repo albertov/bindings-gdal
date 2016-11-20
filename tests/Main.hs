@@ -9,7 +9,7 @@ import qualified Spec
 
 import GDAL
 import GDAL.Internal.GDAL (openDatasetCount)
-import TestUtils (hspec)
+import Test.Hspec (hspec)
 
 main :: IO ()
 main = withGDAL $ do

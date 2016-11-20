@@ -27,7 +27,8 @@ module GDAL (
   , Geotransform (..)
   , GroundControlPoint (..)
   , OverviewResampling (..)
-  , Driver (..)
+  , Driver
+  , DriverName
   , Dataset
   , OptionList
   , ReadWrite
@@ -55,6 +56,10 @@ module GDAL (
   , unValueVector
   , catValues
 
+  , driverByName
+  , registerDriver
+  , deregisterDriver
+  , deleteDriver
   , create
   , createMem
   , delete
