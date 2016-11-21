@@ -17,7 +17,6 @@
 {-# LANGUAGE LambdaCase #-}
 
 #include "bindings.h"
-#include "driver.h"
 
 module GDAL.Internal.GDAL (
     GDALRasterException (..)
@@ -25,7 +24,6 @@ module GDAL.Internal.GDAL (
   , OverviewResampling (..)
   , DriverName (..)
   , Driver (..)
-  , DriverInfo (..)
   , DriverH (..)
   , Dataset
   , DatasetH (..)
@@ -48,11 +46,6 @@ module GDAL.Internal.GDAL (
   , geoEnvelopeTransformer
 
   , driverByName
-  , createDriver
-  , withDriver
-  , registerDriver
-  , deregisterDriver
-  , deleteDriver
 
   , nullDatasetH
   , allRegister
@@ -1306,7 +1299,9 @@ openDatasetCount =
 -- Metadata
 -----------------------------------------------------------------------------
 
-metadataDomains :: MajorObject o t => o t -> GDAL s [Text]
+metadataDomains
+  :: (MonadIO m, MajorObject o t)
+  => o t -> m [Text]
 #if SUPPORTS_METADATA_DOMAINS
 metadataDomains o =
   liftIO $
@@ -1317,8 +1312,8 @@ metadataDomains = const (return [])
 #endif
 
 metadata
-  :: MajorObject o t
-  => Maybe ByteString -> o t -> GDAL s [(Text,Text)]
+  :: (MonadIO m, MajorObject o t)
+  => Maybe ByteString -> o t -> m [(Text,Text)]
 metadata domain o =
   liftIO $
   withMaybeByteString domain
@@ -1331,8 +1326,8 @@ metadata domain o =
         (k, v) -> (k, T.tail v)
 
 metadataItem
-  :: MajorObject o t
-  => Maybe ByteString -> ByteString -> o t -> GDAL s (Maybe ByteString)
+  :: (MonadIO m, MajorObject o t)
+  => Maybe ByteString -> ByteString -> o t -> m (Maybe ByteString)
 metadataItem domain key o =
   liftIO $
   useAsCString key $ \pKey ->
@@ -1341,8 +1336,8 @@ metadataItem domain key o =
       maybePackCString
 
 setMetadataItem
-  :: (MajorObject o t, t ~ ReadWrite)
-  => Maybe ByteString -> ByteString -> ByteString -> o t -> GDAL s ()
+  :: (MonadIO m, MajorObject o t, t ~ ReadWrite)
+  => Maybe ByteString -> ByteString -> ByteString -> o t -> m ()
 setMetadataItem domain key val o =
   liftIO $
   checkCPLError "setMetadataItem" $
@@ -1351,13 +1346,13 @@ setMetadataItem domain key val o =
   withMaybeByteString domain $
     {#call unsafe GDALSetMetadataItem as ^#} (majorObject o) pKey pVal
 
-description :: MajorObject o t => o t -> GDAL s ByteString
+description :: (MonadIO m, MajorObject o t) => o t -> m ByteString
 description =
   liftIO . ({#call unsafe GetDescription as ^#} . majorObject >=> packCString)
 
 setDescription
-  :: (MajorObject o t, t ~ ReadWrite)
-  => ByteString -> o t -> GDAL s ()
+  :: (MonadIO m, MajorObject o t, t ~ ReadWrite)
+  => ByteString -> o t -> m ()
 setDescription val =
   liftIO . checkGDALCall_ const .
   useAsCString val . {#call unsafe GDALSetDescription as ^#} . majorObject
@@ -1420,80 +1415,3 @@ decorate (ConduitM c0) = ConduitM $ \rest -> let
   go2 i (Leftover p i')    = Leftover (go2 i p) i'
   in go1 (c0 Done)
 {-# INLINEABLE decorate #-}
-
-
-data DriverInfo = DriverInfo
-  { diName     :: DriverName
-  , diIdentify :: ByteString -> IO Bool
-  , diOpen     :: ByteString -> IO DatasetH
-  }
-
-{#pointer GDALOpenInfoH#}
-{#pointer HsDriverIdentify#}
-{#pointer HsDriverOpen#}
-
-foreign import ccall "wrapper" c_wrapHsDriverIdentify ::
-  (GDALOpenInfoH -> IO CInt) -> IO HsDriverIdentify
-foreign import ccall "wrapper" c_wrapHsDriverOpen ::
-  (GDALOpenInfoH -> IO DatasetH) -> IO HsDriverOpen
-
-createDriver
-  :: MonadIO m => DriverInfo -> m (Driver t)
-createDriver DriverInfo{..} = liftIO $ useAsCString diName' $ \name -> do
-  identify <- c_wrapHsDriverIdentify $ \oinfo -> do
-    eValid <- try (diIdentify (openInfoFilename oinfo))
-    case eValid of
-      Right True -> return true
-      Right False -> return false
-      Left (e :: SomeException) -> do
-        hPutStrLn stderr ("ERROR: Unhandled exception in diIdentify: " ++ show e)
-        return false
-  open <- c_wrapHsDriverOpen $ \oinfo -> do
-    eDs <- try $ do
-      -- Make sure we identify it, gdal might still call us after
-      -- identify returns false
-      !eValid <- diIdentify (openInfoFilename oinfo)
-      if eValid then diOpen (openInfoFilename oinfo)
-                else return nullDatasetH
-    case eDs of
-      Right ptr -> return ptr
-      Left (e :: SomeException) -> do
-        hPutStrLn stderr ("ERROR: Unhandled exception in diOpen: " ++ show e)
-        return nullDatasetH
-
-  Driver <$> {#call unsafe hs_gdal_new_driver#} name identify open
-  where
-    DriverName diName' = diName
-
-withDriver :: (MonadIO m, MonadMask m) => DriverInfo -> m a -> m a
-withDriver info = bracket acquire deleteDriver . const
-  where
-    acquire = do
-      d <- createDriver info
-      registerDriver d
-      return d
-
-registerDriver :: MonadIO m => Driver t -> m ()
-registerDriver =
-  liftIO . void . {#call unsafe GDALRegisterDriver as ^#} . unDriver
-
-deregisterDriver :: MonadIO m => Driver t -> m ()
-deregisterDriver =
-  liftIO . {#call unsafe GDALDeregisterDriver as ^#} . unDriver
-
-
-deleteDriver :: MonadIO m => Driver t -> m ()
-deleteDriver d = do
-  -- first deregister if it is or bad things shall happen
-  deregisterDriver d
-  liftIO ({#call unsafe hs_gdal_delete_driver as ^#} (unDriver d))
-  
-
-true, false :: CInt
-true = {#const TRUE #}
-false = {#const FALSE #}
-
-openInfoFilename :: GDALOpenInfoH -> ByteString
-openInfoFilename info = unsafePerformIO $ do
-  s <- {#call unsafe hs_gdal_openinfo_filename#} info
-  if s==nullPtr then return "" else packCString s
