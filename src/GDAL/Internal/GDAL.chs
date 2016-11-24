@@ -411,9 +411,7 @@ newDatasetHandle act =
       | p==nullDatasetH = Just (fromMaybe
                                 (GDALBindingException NullDataset) exc)
       | otherwise       = Nothing
-    free ds = do
-      refCount <- {#call unsafe DereferenceDataset as ^#} ds
-      when (refCount<=0) ({#call GDALClose as ^#} ds)
+    free = {#call GDALClose as ^#}
 
 createMem
   :: Size -> Int -> DataType d -> OptionList
@@ -628,15 +626,17 @@ instance Storable Geotransform where
 
 
 datasetGeotransformIO :: Dataset s a t -> IO (Maybe Geotransform)
-datasetGeotransformIO ds = alloca $ \p -> do
-  ret <- {#call unsafe GetGeoTransform as ^#} (unDataset ds) (castPtr p)
-  if toEnumC ret == CE_None
-    then liftM Just (peek p)
-    else return Nothing
+datasetGeotransformIO = datasetHGeotransformIO . unDataset
 
 datasetGeotransform :: Dataset s a t -> GDAL s (Maybe Geotransform)
 datasetGeotransform = liftIO . datasetGeotransformIO
 
+datasetHGeotransformIO :: DatasetH -> IO (Maybe Geotransform)
+datasetHGeotransformIO ds = alloca $ \p -> do
+  ret <- {#call unsafe GetGeoTransform as ^#} ds (castPtr p)
+  if toEnumC ret == CE_None
+    then liftM Just (peek p)
+    else return Nothing
 
 setDatasetGeotransform :: Geotransform -> RWDataset s a -> GDAL s ()
 setDatasetGeotransform gt ds = liftIO $
@@ -670,12 +670,6 @@ addBand options ds = do
   ix <- datasetBandCount ds
   getBand ix ds
   where dt = hsDataType (Proxy :: Proxy a)
-
-bandDataset :: Band s a t -> GDAL s (Dataset s a t)
-bandDataset b = newDatasetHandle $ do
-  hDs <- {#call unsafe GDALGetBandDataset as ^#} (unBand b)
-  void $ {#call unsafe GDALReferenceDataset as ^#} hDs
-  return hDs
 
 
 bandBlockSize :: (Band s a t) -> Size
@@ -901,7 +895,10 @@ bandSinkGeo
   => RWBand s a
   -> Sink (Envelope Double, Size, U.Vector (Value a)) (GDAL s) ()
 bandSinkGeo band = do
-  mGt <- lift (bracket (bandDataset band) closeDataset datasetGeotransform)
+  mGt <- liftIO $ do
+    h <-{#call unsafe GDALGetBandDataset as ^#} (unBand band)
+    datasetHGeotransformIO h
+
   case mGt >>= geoEnvelopeTransformer of
     Just trans -> CL.map (\(e,s,v) -> (trans e,s,v)) =$= bandSink band
     Nothing    -> lift (throwBindingException CannotInvertGeotransform)
