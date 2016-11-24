@@ -35,15 +35,16 @@ import GDAL.Internal.Types ( GDAL
                            , createGDALInternalState
                            , closeGDALInternalState )
 import GDAL.Internal.CPLError ( ErrorType (..) )
-import Control.Exception ( SomeException, catch, uninterruptibleMask_ )
 import Control.DeepSeq (NFData (..) , force)
 import Control.Monad
+import Control.Monad.Catch ( SomeException, catch, mask_, bracket
+                           , bracketOnError, onException )
 import Control.Monad.IO.Class ( liftIO )
 import Data.Maybe (fromMaybe)
 import Data.Proxy ( Proxy(Proxy) )
 import qualified Data.Vector.Storable as St
 import Foreign.C
-import Foreign.Marshal.Alloc ( callocBytes, alloca )
+import Foreign.Marshal.Alloc ( callocBytes, free )
 import Foreign.Marshal.Array ( pokeArray, copyArray )
 import Foreign.Ptr (Ptr, FunPtr, nullFunPtr, castPtr)
 import Foreign.ForeignPtr
@@ -84,21 +85,43 @@ hsBandBlockLen = (\(x :+: y) -> x*y) . blockSize
 {# pointer HSRasterBandImpl #}
 
 
-pokeHSDataset :: HSDatasetImpl -> HSDataset s -> IO ()
-pokeHSDataset p HSDataset{..} = uninterruptibleMask_ $ do
-  {#set HSDatasetImpl->nRasterXSize#}  p xsize
-  {#set HSDatasetImpl->nRasterYSize#}  p ysize
-  {#set HSDatasetImpl->nBands#}        p (fromIntegral (length bands))
-  bandsPtr <- callocBytes (length bands * {#sizeof hsRasterBandImpl#})
-  -- set the pointer before poking the array so we don't lose the reference
-  -- and we can cleanup in case a poke fails midway
-  {#set HSDatasetImpl->bands#} p (castPtr bandsPtr)
-  pokeArray bandsPtr bands
-  pSrs <- withMaybeSRAsCString srs {#call unsafe CPLStrdup as cStrdup #}
-  {#set HSDatasetImpl->pszProjection#} p pSrs
-  flip poke geotransform . castPtr =<< {#get HSDatasetImpl->adfGeoTransform#} p
+hsDatasetToDatasetH :: HSDataset s -> (HSDatasetImpl -> IO ()) -> IO DatasetH
+hsDatasetToDatasetH HSDataset{..} fun = bracket initialize cleanup createIt
   where
     xsize :+: ysize = fmap fromIntegral rasterSize
+
+    initialize = do
+      impl <- callocBytes {#sizeof hsDatasetImpl#}
+      {#set HSDatasetImpl->nRasterXSize#}  impl xsize
+      {#set HSDatasetImpl->nRasterYSize#}  impl ysize
+      {#set HSDatasetImpl->nBands#}        impl (fromIntegral (length bands))
+
+      pBands <- callocBytes (length bands * {#sizeof hsRasterBandImpl#})
+      -- set the pointer before poking the array so we don't lose the reference
+      -- and we can cleanup in case a poke fails midway
+      {#set HSDatasetImpl->bands#}         impl pBands
+      pokeArray (castPtr pBands) bands
+
+      pSrs <- withMaybeSRAsCString srs {#call unsafe CPLStrdup as cStrdup #}
+      {#set HSDatasetImpl->pszProjection#} impl pSrs
+
+      pGt <- {#get HSDatasetImpl->adfGeoTransform#} impl
+      poke (castPtr pGt) geotransform
+      return impl
+
+    createIt impl =
+      (fun impl >> {#call unsafe hs_gdal_create_dataset#} impl)
+        `onException` fullCleanup impl
+
+    -- normal cleanup, free the allocated memory which isnt borrowed by the C++
+    -- side
+    cleanup impl = do
+      free =<< {#get HSDatasetImpl->bands#} impl
+      free impl
+
+    -- onException cleanup free all the allocated memory
+    fullCleanup = {#call unsafe hs_gdal_destroy_HSDatasetImpl#}
+
 
 
 foreign import ccall safe "wrapper"
@@ -156,42 +179,33 @@ ok = fromEnumC CE_None
 failure :: CInt
 failure = fromEnumC CE_Failure
 
+-- | Makes sure a function doesn't raise exceptions so it can be safely called
+--   from C
 handleAllExceptions
   :: NFData a => (SomeException -> IO a) -> IO a -> IO a
 handleAllExceptions onError action = catch (fmap force action) onError
 
 toGDALDatasetIO :: GDAL s (HSDataset s) -> IO DatasetH
 toGDALDatasetIO mkDataset =
-  alloca $ \impl ->
-  handleAllExceptions (onExc impl) $ do
-    state <- createGDALInternalState
+  bracketOnError createGDALInternalState closeGDALInternalState $ \state -> do
     ds <- runWithInternalState mkDataset state
-    pokeHSDataset impl ds
-    statePtr <- castStablePtrToPtr <$> newStablePtr state
-    {#set HSDatasetImpl->state #} impl statePtr
-    destroyState <- c_wrapDestroyState closeInternalState
-    {#set HSDatasetImpl->destroyState#} impl destroyState
-    {#call unsafe hs_gdal_create_dataset#} impl
-  where
-    onExc impl e = do
-      printErr "Unhandled exception in toGDALDatasetIO" e
-      {#call unsafe destroyHSDatasetImpl#} impl
-      return nullDatasetH
+    hsDatasetToDatasetH ds $ \impl -> mask_ $ do
+      -- we dont' want to be interrupted here
+      statePtr <- castStablePtrToPtr <$> newStablePtr state
+      {#set HSDatasetImpl->state #} impl statePtr
+      destroyState <- c_wrapDestroyState
+        (handleAllExceptions
+          (hPutStrLn stderr . ("Exception in closeInternalState: " ++) .  show)
+          . closeInternalState)
+      {#set HSDatasetImpl->destroyState#} impl destroyState
 
 toGDALDataset :: HSDataset s -> GDAL s DatasetH
 toGDALDataset ds = do
   state <- getInternalState
-  liftIO $ alloca $ \impl -> handleAllExceptions (onExc impl) $ do
-    pokeHSDataset impl ds
+  liftIO $ hsDatasetToDatasetH ds $ \impl -> mask_ $ do
     statePtr <- castStablePtrToPtr <$> newStablePtr state
-    {#set HSDatasetImpl->state #} impl statePtr
+    {#set HSDatasetImpl->state #}       impl statePtr
     {#set HSDatasetImpl->destroyState#} impl nullFunPtr
-    {#call unsafe hs_gdal_create_dataset#} impl
-  where
-    onExc impl e = do
-      printErr "Unhandled exception in toGDALDatasetIO" e
-      {#call unsafe destroyHSDatasetImpl#} impl
-      return nullDatasetH
 
 
 foreign import ccall safe "wrapper"
@@ -199,9 +213,5 @@ foreign import ccall safe "wrapper"
 
 
 closeInternalState :: InternalStateStablePtr -> IO ()
-closeInternalState
-  = handleAllExceptions onExc
-  . (closeGDALInternalState <=< deRefStablePtr . castPtrToStablePtr)
-  where
-    onExc e =
-      printErr "Unhandled exception in closeGDALInternalState" e
+closeInternalState =
+  closeGDALInternalState <=< deRefStablePtr .  castPtrToStablePtr

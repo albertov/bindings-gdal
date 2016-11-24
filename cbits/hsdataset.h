@@ -20,7 +20,7 @@ typedef struct hsDatasetImpl {
   int nRasterXSize;
   int nRasterYSize;
   int nBands;
-  struct hsRasterBandImpl *bands;
+  HSRasterBandImpl bands;
   char *pszProjection;
   double adfGeoTransform[6];
   HsStablePtr state;
@@ -29,7 +29,7 @@ typedef struct hsDatasetImpl {
 
 GDALDatasetH hs_gdal_create_dataset ( HSDatasetImpl );
 
-void destroyHSDatasetImpl (HSDatasetImpl impl);
+void hs_gdal_destroy_HSDatasetImpl (HSDatasetImpl impl);
 
 #ifdef __cplusplus
 }

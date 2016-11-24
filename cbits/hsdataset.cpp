@@ -199,11 +199,9 @@ GDALDatasetH hs_gdal_create_dataset ( HSDatasetImpl impl )
 /************************************************************************/
 /*                         destroyHSDatasetImpl                         */
 /*                                                                      */
-/* For use in cleanup after haskell exception. Does not free the ptr    */
-/* itself. Obviously, the pointer struct members must not be used after */
-/* calling this.                                                        */
+/* For use in cleanup after haskell exception.                          */
 /************************************************************************/
-void destroyHSDatasetImpl (HSDatasetImpl impl)
+void hs_gdal_destroy_HSDatasetImpl (HSDatasetImpl impl)
 {
   if ( impl->bands ) {
     for (int i=0; i<impl->nBands; i++) {
@@ -221,4 +219,5 @@ void destroyHSDatasetImpl (HSDatasetImpl impl)
     hs_free_fun_ptr ( reinterpret_cast<HsFunPtr>( impl->destroyState ) );
   }
   CPLFree ( impl->pszProjection );
+  free ( impl );
 }
