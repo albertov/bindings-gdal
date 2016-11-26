@@ -87,6 +87,8 @@ module GDAL (
   , datasetBandCount
 
   , bandDataType
+  , bandProjection
+  , bandGeotransform
   , bandBlockSize
   , bandBlockCount
   , bandBlockLen
@@ -193,7 +195,7 @@ withGDAL :: IO a -> IO a
 withGDAL = bracket_ initializeGDAL cleanupGDAL
 
 initializeGDAL, cleanupGDAL :: IO ()
-initializeGDAL = do
+initializeGDAL =
 #if HAVE_EMBEDDED_DATA
   ensureDataExists
 #endif

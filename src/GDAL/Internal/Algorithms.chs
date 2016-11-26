@@ -332,10 +332,10 @@ instance Transformer GenImgProjTransformer3 where
   setGeotransform = setGenImgProjTransfomerGeotransform
   createTransformerArg GenImgProjTransformer3{..} srcDs = do
     sSrs <- case (gipt3SrcSrs, srcDs) of
-              (Nothing, Just ds) -> datasetProjectionIO ds
+              (Nothing, Just ds) -> datasetProjection ds
               _                  -> return gipt3SrcSrs
     sGt <- case (gipt3SrcGt, srcDs) of
-              (Nothing, Just ds) -> datasetGeotransformIO ds
+              (Nothing, Just ds) -> datasetGeotransform ds
               _                  -> return gipt3SrcGt
     liftM castPtr $
       checkCreateTransformer "GenImgProjTransformer3" $

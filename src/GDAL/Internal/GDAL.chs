@@ -59,7 +59,6 @@ module GDAL.Internal.GDAL (
   , closeDataset
   , openDatasetH
   , createDatasetH
-  , nullDatasetH
   , openReadOnly
   , openReadWrite
   , unsafeToReadOnly
@@ -74,16 +73,16 @@ module GDAL.Internal.GDAL (
   , datasetSize
   , datasetFileList
   , datasetProjection
-  , datasetProjectionIO
   , setDatasetProjection
   , datasetGeotransform
-  , datasetGeotransformIO
   , setDatasetGeotransform
   , datasetGCPs
   , setDatasetGCPs
   , datasetBandCount
 
   , bandDataType
+  , bandProjection
+  , bandGeotransform
   , bandBlockSize
   , bandBlockCount
   , bandBlockLen
@@ -142,11 +141,10 @@ module GDAL.Internal.GDAL (
 
 import Control.Arrow (second)
 import Control.Applicative (Applicative(..), (<$>), liftA2)
-import Control.Exception (Exception(..), SomeException, try)
+import Control.Exception (Exception(..))
 import Control.DeepSeq (NFData(..))
-import Control.Monad (liftM, liftM2, when, (>=>), void, forever)
+import Control.Monad (liftM, liftM2, when, (>=>), (<=<), forever)
 import Control.Monad.Trans (lift)
-import Control.Monad.Catch (MonadMask, bracket)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Bits ((.&.))
@@ -174,7 +172,7 @@ import Data.Word (Word8)
 import Foreign.C.String (withCString, CString)
 import Foreign.C.Types
 import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrBytes)
-import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (withArrayLen)
@@ -182,7 +180,6 @@ import Foreign.Marshal.Utils (toBool, fromBool, with)
 
 import GHC.Types (SPEC(..))
 
-import System.IO (stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
@@ -247,7 +244,7 @@ deriving instance Eq DatasetH
 deriving instance NFData DatasetH
 
 newtype Dataset s a (t::AccessMode) =
-  Dataset (ReleaseKey, DatasetH)
+  Dataset (Maybe ReleaseKey, DatasetH)
 
 instance MajorObject (Dataset s a) t where
   majorObject ds =
@@ -258,7 +255,8 @@ unDataset :: Dataset s a t -> DatasetH
 unDataset (Dataset (_,s)) = s
 
 closeDataset :: MonadIO m => Dataset s a t -> m ()
-closeDataset (Dataset (rk,_)) = release rk
+closeDataset (Dataset (Just rk,_)) = release rk
+closeDataset _                     = return ()
 
 type RODataset s a = Dataset s a ReadOnly
 type RWDataset s a = Dataset s a ReadWrite
@@ -336,16 +334,16 @@ createDatasetH
   :: MonadIO m
   => Driver t -> String -> Size -> Int -> DataType d -> OptionList
   -> m DatasetH
-createDatasetH drv path (nx :+: ny) bands dtype  options = liftIO $
+createDatasetH drv path (nx :+: ny) bands dtype  opts = liftIO $
   withCString path $ \path' -> do
     let nx'    = fromIntegral nx
         ny'    = fromIntegral ny
         bands' = fromIntegral bands
         dtype' = fromEnumC dtype
         d      = unDriver drv
-    withOptionList options $ \opts -> do
-      validateCreationOptions d opts
-      {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' opts
+    withOptionList opts $ \o -> do
+      validateCreationOptions d o
+      {#call GDALCreate as ^#} d path' nx' ny' bands' dtype' o
 
 delete :: DriverName -> String -> GDAL s ()
 delete driver path =
@@ -391,11 +389,11 @@ unsafeToReadOnly ds = flushCache ds >> return (coerce ds)
 createCopy
   :: DriverName -> String -> Dataset s a t -> Bool -> OptionList
   -> Maybe ProgressFun -> GDAL s (RWDataset s a)
-createCopy driver path ds strict options progressFun =
+createCopy driver path ds strict opts progress =
   newDatasetHandle $
-  withProgressFun "createCopy" progressFun $ \pFunc -> do
+  withProgressFun "createCopy" progress $ \pFunc -> do
     d <- driverHByName driver
-    withOptionList options $ \o -> do
+    withOptionList opts $ \o -> do
       validateCreationOptions d o
       withCString path $ \p ->
         {#call GDALCreateCopy as ^#}
@@ -404,8 +402,9 @@ createCopy driver path ds strict options progressFun =
 
 
 newDatasetHandle :: IO DatasetH -> GDAL s (Dataset s a t)
-newDatasetHandle act =
-  liftM Dataset $ allocate (checkGDALCall checkit act) free
+newDatasetHandle act = do
+  (rk,ds) <- allocate (checkGDALCall checkit act) free
+  return (Dataset (Just rk, ds))
   where
     checkit exc p
       | p==nullDatasetH = Just (fromMaybe
@@ -444,13 +443,11 @@ datasetFileList =
   {#call unsafe GetFileList as ^#} .
   unDataset
 
-datasetProjectionIO :: Dataset s a t -> IO (Maybe SpatialReference)
-datasetProjectionIO =
-  {#call unsafe GetProjectionRef as ^#} . unDataset
-              >=> maybeSpatialReferenceFromCString
-
-datasetProjection :: Dataset s a t -> GDAL s (Maybe SpatialReference)
-datasetProjection = liftIO . datasetProjectionIO
+datasetProjection :: MonadIO m => Dataset s a t -> m (Maybe SpatialReference)
+datasetProjection
+  = liftIO
+  .  (maybeSpatialReferenceFromCString <=< {#call unsafe GetProjectionRef as ^#})
+  . unDataset
 
 
 setDatasetProjection :: SpatialReference -> RWDataset s a -> GDAL s ()
@@ -497,12 +494,12 @@ data OverviewResampling
 buildOverviews
   :: RWDataset s a -> OverviewResampling -> [Int] -> [Int] -> Maybe ProgressFun
   -> GDAL s ()
-buildOverviews ds resampling overviews bands progressFun =
+buildOverviews ds resampling overviews bands progress =
   liftIO $
   withResampling resampling $ \pResampling ->
   withArrayLen (map fromIntegral overviews) $ \nOverviews pOverviews ->
   withArrayLen (map fromIntegral bands) $ \nBands pBands ->
-  withProgressFun "buildOverviews" progressFun $ \pFunc ->
+  withProgressFun "buildOverviews" progress $ \pFunc ->
   checkCPLError "buildOverviews" $
     {#call GDALBuildOverviews as ^#}
       (unDataset ds)
@@ -625,26 +622,20 @@ instance Storable Geotransform where
                  <*> liftM realToFrac (peekElemOff p 5)
 
 
-datasetGeotransformIO :: Dataset s a t -> IO (Maybe Geotransform)
-datasetGeotransformIO = datasetHGeotransformIO . unDataset
-
-datasetGeotransform :: Dataset s a t -> GDAL s (Maybe Geotransform)
-datasetGeotransform = liftIO . datasetGeotransformIO
-
-datasetHGeotransformIO :: DatasetH -> IO (Maybe Geotransform)
-datasetHGeotransformIO ds = alloca $ \p -> do
-  ret <- {#call unsafe GetGeoTransform as ^#} ds (castPtr p)
+datasetGeotransform:: MonadIO m => Dataset s a t -> m (Maybe Geotransform)
+datasetGeotransform ds = liftIO $ alloca $ \p -> do
+  ret <- {#call unsafe GetGeoTransform as ^#} (unDataset ds) (castPtr p)
   if toEnumC ret == CE_None
     then liftM Just (peek p)
     else return Nothing
 
-setDatasetGeotransform :: Geotransform -> RWDataset s a -> GDAL s ()
+setDatasetGeotransform :: MonadIO m => Geotransform -> RWDataset s a -> m ()
 setDatasetGeotransform gt ds = liftIO $
   checkCPLError "SetGeoTransform" $
     with gt ({#call unsafe SetGeoTransform as ^#} (unDataset ds) . castPtr)
 
 
-datasetBandCount :: Dataset s a t -> GDAL s Int
+datasetBandCount :: MonadIO m => Dataset s a t -> m Int
 datasetBandCount =
   liftM fromIntegral . liftIO . {#call unsafe GetRasterCount as ^#} . unDataset
 
@@ -662,10 +653,10 @@ getBand b ds = liftIO $ do
 addBand
   :: forall s a. GDALType a
   => OptionList -> RWDataset s a -> GDAL s (RWBand s a)
-addBand options ds = do
+addBand opts ds = do
   liftIO $
     checkCPLError "addBand" $
-    withOptionList options $
+    withOptionList opts $
     {#call GDALAddBand as ^#} (unDataset ds) (fromEnumC dt)
   ix <- datasetBandCount ds
   getBand ix ds
@@ -890,15 +881,23 @@ bandSink band = lift (bandMaskType band) >>= \case
                  0
 {-# INLINEABLE bandSink #-}
 
+unsafeBandDataset :: Band s a t -> Dataset s a t
+unsafeBandDataset band = Dataset (Nothing, dsH) where
+  dsH = {#call pure unsafe GDALGetBandDataset as ^#} (unBand band)
+
+bandGeotransform :: MonadIO m => Band s a t -> m (Maybe Geotransform)
+bandGeotransform = datasetGeotransform . unsafeBandDataset
+
+bandProjection :: MonadIO m => Band s a t -> m (Maybe SpatialReference)
+bandProjection = datasetProjection . unsafeBandDataset
+
+
 bandSinkGeo
   :: forall s a. GDALType a
   => RWBand s a
   -> Sink (Envelope Double, Size, U.Vector (Value a)) (GDAL s) ()
 bandSinkGeo band = do
-  mGt <- liftIO $ do
-    h <-{#call unsafe GDALGetBandDataset as ^#} (unBand band)
-    datasetHGeotransformIO h
-
+  mGt <- bandGeotransform band
   case mGt >>= geoEnvelopeTransformer of
     Just trans -> CL.map (\(e,s,v) -> (trans e,s,v)) =$= bandSink band
     Nothing    -> lift (throwBindingException CannotInvertGeotransform)
@@ -945,10 +944,10 @@ maskFlagsForType MaskPerDataset  = fromEnumC GMF_PER_DATASET
 copyBand
   :: Band s a t -> RWBand s a -> OptionList
   -> Maybe ProgressFun -> GDAL s ()
-copyBand src dst options progressFun =
+copyBand src dst opts progress =
   liftIO $
-  withProgressFun "copyBand" progressFun $ \pFunc ->
-  withOptionList options $ \o ->
+  withProgressFun "copyBand" progress $ \pFunc ->
+  withOptionList opts $ \o ->
   checkCPLError "copyBand" $
   {#call RasterBandCopyWholeRaster as ^#}
     (unBand src) (unBand dst) o pFunc nullPtr
