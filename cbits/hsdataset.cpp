@@ -112,6 +112,7 @@ HSDataset::~HSDataset()
     hs_free_fun_ptr (
       reinterpret_cast<HsFunPtr> ( this->pfnDestroyState ) );
   }
+  this->FlushCache();
 }
 
 

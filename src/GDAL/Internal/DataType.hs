@@ -38,6 +38,7 @@ import GDAL.Internal.DataType.Internal
 import Data.Word
 import Data.Int
 import Data.Proxy
+import Data.Typeable (Typeable)
 
 import Foreign.Storable (Storable(sizeOf))
 import Foreign.C.Types (CDouble(..))
@@ -97,6 +98,7 @@ class ( Storable a
       , Eq a
       , Show a
       , Num a
+      , Typeable a
       -- This constraint ensures only one instance is defined per HsType
       -- in a sort-of poor's man injective type function. We need it to
       -- be sure that reifyDataTypeK makes sense
