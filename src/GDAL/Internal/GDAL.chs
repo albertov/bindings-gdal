@@ -132,6 +132,7 @@ module GDAL.Internal.GDAL (
   , unBand
   , version
   , newDatasetHandle
+  , unsafeBandDataset
   , openDatasetCount
 
   , module GDAL.Internal.DataType

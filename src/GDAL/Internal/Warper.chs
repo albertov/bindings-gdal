@@ -11,7 +11,7 @@
 
 module GDAL.Internal.Warper (
     ResampleAlg (..)
-  , WarpOptions
+  , WarpOptions (..)
   , BandOptions (..)
   , GDALWarpException (..)
   , HasResampleAlg (..)
