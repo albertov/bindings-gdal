@@ -727,7 +727,7 @@ bandConduit
   -> Conduit (Envelope Int) (GDAL s) (U.Vector (Value a))
 bandConduit sz band =
   unsafeBandConduitM sz band =$= CL.mapM (liftIO . U.freeze)
-{-# INLINEABLE bandConduit #-}
+{-# INLINE bandConduit #-}
 
 unsafeBandConduit
   :: forall s a t. GDALType a
@@ -736,7 +736,7 @@ unsafeBandConduit
   -> Conduit (Envelope Int) (GDAL s) (U.Vector (Value a))
 unsafeBandConduit sz band =
   unsafeBandConduitM sz band =$= CL.mapM (liftIO . U.unsafeFreeze)
-{-# INLINEABLE unsafeBandConduit #-}
+{-# INLINE unsafeBandConduit #-}
 
 
 unsafeBandConduitM
@@ -797,7 +797,7 @@ unsafeBandConduitM (bx :+: by) band = do
             (fromEnumC (hsDataType (Proxy :: Proxy a')))
             0
             0
-{-# INLINEABLE unsafeBandConduitM #-}
+{-# INLINE unsafeBandConduitM #-}
 
 geoEnvelopeTransformer
   :: Geotransform -> Maybe (Envelope Double -> Envelope Int)
@@ -880,7 +880,7 @@ bandSink band = lift (bandMaskType band) >>= \case
                  (fromEnumC (hsDataType (Proxy :: Proxy a')))
                  0
                  0
-{-# INLINEABLE bandSink #-}
+{-# INLINE bandSink #-}
 
 unsafeBandDataset :: Band s a t -> Dataset s a t
 unsafeBandDataset band = Dataset (Nothing, dsH) where
@@ -963,7 +963,7 @@ foldl'
   :: forall s t a b. GDALType a
   => (b -> Value a -> b) -> b -> Band s a t -> GDAL s b
 foldl' f = ifoldl' (\z _ v -> f z v)
-{-# INLINEABLE foldl' #-}
+{-# INLINE foldl' #-}
 
 ifoldl'
   :: forall s t a b. GDALType a
@@ -988,13 +988,13 @@ ifoldl' f z band =
         !stopy
           | my /= 0 && jB==ny-1 = my
           | otherwise           = sy
-{-# INLINEABLE ifoldl' #-}
+{-# INLINE ifoldl' #-}
 
 foldlWindow'
   :: forall s t a b. GDALType a
   => (b -> Value a -> b) -> b -> Band s a t -> Envelope Int -> GDAL s b
 foldlWindow' f b = ifoldlWindow' (\z _ v -> f z v) b
-{-# INLINEABLE foldlWindow' #-}
+{-# INLINE foldlWindow' #-}
 
 ifoldlWindow'
   :: forall s t a b. GDALType a
@@ -1030,26 +1030,26 @@ ifoldlWindow' f z band (Envelope (x0 :+: y0) (x1 :+: y1)) = runConduit $
         !stopy
           | my /= 0 && jB==ny-1 = my
           | otherwise           = sy
-{-# INLINEABLE ifoldlWindow' #-}
+{-# INLINE ifoldlWindow' #-}
 
 unsafeBlockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
 unsafeBlockSource band = allBlocks band =$= decorate (unsafeBlockConduit band)
-{-# INLINEABLE unsafeBlockSource #-}
+{-# INLINE unsafeBlockSource #-}
 
 blockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
 blockSource band = allBlocks band =$= decorate (blockConduit band)
-{-# INLINEABLE blockSource #-}
+{-# INLINE blockSource #-}
 
 writeBandBlock
   :: forall s a. GDALType a
   => RWBand s a -> BlockIx  -> U.Vector (Value a) -> GDAL s ()
 writeBandBlock band blockIx uvec =
   runConduit (yield (blockIx, uvec) =$= blockSink band)
-{-# INLINEABLE writeBandBlock #-}
+{-# INLINE writeBandBlock #-}
 
 fmapBand
   :: forall s a b t. (GDALType a, GDALType b)
@@ -1169,7 +1169,7 @@ blockSink band = do
         (pSnd bi)
         (castPtr pBuf)
       where bi = fmap fromIntegral blockIx
-{-# INLINEABLE blockSink #-}
+{-# INLINE blockSink #-}
 
 
 readBandBlock
@@ -1177,14 +1177,14 @@ readBandBlock
   => Band s a t -> BlockIx -> GDAL s (U.Vector (Value a))
 readBandBlock band blockIx = liftM fromJust $ runConduit $
   yield blockIx =$= unsafeBlockConduit band =$= CL.head
-{-# INLINEABLE readBandBlock #-}
+{-# INLINE readBandBlock #-}
 
 
 allBlocks :: Monad m => Band s a t -> Producer m BlockIx
 allBlocks band = CL.sourceList [x :+: y | y <- [0..ny-1], x <- [0..nx-1]]
   where
     !(nx :+: ny) = bandBlockCount band
-{-# INLINEABLE allBlocks #-}
+{-# INLINE allBlocks #-}
 
 blockConduit
   :: forall s a t. GDALType a
@@ -1192,7 +1192,7 @@ blockConduit
   -> Conduit BlockIx (GDAL s) (U.Vector (Value a))
 blockConduit band =
   unsafeBlockConduitM band =$= CL.mapM (liftIO . U.freeze)
-{-# INLINEABLE blockConduit #-}
+{-# INLINE blockConduit #-}
 
 unsafeBlockConduit
   :: forall s a t. GDALType a
@@ -1200,7 +1200,7 @@ unsafeBlockConduit
   -> Conduit BlockIx (GDAL s) (U.Vector (Value a))
 unsafeBlockConduit band =
   unsafeBlockConduitM band =$= CL.mapM (liftIO . U.unsafeFreeze)
-{-# INLINEABLE unsafeBlockConduit #-}
+{-# INLINE unsafeBlockConduit #-}
 
 
 unsafeBlockConduitM
@@ -1283,7 +1283,7 @@ unsafeBlockConduitM band = do
         win = liftA2 min bs (rs  - off)
     bs  = fmap fromIntegral (bandBlockSize band)
     rs  = fmap fromIntegral (bandSize band)
-{-# INLINEABLE unsafeBlockConduitM #-}
+{-# INLINE unsafeBlockConduitM #-}
 
 openDatasetCount :: IO Int
 openDatasetCount =
@@ -1411,4 +1411,4 @@ decorate (ConduitM c0) = ConduitM $ \rest -> let
   go2 i (PipeM mp)         = PipeM (liftM (go2 i) mp)
   go2 i (Leftover p i')    = Leftover (go2 i p) i'
   in go1 (c0 Done)
-{-# INLINEABLE decorate #-}
+{-# INLINE decorate #-}

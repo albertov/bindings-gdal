@@ -232,6 +232,7 @@ runWithInternalState
   => GDAL s a -> GDALInternalState s -> IO a
 runWithInternalState (GDAL a) =
   (evaluate . force <=< runReaderT a) . unState
+{-# INLINE runWithInternalState #-}
 
 allocateGDAL
   :: GDAL s a
