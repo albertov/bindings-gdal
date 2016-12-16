@@ -10,6 +10,7 @@ module GDAL.AlgorithmsSpec (main, spec) where
 
 import Data.Monoid (mempty)
 import Data.Proxy (Proxy(Proxy))
+import Data.Either (isRight)
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Storable as St
 
@@ -363,6 +364,22 @@ spec = setupAndTeardown $ do
         `shouldSatisfy` (<=fromIntegral (pFst sz))
       maximum (map (St.maximum . St.map pSnd . cPoints) contours)
         `shouldSatisfy` (<=fromIntegral (pSnd sz))
+
+  describe "suggestedWarpOutput" $
+    itIO "does not crash" $ do
+      let trans = SomeTransformer $
+            gipt3 & srcSrs .~ Just srs4326
+                  & dstSrs .~ Just srs23030
+                  & srcGt  .~ Just gtIn
+
+          szIn = 200 :+: 300
+          envIn = Envelope (2 :+: 42) (3 :+: 43)
+          gtIn = northUpGeotransform szIn envIn
+          eSuggested = suggestedWarpOutput trans szIn
+      eSuggested `shouldSatisfy` isRight
+      let (_, szOut) = either (error "unreachable") id eSuggested
+      szOut `shouldBe` (233 :+: 303)
+
 
 
 describeWith :: Show a => a -> (a -> SpecWith ()) -> SpecWith ()

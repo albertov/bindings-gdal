@@ -57,6 +57,7 @@ module GDAL.Internal.Algorithms (
   , gipt
   , gipt2
   , gipt3
+  , suggestedWarpOutput
 ) where
 
 {#context lib = "gdal" prefix = "GDAL" #}
@@ -116,6 +117,7 @@ import GDAL.Internal.CPLConv (withConfigOption)
 
 #include "gdal_alg.h"
 #include "contourwriter.h"
+#include "suggestedwarpoutput.h"
 
 data GDALAlgorithmException
   = NullTransformer !Text
@@ -909,3 +911,18 @@ foreign import ccall "contourwriter.h &hs_contour_writer"
 
 foreign import ccall "contourwriter.h &destroy_points"
   c_destroyPoints :: FunPtr (Ptr PairDouble -> IO ())
+
+suggestedWarpOutput
+  :: SomeTransformer -> Size -> Either GDALException (Geotransform, Size)
+suggestedWarpOutput trans (fmap fromIntegral -> xSize :+: ySize) =
+  unsafePerformIO $
+  alloca $ \gt ->
+  alloca $ \nPixels ->
+  alloca $ \nLines ->
+  try $
+  withTransformerAndArg (Just trans) Nothing Nothing $ \t tArg -> do
+    checkCPLError "suggestedWarpOutput" $
+      {#call unsafe hs_gdal_suggested_warp_output#}
+        xSize ySize t tArg (castPtr gt) nPixels nLines
+    (,) <$> peek gt <*> ((:+:) <$> (fromIntegral <$> peek nPixels)
+                               <*> (fromIntegral <$> peek nLines))

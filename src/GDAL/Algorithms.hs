@@ -35,6 +35,7 @@ module GDAL.Algorithms (
   , gipt
   , gipt2
   , gipt3
+  , suggestedWarpOutput
 ) where
 
 import GDAL.Internal.Algorithms
