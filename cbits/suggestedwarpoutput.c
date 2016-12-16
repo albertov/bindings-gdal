@@ -13,10 +13,10 @@ CPLErr hs_gdal_suggested_warp_output (
 {
   // create a dummy HSDataset to pass to GDALSuggestedWarpOutput the x and y
   // size parameters. This is the only thing it needs it for.
-  HSDatasetImpl impl = calloc(1, sizeof(struct hsDatasetImpl));
-  impl->nRasterXSize = nRasterXSize;
-  impl->nRasterYSize = nRasterYSize;
-  GDALDatasetH hSrcDs = hs_gdal_create_dataset(impl);
+  struct hsDatasetImpl impl = {0};
+  impl.nRasterXSize = nRasterXSize;
+  impl.nRasterYSize = nRasterYSize;
+  GDALDatasetH hSrcDs = hs_gdal_create_dataset(&impl);
   CPLErr ret = GDALSuggestedWarpOutput (
     hSrcDs, pfnTransformer, pTransformArg, padfGeoTransformOut, pnPixels, pnLines);
   GDALClose(hSrcDs);
