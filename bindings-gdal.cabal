@@ -115,11 +115,13 @@ library
                  , cbits/driver.cpp
                  , cbits/hsdataset.cpp
                  , cbits/suggestedwarpoutput.c
+                 , cbits/overviews.cpp
   includes:        cbits/errorhandler.h
                  , cbits/contourwriter.h
                  , cbits/driver.h
                  , cbits/hsdataset.h
                  , cbits/suggestedwarpoutput.h
+                 , cbits/overviews.h
 
 test-suite spec
   type:             exitcode-stdio-1.0

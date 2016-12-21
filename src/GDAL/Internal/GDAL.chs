@@ -63,6 +63,7 @@ module GDAL.Internal.GDAL (
   , openReadWrite
   , unsafeToReadOnly
   , createCopy
+  , createOverviewDataset
   , buildOverviews
   , driverCreationOptionList
 
@@ -88,6 +89,7 @@ module GDAL.Internal.GDAL (
   , bandBlockLen
   , bandSize
   , bandHasOverviews
+  , bandBestOverviewLevel
   , allBand
   , bandNodataValue
   , setBandNodataValue
@@ -197,6 +199,7 @@ import GDAL.Internal.OGRGeometry (Envelope(..), envelopeSize)
 
 
 #include "gdal.h"
+#include "overviews.h"
 
 newtype DriverName = DriverName ByteString
   deriving (Eq, IsString)
@@ -400,6 +403,11 @@ createCopy driver path ds strict opts progress =
         {#call GDALCreateCopy as ^#}
           d p (unDataset ds) (fromBool strict) o pFunc nullPtr
 
+createOverviewDataset
+  :: Dataset s a t -> Int -> Bool -> GDAL s (Dataset s a t)
+createOverviewDataset ds ovLevel thisLevelOnly = newDatasetHandle $
+  {#call hs_gdal_create_overview_dataset#}
+    (unDataset ds) (fromIntegral ovLevel) (fromEnumC thisLevelOnly)
 
 
 newDatasetHandle :: IO DatasetH -> GDAL s (Dataset s a t)
@@ -677,6 +685,18 @@ bandSize band =
   fmap fromIntegral $
         ({#call pure unsafe GetRasterBandXSize as ^#} (unBand band))
     :+: ({#call pure unsafe GetRasterBandYSize as ^#} (unBand band))
+
+bandBestOverviewLevel :: MonadIO m => Band s a t -> Envelope Int -> Size -> m Int
+bandBestOverviewLevel band (Envelope (x0 :+: y0) (x1 :+: y1)) (nx :+: ny) =
+  liftIO $
+    fromIntegral <$> {#call unsafe hs_gdal_band_get_best_overview_level#}
+      (unBand band)
+      (fromIntegral x0)
+      (fromIntegral y0)
+      (fromIntegral (x1-x0))
+      (fromIntegral (y1-y0))
+      (fromIntegral nx)
+      (fromIntegral ny)
 
 allBand :: Band s a t -> Envelope Int
 allBand = Envelope (pure 0) . bandSize
