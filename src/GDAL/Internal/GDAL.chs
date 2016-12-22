@@ -686,10 +686,12 @@ bandSize band =
         ({#call pure unsafe GetRasterBandXSize as ^#} (unBand band))
     :+: ({#call pure unsafe GetRasterBandYSize as ^#} (unBand band))
 
-bandBestOverviewLevel :: MonadIO m => Band s a t -> Envelope Int -> Size -> m Int
+bandBestOverviewLevel
+  :: MonadIO m
+  => Band s a t -> Envelope Int -> Size -> m (Maybe Int)
 bandBestOverviewLevel band (Envelope (x0 :+: y0) (x1 :+: y1)) (nx :+: ny) =
   liftIO $
-    fromIntegral <$> {#call unsafe hs_gdal_band_get_best_overview_level#}
+    toMaybeBandNo <$> {#call unsafe hs_gdal_band_get_best_overview_level#}
       (unBand band)
       (fromIntegral x0)
       (fromIntegral y0)
@@ -697,6 +699,10 @@ bandBestOverviewLevel band (Envelope (x0 :+: y0) (x1 :+: y1)) (nx :+: ny) =
       (fromIntegral (y1-y0))
       (fromIntegral nx)
       (fromIntegral ny)
+  where
+    toMaybeBandNo n | n>=0 = Just (fromIntegral n)
+    toMaybeBandNo _        = Nothing
+
 
 allBand :: Band s a t -> Envelope Int
 allBand = Envelope (pure 0) . bandSize
