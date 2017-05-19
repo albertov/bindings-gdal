@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 import Control.Applicative
 import Control.Monad
 import Data.Maybe
@@ -12,18 +13,24 @@ import Distribution.Simple.Setup (configConfigurationsFlags)
 import Distribution.PackageDescription
 import Distribution.Simple.LocalBuildInfo
 
+
+
+#if !MIN_VERSION_Cabal(2,0,0)
+mkFlagName = FlagName
+#endif
+
 main = defaultMainWithHooks simpleUserHooks {confHook = gdalConf}
 
 gdalConf (pkg0, pbi) flags = do
  lbi <- confHook simpleUserHooks (pkg0, pbi) flags
- case FlagName "autoconfig" `lookup` configConfigurationsFlags flags of
+ case mkFlagName "autoconfig" `lookup` configConfigurationsFlags flags of
    Just False -> putStrLn "NOT using gdal-config" >> return lbi
    _          -> putStrLn "Using gdal-config" >> configureWithGdalConfig lbi flags
 
 configureWithGdalConfig lbi flags = do
  gdalInclude <- getFlagValues 'I' <$> gdalConfig ["--cflags"]
  let isStatic = maybe False id $
-                FlagName "static" `lookup` configConfigurationsFlags flags
+                mkFlagName "static" `lookup` configConfigurationsFlags flags
      getLibArgs = gdalConfig ["--libs"]
                 : if isStatic then [gdalConfig ["--dep-libs"]] else []
  libArgs <- intercalate " "  <$> sequence  getLibArgs

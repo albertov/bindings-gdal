@@ -82,9 +82,7 @@ spec = do
         Nothing -> expectationFailure "Should have transformed the geom"
         Just t  -> do
           geomSpatialReference t `shouldBe` Just srs4326
-          -- We compare WKT or else they won't match (TODO investigate why!)
-          --t  `shouldBe` expected
-          geomToWkt t  `shouldBe` geomToWkt expected
+          geomDistance t expected  `shouldSatisfy` (<1e-6)
 
     describe "geomSpatialReference" $ do
 
