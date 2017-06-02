@@ -197,7 +197,7 @@ withGDAL = bracket_ initializeGDAL cleanupGDAL
 initializeGDAL, cleanupGDAL :: IO ()
 initializeGDAL =
 #if HAVE_EMBEDDED_DATA
-  ensureDataExists
+  ensureDataExists >>
 #endif
   GDAL.allRegister >> OGR.registerAll >> OSR.initialize
 
