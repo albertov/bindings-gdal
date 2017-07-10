@@ -11,7 +11,7 @@ mkDerivation {
   src = ./.;
   preConfigure = "export GDAL_CONFIG=${gdal}/bin/gdal-config";
   setupHaskellDepends = [ base Cabal filepath process ];
-  librarySystemDepends = [ gdal ];
+  librarySystemDepends = [ gdal c2hs ];
   libraryHaskellDepends = [
     base bytestring conduit data-default deepseq exceptions ghc-prim
     microlens monad-control mtl resourcet text time transformers

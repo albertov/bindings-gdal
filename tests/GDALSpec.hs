@@ -290,7 +290,7 @@ spec = setupAndTeardown $ do
       it "returns driver metadata" $ do
         driver <- driverByName "GTIFF"
         meta <- metadata Nothing driver
-        meta `shouldSatisfy` (elem "DCAP_RASTER" . map fst)
+        meta `shouldSatisfy` (elem "DCAP_CREATE" . map fst)
 
     describe "description" $ do
 

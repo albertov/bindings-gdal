@@ -10,6 +10,7 @@ int hs_gdal_band_get_best_overview_level (
     int nBufXSize,
     int nBufYSize)
 {
+#if (GDAL_VERSION_MAJOR >= 2)
   return GDALBandGetBestOverviewLevel2(
       static_cast<GDALRasterBand*>(band)
     , nXOff, nYOff
@@ -17,6 +18,9 @@ int hs_gdal_band_get_best_overview_level (
     , nBufXSize, nBufYSize
     , NULL
     );
+#else
+  return -1;
+#endif
 }
 
 GDALDatasetH hs_gdal_create_overview_dataset (
