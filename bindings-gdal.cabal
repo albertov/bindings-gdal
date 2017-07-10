@@ -105,6 +105,8 @@ library
     else
       extra-libraries: gdal
 
+  extra-libraries: stdc++
+
   ghc-options:       -funbox-strict-fields -Wall
   install-includes: bindings.h
   default-language: Haskell2010

@@ -128,7 +128,7 @@ spec = setupAndTeardown $ do
         liftIO $ setFileMode tmpDir nullFileMode
         ds <- create "ESRI Shapefile" (joinPath [tmpDir, "foo.shp"]) []
         createLayerWithDef ds fd StrictOK []
-          `shouldThrow` ((==OpenFailed) . gdalErrNum)
+          `shouldThrow` (((||) <$> (==OpenFailed) <*> (==AppDefined)) . gdalErrNum)
 #endif
 
       when canCreateMultipleGeometryFields $ do

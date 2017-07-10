@@ -420,8 +420,12 @@ featureFromHandle FeatureDef{..} act =
       else do
         fid <- getFid pF
         fields <- flip imapM fdFields $ \i (fldName, fd) -> do
-          isSet <- liftM toBool ({#call unsafe OGR_F_IsFieldSet as ^#} pF i)
-          if isSet
+#if HAVE_ISFIELDSETANDNOTNULL
+          isNull <- liftM toBool ({#call unsafe OGR_F_IsFieldSetAndNotNull as ^#} pF i)
+#else
+          isNull <- liftM toBool ({#call unsafe OGR_F_IsFieldSet as ^#} pF i)
+#endif
+          if isNull
             then getField (fldType fd) i pF >>=
                   maybe (throwBindingException (FieldParseError fldName))
                         (\f -> return (fldName, f))

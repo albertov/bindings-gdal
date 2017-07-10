@@ -26,6 +26,6 @@ GDALDatasetH hs_gdal_create_overview_dataset (
     )
 {
   return static_cast<GDALDatasetH>(
-    GDALCreateOverviewDataset(static_cast<GDALDataset*>(hSrcDs), nOvrLevel, bThisLevelOnly, 0)
+    GDALCreateOverviewDataset(static_cast<GDALDataset*>(hSrcDs), nOvrLevel, bThisLevelOnly)
     );
 }
