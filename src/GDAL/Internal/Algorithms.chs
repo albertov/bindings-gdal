@@ -582,7 +582,6 @@ createGridIO dt options noDataVal progressFun points envelope size =
   where
     nx :+: ny                       = fmap fromIntegral size
     Envelope (x0 :+: y0) (x1 :+: y1) = fmap realToFrac envelope
-{-# INLINE createGridIO #-}
 
 
 createGrid
@@ -598,7 +597,6 @@ createGrid dt options noDataVal points envelope =
   unsafePerformIO .
   try .
   createGridIO dt options noDataVal Nothing points envelope
-{-# INLINE createGrid #-}
 
 
 data GridPoint a =

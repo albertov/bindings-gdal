@@ -50,7 +50,6 @@ data Value a
 instance NFData a => NFData (Value a) where
   rnf (Value a) = rnf a `seq` ()
   rnf NoData    = ()
-  {-# INLINE rnf #-}
 
 instance Functor Value where
   fmap _ NoData       = NoData
@@ -146,36 +145,30 @@ mkMaskedValueUVector
   -> U.Vector (Value a)
 mkMaskedValueUVector mask values =
     V_Value (Mask (mask), values)
-{-# INLINE mkMaskedValueUVector #-}
 
 mkAllValidValueUVector
   :: (Storable a, Eq a)
   => St.Vector a -> U.Vector (Value a)
 mkAllValidValueUVector values = V_Value (AllValid, values)
-{-# INLINE mkAllValidValueUVector #-}
 
 mkValueUVector
   :: (Storable a, Eq a)
   => a -> St.Vector a -> U.Vector (Value a)
 mkValueUVector nd values = V_Value (UseNoData nd, values)
-{-# INLINE mkValueUVector #-}
 
 mkMaskedValueUMVector
   :: (Storable a, Eq a)
   => St.MVector s Word8 -> St.MVector s a -> U.MVector s (Value a)
 mkMaskedValueUMVector mask values = MV_Value (Mask mask, values)
-{-# INLINE mkMaskedValueUMVector #-}
 
 mkAllValidValueUMVector
   :: (Storable a, Eq a)
   => St.MVector s a -> U.MVector s (Value a)
 mkAllValidValueUMVector values = MV_Value (AllValid, values)
-{-# INLINE mkAllValidValueUMVector #-}
 
 mkValueUMVector
   :: (Storable a, Eq a) => a -> St.MVector s a -> U.MVector s (Value a)
 mkValueUMVector nd values = MV_Value (UseNoData nd, values)
-{-# INLINE mkValueUMVector #-}
 
 
 
@@ -184,7 +177,6 @@ toGVecWithNodata
   => a -> U.Vector (Value a) -> St.Vector a
 toGVecWithNodata nd v =
    (G.generate (G.length v) (fromValue nd . G.unsafeIndex v))
-{-# INLINE toGVecWithNodata #-}
 
 toGVecWithMask
   :: (Storable a, Eq a)
@@ -199,7 +191,6 @@ toGVecWithMask (V_Value (UseNoData nd, vs)) =
     genMask !i
       | vs `G.unsafeIndex` i == nd = maskNoData
       | otherwise                  = maskValid
-{-# INLINE toGVecWithMask #-}
 
 
 toGVec :: (Storable a, Eq a) => U.Vector (Value a) -> Maybe (St.Vector a)
@@ -210,20 +201,17 @@ toGVec (V_Value (UseNoData nd, v))
 toGVec (V_Value (Mask m, v))
   | G.any (==maskNoData) m = Nothing
   | otherwise              = Just v
-{-# INLINE toGVec #-}
 
 
 unValueVector
   :: (Storable a, U.Unbox a, Eq a)
   => U.Vector (Value a) -> Maybe (U.Vector a)
 unValueVector = fmap G.convert . toGVec
-{-# INLINE unValueVector #-}
 
 catValues
   :: (Storable a, U.Unbox a, Eq a)
   => U.Vector (Value a) -> U.Vector a
 catValues = G.map unValue . G.filter (not . isNoData)
-{-# INLINE catValues #-}
 
 instance (Storable a, Eq a) => M.MVector U.MVector (Value a) where
 

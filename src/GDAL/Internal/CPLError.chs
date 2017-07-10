@@ -114,12 +114,10 @@ checkGDALCall isOk act = withErrorHandler $ \ stack -> do
   case isOk err a of
     Nothing -> return a
     Just e  -> throw e
-{-# INLINE checkGDALCall #-}
 
 checkGDALCall_
   :: Exception e
   => (Maybe GDALException -> a -> Maybe e) -> IO a -> IO ()
-{-# INLINE checkGDALCall_ #-}
 checkGDALCall_ isOk = void . checkGDALCall isOk
 
 checkCPLError :: Text -> IO CInt -> IO ()
@@ -128,7 +126,6 @@ checkCPLError msg = checkGDALCall_ $ \mExc r ->
     (Nothing, CE_None) -> Nothing
     (Nothing, e)       -> Just (GDALException e AssertionFailed msg)
     (e, _)             -> e
-{-# INLINE checkCPLError #-}
 
 {#pointer ErrorCell #}
 type ErrorStack = Ptr ErrorCell
@@ -148,7 +145,6 @@ withErrorHandler :: (ErrorStack -> IO a) -> IO a
 withErrorHandler act = runBounded $ with nullPtr $ \stack ->
   ({#call unsafe push_error_handler as ^#} stack >> act stack)
     `finally` ({#call unsafe pop_error_handler as ^#} stack)
-{-# INLINE withErrorHandler #-}
 
 
 withQuietErrorHandler :: IO a -> IO a

@@ -131,11 +131,9 @@ feat .: name =
   maybe (Left ("fromFeature: field '"<>name<>"' not present"))
         fromField
         (HM.lookup name (fFields feat))
-{-# INLINE (.:) #-}
 
 (.=) :: OGRField a => Text -> a -> (Text, Field)
 name .= value = (name, toField value)
-{-# INLINE (.=) #-}
 
 class OGRFeature a where
   toFeature   :: a -> Feature
@@ -232,8 +230,6 @@ feature g fs =
 instance OGRFeature Feature where
   toFeature    = id
   fromFeature  = Right
-  {-# INLINE toFeature #-}
-  {-# INLINE fromFeature #-}
 
 data FeatureDef
   = FeatureDef {
@@ -397,7 +393,6 @@ featureToHandle fdH fId ft act =
 #endif
     act pF
   where Feature {..} = toFeature ft
-{-# INLINE featureToHandle #-}
 
 imapM :: (Monad m, Num a) => (a -> b -> m c) -> V.Vector b -> m (V.Vector c)
 imapM f v  = V.mapM  (uncurry f) (V.zip (V.enumFromN 0 (V.length v)) v)
@@ -447,7 +442,6 @@ featureFromHandle FeatureDef{..} act =
                    , fGeom   = geom
                    , fGeoms  = HM.fromList (V.toList geoms)
                    })
-{-# INLINE featureFromHandle #-}
 
 -- ############################################################################
 -- setField
