@@ -246,7 +246,7 @@ instance Transformer GenImgProjTransformer where
     checkCreateTransformer "GenImgProjTransformer" $
     withMaybeSRAsCString giptSrcSrs $ \sSr ->
     withMaybeSRAsCString giptDstSrs $ \dSr ->
-      {#call unsafe CreateGenImgProjTransformer as ^#}
+      {#call CreateGenImgProjTransformer as ^#}
         (maybe nullDatasetH unDataset srcDs)
         sSr
         nullDatasetH
@@ -286,7 +286,7 @@ instance Transformer GenImgProjTransformer2 where
     liftM castPtr $
     checkCreateTransformer "GenImgProjTransformer2" $
     withOptionList gipt2Options $ \opts ->
-      {#call unsafe CreateGenImgProjTransformer2 as ^#}
+      {#call CreateGenImgProjTransformer2 as ^#}
         (maybe nullDatasetH unDataset srcDs)
         nullDatasetH
         opts
@@ -345,7 +345,7 @@ instance Transformer GenImgProjTransformer3 where
       withMaybeSRAsCString gipt3DstSrs $ \dSrsPtr ->
       withMaybeGeotransformPtr sGt $ \sGtPtr ->
       withMaybeGeotransformPtr gipt3DstGt $ \dGtPtr ->
-        {#call unsafe CreateGenImgProjTransformer3 as ^#}
+        {#call CreateGenImgProjTransformer3 as ^#}
           sSrsPtr (castPtr sGtPtr) dSrsPtr (castPtr dGtPtr)
 
 setGenImgProjTransfomerGeotransform :: Geotransform -> Ptr a -> IO ()

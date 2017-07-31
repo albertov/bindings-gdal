@@ -453,7 +453,7 @@ datasetFileList =
 datasetProjection :: MonadIO m => Dataset s a t -> m (Maybe SpatialReference)
 datasetProjection
   = liftIO
-  .  (maybeSpatialReferenceFromCString <=< {#call unsafe GetProjectionRef as ^#})
+  .  (maybeSpatialReferenceFromCString <=< {#call GetProjectionRef as ^#})
   . unDataset
 
 
