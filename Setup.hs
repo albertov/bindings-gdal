@@ -87,7 +87,11 @@ parseLibraries = concatMap go
                           Nothing     -> []
 
 getFlagValues f s = map (\(_:_:v) -> v) filtered
-  where filtered = filter (\(_:f':_) -> f==f') (words . init $ s)
+  where filtered = filter (\(_:f':_) -> f==f') (words . rstrip $ s)
+        rstrip = reverse . rlstrip . reverse
+        rlstrip ('\n':'\r':x) = x
+        rlstrip ('\n':x) = x
+        rlstrip x = x
  
 staticLibNameAndPath :: FilePath -> Maybe (String, FilePath)
 staticLibNameAndPath p
