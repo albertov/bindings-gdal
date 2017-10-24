@@ -17,14 +17,20 @@ let
   };
   hsLib = import "${pkgs.path}/pkgs/development/haskell-modules/lib.nix"
             { inherit pkgs; inherit (pkgs) lib;};
+  # Need this branch of c2hs until a release supports language-c 0.7, see
+  # https://github.com/haskell/c2hs/issues/194
+  c2hsSrc = pkgs.fetchFromGitHub {
+    owner = "deech";
+    repo = "c2hs";
+    rev = "8b79823c32e234c161baec67fdf7907952ca62b8";
+    sha256 = "0hyrcyssclkdfcw2kgcark8jl869snwnbrhr9k0a9sbpk72wp7nz";
+  };
   haskellPackages = pkgs.haskell.packages.ghc802.override {
     overrides = self: super: {
       # we need language-c 0.7 for the fix to
       # https://github.com/visq/language-c/issues/34
-      # FIXME: c2hs wont build build with language-c 0.7, see
-      # https://github.com/haskell/c2hs/issues/194
-      # language-c = self.callHackage "language-c" "0.7.0" {};
-      # c2hs = hsLib.doJailbreak super.c2hs;
+      language-c = self.callHackage "language-c" "0.7.0" {};
+      c2hs = hsLib.dontCheck (super.callCabal2nix "c2hs" c2hsSrc {});
     };
   };
   withGdal = gdal: haskellPackages.callPackage ./.  { inherit gdal; };
