@@ -7,7 +7,7 @@ build: off
 init:
   - mkdir %systemdrive%\GDAL.download
   - cd %systemdrive%\GDAL.download
-  - if not exist "C:\GDAL\lib" appveyor DownloadFile "http://www.gisinternals.com/query.html?content=filelist&file=release-1500-x64-gdal-2-2-1-mapserver-7-0-6.zip" -FileName archive.zip
+  - if not exist "C:\GDAL\lib" appveyor DownloadFile "http://download.gisinternals.com/sdk/downloads/release-1500-gdal-2-2-1-mapserver-7-0-6.zip" -FileName archive.zip
   - mkdir "C:\GDAL"
   - 7z x -y "archive.zip" -o"C:\GDAL" > nul
   - cd %APPVEYOR_BUILD_FOLDER%
