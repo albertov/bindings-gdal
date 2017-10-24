@@ -29,7 +29,7 @@ public:
   const char*          GetProjectionRef();
 
 private:
-  const double adfGeoTransform[6];
+  double adfGeoTransform[6];
   char *pszProjection;
   const HsStablePtr state;
   void (*const pfnDestroyState)( HsStablePtr );
@@ -65,27 +65,29 @@ private:
 /*                       HSDataset::HSDataset()                         */
 /************************************************************************/
 HSDataset::HSDataset():
-  adfGeoTransform{0,1,0,0,0,1},
   pszProjection(0),
   state(0),
   pfnDestroyState(0)
 {
+  this->adfGeoTransform[0] = 0;
+  this->adfGeoTransform[1] = 1;
+  this->adfGeoTransform[2] = 0;
+  this->adfGeoTransform[3] = 0;
+  this->adfGeoTransform[4] = 0;
+  this->adfGeoTransform[5] = 1;
 }
 
 /************************************************************************/
 /*                       HSDataset::HSDataset(impl)                     */
 /************************************************************************/
 HSDataset::HSDataset(const hsDatasetImpl& impl):
-  adfGeoTransform{impl.adfGeoTransform[0]
-                 ,impl.adfGeoTransform[1]
-                 ,impl.adfGeoTransform[2]
-                 ,impl.adfGeoTransform[3]
-                 ,impl.adfGeoTransform[4]
-                 ,impl.adfGeoTransform[5]},
   pszProjection(impl.pszProjection),
   state(impl.state),
   pfnDestroyState(impl.destroyState)
 {
+  for (int i=0; i<6; i++) {
+    this->adfGeoTransform[i] = impl.adfGeoTransform[i];
+  }
   this->nRasterXSize    = impl.nRasterXSize;
   this->nRasterYSize    = impl.nRasterYSize;
   this->nBands          = impl.nBands;
