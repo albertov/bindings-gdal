@@ -28,9 +28,9 @@ let
   };
 
   haskellPackages = pkgs.haskell.packages.ghc802.override {
-    overrides = self: super: {
-      language-c = self.callCabal2nix "language-c" languageCsrc {};
-      c2hs = hsLib.dontCheck (super.callCabal2nix "c2hs" c2hsSrc {});
+    overrides = self: super: with hsLib; {
+      language-c = dontCheck (self.callCabal2nix "language-c" languageCsrc {});
+      c2hs = dontCheck (super.callCabal2nix "c2hs" c2hsSrc {});
     };
   };
   withGdal = gdal: haskellPackages.callPackage ./.  { inherit gdal; };
