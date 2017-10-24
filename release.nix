@@ -5,7 +5,7 @@ let
   pkgs = import (fetchTarball nixpkgsUrl) {};
   withGdal = gdal:
     let
-      packages = pkgs.haskell.packages.ghc821;
+      packages = pkgs.haskell.packages.ghc802;
     in packages.callPackage ./.  { inherit gdal; };
 
   jobs = rec {

@@ -1,5 +1,5 @@
 language: nix
-sudo: false
+sudo: true # So we get 8GB of RAM
 
 matrix:
     include:
