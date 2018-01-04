@@ -63,7 +63,6 @@ module GDAL.Internal.GDAL (
   , openReadWrite
   , unsafeToReadOnly
   , createCopy
-  , createOverviewDataset
   , buildOverviews
   , driverCreationOptionList
 
@@ -400,13 +399,6 @@ createCopy driver path ds strict opts progress =
       withCString path $ \p ->
         {#call GDALCreateCopy as ^#}
           d p (unDataset ds) (fromBool strict) o pFunc nullPtr
-
-createOverviewDataset
-  :: Dataset s a t -> Int -> Bool -> GDAL s (Dataset s a t)
-createOverviewDataset ds ovLevel thisLevelOnly = newDatasetHandle $
-  {#call hs_gdal_create_overview_dataset#}
-    (unDataset ds) (fromIntegral ovLevel) (fromEnumC thisLevelOnly)
-
 
 newDatasetHandle :: IO DatasetH -> GDAL s (Dataset s a t)
 newDatasetHandle act = do

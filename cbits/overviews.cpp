@@ -22,21 +22,3 @@ int hs_gdal_band_get_best_overview_level (
   return -1;
 #endif
 }
-
-GDALDatasetH hs_gdal_create_overview_dataset (
-    GDALDatasetH hSrcDs,
-    int nOvrLevel,
-    int bThisLevelOnly
-    )
-{
-//FIXME: Use GdalOpenEx instead of the GDALCreateOverviewDataset private API
-  return static_cast<GDALDatasetH>(
-#if ((GDAL_VERSION_MAJOR >= 2) && (GDAL_VERSION_MINOR >=2))
-    GDALCreateOverviewDataset(static_cast<GDALDataset*>(hSrcDs), nOvrLevel, bThisLevelOnly)
-#elif (GDAL_VERSION_MAJOR >= 2)
-    GDALCreateOverviewDataset(static_cast<GDALDataset*>(hSrcDs), nOvrLevel, bThisLevelOnly, 0)
-#else
-    NULL
-#endif
-    );
-}

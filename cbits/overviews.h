@@ -18,13 +18,6 @@ int hs_gdal_band_get_best_overview_level (
     int nBufYSize
     );
 
-GDALDatasetH hs_gdal_create_overview_dataset (
-    GDALDatasetH hSrcDs,
-    int nOvrLevel,
-    int bThisLevelOnly
-    );
-
-
 #ifdef __cplusplus
 }
 #endif
