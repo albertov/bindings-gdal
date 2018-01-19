@@ -20,7 +20,7 @@ module GDAL.Internal.Algorithms (
   , GenImgProjTransformer3
   , SomeTransformer (..)
   , HasTransformer (..)
-  , TransformerFunPtr (..)
+  , TransformerFunPtr
   , HasSrcSrs (..)
   , HasDstSrs (..)
   , HasSrcGt (..)
@@ -83,9 +83,9 @@ import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Generic.Mutable as GM
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
-import Lens.Micro
+import Lens.Micro hiding (to)
 
-import Foreign.C.Types (CDouble(..), CInt(..), CUInt(..), CChar(..))
+import Foreign.C.Types (CDouble(..), CInt(..), CUInt(..))
 import Foreign.Marshal.Utils (fromBool)
 import Foreign.ForeignPtr (newForeignPtr)
 import Foreign.Ptr (
@@ -546,12 +546,12 @@ createGridIO
   -> EnvelopeReal
   -> Size
   -> IO (U.Vector (Value (HsType d)))
-createGridIO dt options noDataVal progressFun points envelope size =
+createGridIO dt opts noDataVal fun points envelope size =
   --FIXME: Need to set this to 1 or else it will hang with GDAL 2.1
   withConfigOption "GDAL_NUM_THREADS" (Just "1") $
-  withProgressFun "createGridIO" progressFun $ \pFun ->
-  with options $ \opts -> do
-    setNodata opts (toCDouble noDataVal)
+  withProgressFun "createGridIO" fun $ \pFun ->
+  with opts $ \pOpts -> do
+    setNodata pOpts (toCDouble noDataVal)
     xs <- G.unsafeThaw (St.unsafeCast (St.map (pFst . gpXY) points))
     ys <- G.unsafeThaw (St.unsafeCast (St.map (pSnd . gpXY) points))
     zs <- G.unsafeThaw (St.map (toCDouble . gpZ) points)
@@ -562,8 +562,8 @@ createGridIO dt options noDataVal progressFun points envelope size =
       Stm.unsafeWith zs $ \pZs ->
       Stm.unsafeWith out $ \pOut ->
       {#call GDALGridCreate as ^#}
-        (fromEnumC (gridAlgorithm options))
-        (castPtr opts)
+        (fromEnumC (gridAlgorithm opts))
+        (castPtr pOpts)
         (fromIntegral (St.length points))
         pXs
         pYs
@@ -593,10 +593,10 @@ createGrid
   -> EnvelopeReal
   -> Size
   -> Either GDALException (U.Vector (Value (HsType d)))
-createGrid dt options noDataVal points envelope =
+createGrid dt opts noDataVal points envelope =
   unsafePerformIO .
   try .
-  createGridIO dt options noDataVal Nothing points envelope
+  createGridIO dt opts noDataVal Nothing points envelope
 
 
 data GridPoint a =
@@ -819,15 +819,15 @@ computeProximity
   -> OptionList
   -> Maybe ProgressFun
   -> GDAL s ()
-computeProximity srcBand prxBand options progressFun =
+computeProximity srcBand prxBand opts fun =
   liftIO $
-  withOptionList options $ \opts ->
-  withProgressFun "computeProximity" progressFun $ \pFun ->
+  withOptionList opts $ \pOpts ->
+  withProgressFun "computeProximity" fun $ \pFun ->
   checkCPLError "computeProximity" $
   {#call GDALComputeProximity as ^#}
     (unBand srcBand)
     (unBand prxBand)
-    opts
+    pOpts
     pFun
     nullPtr
 

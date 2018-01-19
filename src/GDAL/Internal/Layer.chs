@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
@@ -91,6 +92,7 @@ import Control.Monad.Catch (
   , finally
   )
 import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Control (MonadBaseControl(..))
 import Control.Monad.Trans.Resource (MonadResource)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -115,7 +117,9 @@ import GDAL.Internal.Util
 import GDAL.Internal.Types
 
 
-newtype OGR s l a = OGR (GDAL s a)
+-- A phantom-typed ST-like monad to make sure the layer does not escape its
+-- scope
+newtype OGR s l a = OGR { unOGR :: GDAL s a}
 
 deriving instance Functor (OGR s l)
 deriving instance Applicative (OGR s l)
@@ -126,6 +130,13 @@ deriving instance MonadCatch (OGR s l)
 deriving instance MonadMask (OGR s l)
 deriving instance MonadBase IO (OGR s l)
 deriving instance MonadResource (OGR s l)
+
+instance MonadBaseControl IO (OGR s l) where
+  type StM (OGR s l) a = a
+  liftBaseWith runInBase = OGR $ do
+    state <- getInternalState
+    liftIO $ runInBase ((`runWithInternalState` state) . unOGR)
+  restoreM = return
 
 runOGR :: (forall l. OGR s l a ) -> GDAL s a
 runOGR (OGR a) = a

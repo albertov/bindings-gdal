@@ -206,14 +206,14 @@ instance MonadResource (GDAL s) where
 instance MonadBaseControl IO (GDAL s) where
   type StM (GDAL s) a = a
   liftBaseWith runInBase = do
-    GDALInternalState state <- getInternalState
-    liftIO $ runInBase (flip runReaderT state . unGDAL)
+    state <- getInternalState
+    liftIO $ runInBase (`runWithInternalState` state)
   restoreM = return
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
 runGDAL a = runBounded $
   bracket createGDALInternalState closeGDALInternalState
-  (try . runWithInternalState a)
+  (try . evaluate . force <=< runWithInternalState a)
 
 createGDALInternalState :: IO (GDALInternalState s)
 createGDALInternalState = GDALInternalState <$> createInternalState
@@ -228,10 +228,8 @@ newtype GDALInternalState s =
   GDALInternalState { unState :: InternalState }
 
 runWithInternalState
-  :: NFData a
-  => GDAL s a -> GDALInternalState s -> IO a
-runWithInternalState (GDAL a) =
-  (evaluate . force <=< runReaderT a) . unState
+  :: GDAL s a -> GDALInternalState s -> IO a
+runWithInternalState (GDAL a) = runReaderT a . unState
 
 allocateGDAL
   :: GDAL s a
