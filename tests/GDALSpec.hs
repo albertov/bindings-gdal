@@ -29,7 +29,11 @@ main = hspec spec
 spec :: Spec
 spec = setupAndTeardown $ do
 
-  it "cannot open non-existent file" $ do
+  itIO "runGDAL catches GDAL exceptions" $ do
+    ret <- runGDAL (openReadOnly "foo.tif" GDT_Byte >> return False)
+    ret `shouldSatisfy` either ((==OpenFailed) . gdalErrNum) id
+
+  it "cannot open non-existent file" $
     openReadOnly "foo.tif" GDT_Byte
       `shouldThrow` ((==OpenFailed) . gdalErrNum)
 

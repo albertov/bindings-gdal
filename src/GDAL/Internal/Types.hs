@@ -213,7 +213,7 @@ instance MonadBaseControl IO (GDAL s) where
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
 runGDAL a = runBounded $
   bracket createGDALInternalState closeGDALInternalState
-  (try . evaluate . force <=< runWithInternalState a)
+  (try . (evaluate . force <=< runWithInternalState a))
 
 createGDALInternalState :: IO (GDALInternalState s)
 createGDALInternalState = GDALInternalState <$> createInternalState
