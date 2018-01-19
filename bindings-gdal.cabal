@@ -63,11 +63,11 @@ library
                    , GDAL.Internal.CPLConv
                    , GDAL.Internal.GCP
                    , GDAL.Internal.OGRError
-                   , GDAL.Internal.Layer
                    , GDAL.Internal.OSR
                    , GDAL.Internal.OGRGeometry
                    , GDAL.Internal.OGRFeature
                    , GDAL.Internal.OGRFieldInstances
+                   , GDAL.Internal.Layer
                    , GDAL.Internal.OGR
                    , GDAL.Internal.GDAL
                    , GDAL.Internal.Algorithms

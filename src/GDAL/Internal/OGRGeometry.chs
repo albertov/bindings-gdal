@@ -100,18 +100,17 @@ import Data.Typeable (Typeable)
 import qualified Data.Vector.Storable as St
 
 import Foreign.C.String (CString)
-import Foreign.C.Types (CInt(..), CDouble(..), CChar(..), CUChar(..))
+import Foreign.C.Types (CInt(..), CDouble(..))
 import Foreign.Ptr (FunPtr, Ptr, nullPtr, castPtr)
 import Foreign.ForeignPtr (
-    ForeignPtr
-  , withForeignPtr
+    withForeignPtr
   , newForeignPtr
   , mallocForeignPtrBytes
   , touchForeignPtr
   )
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Utils (toBool, with)
+import Foreign.Marshal.Utils (with)
 import Foreign.Storable (Storable(..))
 
 import System.IO.Unsafe (unsafePerformIO)

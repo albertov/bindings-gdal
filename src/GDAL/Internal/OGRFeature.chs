@@ -92,13 +92,7 @@ import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector as V
 
-import Foreign.C.Types (
-    CInt(..)
-  , CDouble(..)
-  , CChar(..)
-  , CUChar(..)
-  , CLong(..)
-  )
+import Foreign.C.Types (CInt(..), CDouble(..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (copyBytes, toBool)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)

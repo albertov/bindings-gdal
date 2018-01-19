@@ -59,10 +59,10 @@ import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector.Storable as St
 
 import Foreign.C.String (CString, peekCString)
-import Foreign.C.Types (CInt(..), CDouble(..), CChar(..))
+import Foreign.C.Types (CInt(..), CDouble(..))
 import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
-import Foreign.ForeignPtr (ForeignPtr, withForeignPtr, newForeignPtr)
+import Foreign.ForeignPtr (newForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (toBool, with)
 

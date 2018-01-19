@@ -17,13 +17,8 @@ module GDAL.Internal.DataType.Internal (
 #include "gdal.h"
 
 import GDAL.Internal.Util (fromEnumC)
-
 import Foreign.C.String (peekCString)
-import Foreign.C.Types
-import Foreign.Ptr
-
 import System.IO.Unsafe (unsafePerformIO)
-
 
 {#enum GDALDataType as DataTypeK {}
   omit (GDT_TypeCount)

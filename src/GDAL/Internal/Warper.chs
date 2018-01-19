@@ -30,24 +30,18 @@ module GDAL.Internal.Warper (
 
 {#context lib = "gdal" prefix = "GDAL" #}
 
-import Control.Applicative ((<$>), (<*>))
 import Control.Monad (when, forM_, forM, liftM)
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (Exception(..), bracket)
 import Data.Maybe (isJust)
 import Data.Typeable (Typeable)
 import Data.Default (Default(..))
-import Foreign.C.Types (CDouble(..), CInt(..), CChar(..))
-import Foreign.Ptr (
-    Ptr
-  , FunPtr
-  , nullPtr
-  , castPtr
-  )
+import Foreign.C.Types (CDouble(..), CInt(..))
+import Foreign.Ptr (nullPtr, castPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (with)
 import Foreign.Storable (Storable(..))
-import Lens.Micro
+import Lens.Micro (Lens', lens, (&), (%~), (^.))
 
 import GDAL.Internal.Types
 import GDAL.Internal.Util (fromEnumC)

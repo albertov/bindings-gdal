@@ -43,7 +43,7 @@ import Test.Hspec (
   )
 import qualified Test.Hspec as Hspec
 
-import GDAL (GDAL, GDALException, runGDAL)
+import GDAL (GDAL, runGDAL)
 
 hspec :: Spec -> IO ()
 hspec = Hspec.hspec . Hspec.parallel

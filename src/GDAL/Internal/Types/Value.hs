@@ -266,7 +266,7 @@ instance (Storable a, Eq a) => M.MVector U.MVector (Value a) where
   {-# INLINE basicUnsafeWrite #-}
 
 #if MIN_VERSION_vector(0,11,0)
-  basicInitialize (MV_Value (Mask x,v)) = do
+  basicInitialize (MV_Value (Mask x,_)) = do
     M.basicSet x maskNoData
   basicInitialize (MV_Value (AllValid,v)) = M.basicInitialize v
   basicInitialize (MV_Value (UseNoData nd ,v)) = M.basicSet v nd

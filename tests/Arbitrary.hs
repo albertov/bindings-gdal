@@ -9,7 +9,6 @@ module Arbitrary (
 ) where
 
 import Control.Applicative ((<$>), (<*>), pure)
-import Control.Monad (liftM)
 import Data.Fixed (Fixed, E3)
 
 import Test.QuickCheck hiding (Fixed)
@@ -28,16 +27,16 @@ instance Arbitrary InversibleGeotransform where
   arbitrary =
     InversibleGeotransform
       <$> (Geotransform
-             <$> liftM getFixed        arbitrary
-             <*> liftM getFixedNonZero arbitrary
+             <$> fmap fixed        arbitrary
+             <*> fmap fixedNonZero arbitrary
              <*> pure 0
-             <*> liftM getFixed        arbitrary
+             <*> fmap fixed        arbitrary
              <*> pure 0
-             <*> liftM getFixedNonZero arbitrary)
+             <*> fmap fixedNonZero arbitrary)
     where
-      getFixed :: Fixed E3 -> Double
-      getFixed = realToFrac
-      getFixedNonZero = getFixed . getNonZero
+      fixed :: Fixed E3 -> Double
+      fixed = realToFrac
+      fixedNonZero = fixed . getNonZero
 
 infix 4 ~==
 (~==) :: (Fractional a, Ord a) => a -> a -> Bool
@@ -54,14 +53,10 @@ instance Arbitrary Geotransform where
       <*> arbitrary
       <*> arbitrary
 
-positivePair :: Arbitrary (Positive a) => Gen (Pair a)
-positivePair = liftM (fmap getPositive) arbitrary
+positivePair :: (Num a, Ord a, Arbitrary a) => Gen (Pair a)
+positivePair = fmap (fmap getPositive) arbitrary
 
-instance (
-    Num a
-  , Arbitrary a
-  , Arbitrary (Positive a)
-  ) => Arbitrary (Envelope a) where
+instance (Num a, Arbitrary a, Ord a) => Arbitrary (Envelope a) where
   arbitrary = do eMin <- arbitrary
                  sz   <- positivePair
                  return (Envelope eMin (eMin+sz))

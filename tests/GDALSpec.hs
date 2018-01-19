@@ -1,25 +1,21 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module GDALSpec (main, spec) where
 
-import Control.Applicative ((<$>), (<*>))
-import Control.Monad (void, forM_)
+import Control.Monad (void)
 
 import Data.Maybe (isNothing)
 import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.String (fromString)
-import qualified Data.Vector.Unboxed as U
 
 import System.FilePath (joinPath)
 
 import GDAL
 import OSR
-import OGR (envelopeSize)
 
 import Test.QuickCheck (getPositive)
 import Test.Hspec.QuickCheck (prop)

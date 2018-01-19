@@ -30,7 +30,6 @@ import Data.Text.Encoding (encodeUtf8, decodeUtf8With)
 import Data.Text.Encoding.Error (lenientDecode)
 
 import Foreign.C.String (CString)
-import Foreign.C.Types (CChar(..))
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek)
 import Foreign.ForeignPtr (newForeignPtr)

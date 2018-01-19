@@ -29,7 +29,6 @@ import Foreign.Marshal.Array (
   , copyArray
   , advancePtr
   )
-import Foreign.C.Types (CChar(..), CDouble(..))
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (Storable(..))
 

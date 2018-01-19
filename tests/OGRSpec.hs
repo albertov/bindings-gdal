@@ -368,14 +368,10 @@ instance OGRField a => OGRFeatureDef (TestFeature a) where
 
 ogrFieldSpec
   :: forall a. (
-    OGRFeatureDef (TestFeature (Maybe a))
-  , OGRFeatureDef (TestFeature a)
-  , Typeable a
+    Typeable a
   , OGRField a
   , Typeable (Maybe a)
-  , Eq (Maybe a)
   , Eq a
-  , Show (Maybe a)
   , Show a
   )
   => Driver -> a -> SpecWith (Arg (IO ()))
