@@ -61,6 +61,9 @@ module GDAL (
   , catValues
 
   , driverByName
+  , driverShortName
+  , driverLongName
+  , driverCreationOptionList
   , registerDriver
   , deregisterDriver
   , deleteDriver
@@ -76,6 +79,13 @@ module GDAL (
   , unsafeToReadOnly
   , createCopy
   , buildOverviews
+
+  , layerCount
+  , getLayer
+  , getLayerByName
+  , executeSQL
+  , createLayer
+  , createLayerWithDef
 
   , bandAs
 

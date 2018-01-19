@@ -20,7 +20,7 @@ import Lens.Micro
 
 import OGR
 import OSR
-import GDAL
+import GDAL hiding (createLayer, createLayerWithDef)
 import GDAL.Algorithms
 
 import TestUtils

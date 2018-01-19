@@ -80,7 +80,7 @@ spec = setupAndTeardown $ do
         `shouldThrow` (==InvalidLayerName "foo")
 
     it "can get layer count" $ do
-      n <- getShapePath >>= openReadOnly >>= dataSourceLayerCount
+      n <- getShapePath >>= openReadOnly >>= layerCount
       n `shouldBe` 1
 
     it "can get layer name" $ do
@@ -93,7 +93,7 @@ spec = setupAndTeardown $ do
 
 
     it "create throws on invalid driver name" $
-      create "foo" "" [] `shouldThrow` (==(UnknownDriver "foo"))
+      create "foo" "" [] `shouldThrow` (==(UnknownOGRDriver "foo"))
 
     describe "createLayerWithDef" $ do
       let check fd = do

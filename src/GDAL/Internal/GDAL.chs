@@ -44,6 +44,8 @@ module GDAL.Internal.GDAL (
   , geoEnvelopeTransformer
 
   , driverByName
+  , driverShortName
+  , driverLongName
 
   , nullDatasetH
   , allRegister
@@ -67,10 +69,16 @@ module GDAL.Internal.GDAL (
   , buildOverviews
   , driverCreationOptionList
 
+  , layerCount
+  , getLayer
+  , getLayerByName
+  , executeSQL
+  , createLayer
+  , createLayerWithDef
+
   , bandAs
 
   , datasetDriver
-  , datasetDriverName
   , datasetSize
   , datasetFileList
   , datasetProjection
@@ -152,7 +160,7 @@ import Control.Arrow (second)
 import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.Exception (Exception(..))
 import Control.DeepSeq (NFData(..))
-import Control.Monad (liftM, liftM2, when, (>=>), (<=<), forever)
+import Control.Monad (liftM2, when, (>=>), (<=<), forever)
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -169,6 +177,7 @@ import Data.String (IsString)
 import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Text.Encoding (decodeUtf8)
 import Data.Typeable (Typeable)
 import qualified Data.Vector.Generic          as G
 import qualified Data.Vector.Storable         as St
@@ -194,6 +203,10 @@ import GDAL.Internal.Types.Value
 import GDAL.Internal.DataType
 import GDAL.Internal.Common
 import GDAL.Internal.Util
+{#import GDAL.Internal.OGRError#}
+{#import GDAL.Internal.Layer#}
+{#import GDAL.Internal.OGRGeometry#}
+{#import GDAL.Internal.OGRFeature#}
 {#import GDAL.Internal.GCP#}
 {#import GDAL.Internal.CPLError#}
 {#import GDAL.Internal.CPLString#}
@@ -319,14 +332,21 @@ driverByName (DriverName s) = liftIO $ do
 driverHByName :: MonadIO m => DriverName -> m DriverH
 driverHByName s = (\(Driver h) -> h) <$> driverByName s
 
-driverCreationOptionList :: DriverName -> ByteString
-driverCreationOptionList driver = unsafePerformIO $ do
-  d <- driverHByName driver
-  {#call GetDriverCreationOptionList	as ^#} d >>= packCString
+driverLongName :: Driver d -> Text
+driverLongName (Driver d) = unsafePerformIO $
+  {#call unsafe GetDriverLongName as ^#} d >>= fmap decodeUtf8 . packCString
+
+driverShortName :: Driver d -> Text
+driverShortName (Driver d) = unsafePerformIO $
+  {#call unsafe GetDriverShortName as ^#} d >>= fmap decodeUtf8 . packCString
+
+driverCreationOptionList :: Driver d -> ByteString
+driverCreationOptionList (Driver d) = unsafePerformIO $
+  {#call GetDriverCreationOptionList as ^#} d >>= packCString
 
 validateCreationOptions :: DriverH -> Ptr CString -> IO ()
 validateCreationOptions d o = do
-  valid <- liftM toBool ({#call GDALValidateCreationOptions as ^ #} d o)
+  valid <- fmap toBool ({#call GDALValidateCreationOptions as ^ #} d o)
   when (not valid) (throwBindingException InvalidDriverOptions)
 
 create
@@ -467,11 +487,6 @@ datasetDriver ds =
   unsafePerformIO $
   Driver <$> {#call unsafe GetDatasetDriver as ^#} (unDataset ds)
 
-datasetDriverName :: Dataset s a t -> DriverName
-datasetDriverName ds = unsafePerformIO $
-  DriverName <$> (packCString =<< {#call unsafe GetDriverShortName as ^#} d)
-  where Driver d = datasetDriver ds
-
 datasetSize :: Dataset s a t -> Size
 datasetSize ds =
   fmap fromIntegral $
@@ -519,7 +534,7 @@ datasetGCPs ds =
     let pDs = unDataset ds
     srs <- maybeSpatialReferenceFromCString
             =<< {#call unsafe GetGCPProjection as ^#} pDs
-    nGcps <- liftM fromIntegral ({#call unsafe GetGCPCount as ^#} pDs)
+    nGcps <- fmap fromIntegral ({#call unsafe GetGCPCount as ^#} pDs)
     gcps <- {#call unsafe GetGCPs as ^#} pDs >>= fromGCPArray nGcps
     return (gcps, srs)
 
@@ -590,13 +605,13 @@ gcpGeotransform gcps approxOk =
   unsafePerformIO $
   alloca $ \pGt ->
   withGCPArrayLen gcps $ \nGcps pGcps -> do
-    ret <- liftM toBool $
+    ret <- fmap toBool $
            {#call unsafe GCPsToGeoTransform as ^#}
              (fromIntegral nGcps)
              pGcps
              (castPtr pGt)
              (fromEnumC approxOk)
-    if ret then liftM Just (peek pGt) else return Nothing
+    if ret then fmap Just (peek pGt) else return Nothing
 
 applyGeotransform :: Geotransform -> Pair Double -> Pair Double
 applyGeotransform Geotransform{..} (x :+: y) =
@@ -656,19 +671,19 @@ instance Storable Geotransform where
     pokeElemOff p 5 (realToFrac g5)
   peek pGt = do
     let p = castPtr pGt :: Ptr CDouble
-    Geotransform <$> liftM realToFrac (peekElemOff p 0)
-                 <*> liftM realToFrac (peekElemOff p 1)
-                 <*> liftM realToFrac (peekElemOff p 2)
-                 <*> liftM realToFrac (peekElemOff p 3)
-                 <*> liftM realToFrac (peekElemOff p 4)
-                 <*> liftM realToFrac (peekElemOff p 5)
+    Geotransform <$> fmap realToFrac (peekElemOff p 0)
+                 <*> fmap realToFrac (peekElemOff p 1)
+                 <*> fmap realToFrac (peekElemOff p 2)
+                 <*> fmap realToFrac (peekElemOff p 3)
+                 <*> fmap realToFrac (peekElemOff p 4)
+                 <*> fmap realToFrac (peekElemOff p 5)
 
 
 datasetGeotransform:: MonadIO m => Dataset s a t -> m (Maybe Geotransform)
 datasetGeotransform ds = liftIO $ alloca $ \p -> do
   ret <- {#call unsafe GetGeoTransform as ^#} (unDataset ds) (castPtr p)
   if toEnumC ret == CE_None
-    then liftM Just (peek p)
+    then fmap Just (peek p)
     else return Nothing
 
 setDatasetGeotransform :: MonadIO m => Geotransform -> RWDataset s a -> m ()
@@ -679,13 +694,13 @@ setDatasetGeotransform gt ds = liftIO $
 
 datasetBandCount :: MonadIO m => Dataset s a t -> m Int
 datasetBandCount =
-  liftM fromIntegral . liftIO . {#call unsafe GetRasterCount as ^#} . unDataset
+  fmap fromIntegral . liftIO . {#call unsafe GetRasterCount as ^#} . unDataset
 
 getBand :: Int -> Dataset s a t -> GDAL s (Band s a t)
 getBand b ds = liftIO $ do
   pB <- checkGDALCall checkit $
          {#call GetRasterBand as ^#} (unDataset ds) (fromIntegral b)
-  dt <- liftM toEnumC ({#call unsafe GetRasterDataType as ^#} pB)
+  dt <- fmap toEnumC ({#call unsafe GetRasterDataType as ^#} pB)
   return (Band (pB, dt))
   where
     checkit exc p
@@ -708,7 +723,7 @@ addBand opts ds = do
 bandBlockSize :: (Band s a t) -> Size
 bandBlockSize band = unsafePerformIO $ alloca $ \xPtr -> alloca $ \yPtr -> do
    {#call unsafe GetBlockSize as ^#} (unBand band) xPtr yPtr
-   liftM (fmap fromIntegral) (liftM2 (:+:) (peek xPtr) (peek yPtr))
+   fmap (fmap fromIntegral) (liftM2 (:+:) (peek xPtr) (peek yPtr))
 
 bandBlockLen :: Band s a t -> Int
 bandBlockLen = (\(x :+: y) -> x*y) . bandBlockSize
@@ -747,14 +762,14 @@ bandBlockCount b = fmap ceiling $ liftA2 ((/) :: Double -> Double -> Double)
 
 bandHasOverviews :: Band s a t -> GDAL s Bool
 bandHasOverviews =
-  liftIO . liftM toBool . {#call unsafe HasArbitraryOverviews as ^#} . unBand
+  liftIO . fmap toBool . {#call unsafe HasArbitraryOverviews as ^#} . unBand
 
 bandNodataValue :: GDALType a => Band s a t -> GDAL s (Maybe a)
 bandNodataValue b =
   liftIO $
   alloca $ \p -> do
     value <- {#call unsafe GetRasterNoDataValue as ^#} (unBand b) p
-    hasNodata <- liftM toBool $ peek p
+    hasNodata <- fmap toBool $ peek p
     return (if hasNodata then Just (fromCDouble value) else Nothing)
 
 
@@ -775,7 +790,7 @@ readBand :: forall s t a. GDALType a
   -> Envelope Int
   -> Size
   -> GDAL s (U.Vector (Value a))
-readBand band win sz = liftM fromJust $ runConduit $
+readBand band win sz = fmap fromJust $ runConduit $
   yield win =$= unsafeBandConduit sz band =$= CL.head
 
 bandConduit
@@ -957,14 +972,14 @@ bandSinkGeo band = do
     Nothing    -> lift (throwBindingException CannotInvertGeotransform)
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
-noDataOrFail = liftM (fromMaybe err) . bandNodataValue
+noDataOrFail = fmap (fromMaybe err) . bandNodataValue
   where
     err = error ("GDAL.readMasked: band has GMF_NODATA flag but did " ++
                  "not  return a nodata value")
 
 bandMask :: Band s a t -> GDAL s (Band s Word8 t)
 bandMask =
-  liftIO . liftM (\p -> Band (p,GByte)) . {#call GetMaskBand as ^#}
+  liftIO . fmap (\p -> Band (p,GByte)) . {#call GetMaskBand as ^#}
          . unBand
 
 data MaskType
@@ -1128,7 +1143,7 @@ foldBands fun zb bs =
   runConduit (unsafeBlockSource zb =$= awaitForever foldThem =$= blockSink zb)
   where
     foldThem (bix, acc) = do
-      r <- liftM (L.foldl' (G.zipWith fun) acc)
+      r <- fmap (L.foldl' (G.zipWith fun) acc)
                  (lift (mapM (flip readBandBlock bix) bs))
       yield (bix, r)
 
@@ -1222,7 +1237,7 @@ blockSink band = do
 readBandBlock
   :: forall s t a. GDALType a
   => Band s a t -> BlockIx -> GDAL s (U.Vector (Value a))
-readBandBlock band blockIx = liftM fromJust $ runConduit $
+readBandBlock band blockIx = fmap fromJust $ runConduit $
   yield blockIx =$= unsafeBlockConduit band =$= CL.head
 
 
@@ -1332,7 +1347,7 @@ openDatasetCount =
   alloca $ \ppDs ->
   alloca $ \pCount -> do
     {#call unsafe GetOpenDatasets as ^#} ppDs pCount
-    liftM fromIntegral (peek pCount)
+    fmap fromIntegral (peek pCount)
 
 -----------------------------------------------------------------------------
 -- Metadata
@@ -1357,7 +1372,7 @@ metadata domain o =
   liftIO $
   withMaybeByteString domain
   ({#call unsafe GetMetadata as ^#} (majorObject o)
-    >=> liftM (map breakIt) . fromBorrowedCPLStringList)
+    >=> fmap (map breakIt) . fromBorrowedCPLStringList)
   where
     breakIt s =
       case T.break (=='=') s of
@@ -1396,7 +1411,130 @@ setDescription val =
   liftIO . checkGDALCall_ const .
   useAsCString val . {#call unsafe GDALSetDescription as ^#} . majorObject
 
+-----------------------------------------------------------------------------
+-- GDAL2 OGR-GDAL consolidated API (WIP)
+-----------------------------------------------------------------------------
 
+
+layerCount :: Dataset s a t -> GDAL s Int
+
+getLayer :: Int -> Dataset s a t -> GDAL s (Layer s l t a)
+
+getLayerByName :: Text -> Dataset s a t -> GDAL s (Layer s l t a)
+
+executeSQL
+  :: OGRFeature a
+  => SQLDialect -> Text -> Maybe Geometry -> RODataset s any
+  -> GDAL s (ROLayer s l a)
+
+createLayer
+  :: forall s l a any. OGRFeatureDef a
+  => RWDataset s any -> ApproxOK -> OptionList -> GDAL s (RWLayer s l a)
+
+createLayerWithDef
+  :: forall s l a any
+   . RWDataset s any -> FeatureDef -> ApproxOK -> OptionList
+  -> GDAL s (RWLayer s l a)
+
+#if GDAL_VERSION_MAJOR >= 2
+layerCount = fmap fromIntegral
+           . liftIO . {#call GDALDatasetGetLayerCount as ^#} . unDataset
+
+getLayer ix ds =
+  fmap Layer $
+  flip allocate (const (return ())) $
+  checkGDALCall checkIt $
+    {#call GDALDatasetGetLayer as ^#} (unDataset ds) (fromIntegral ix)
+  where
+    checkIt e p' | p'==nullLayerH = Just (fromMaybe dflt e)
+    checkIt e _                   = e
+    dflt = GDALBindingException (InvalidLayerIndex ix)
+
+getLayerByName name ds =
+  fmap Layer $
+  flip allocate (const (return ())) $
+  checkGDALCall checkIt $
+  useAsEncodedCString name $
+  {#call GDALDatasetGetLayerByName as ^#} (unDataset ds)
+  where
+    checkIt e p' | p'==nullLayerH = Just (fromMaybe dflt e)
+    checkIt e _                   = e
+    dflt = GDALBindingException (InvalidLayerName name)
+
+executeSQL dialect query mSpatialFilter ds =
+  fmap Layer $ allocate execute freeIfNotNull
+  where
+    execute =
+      checkGDALCall checkit $
+      withMaybeGeometry mSpatialFilter $ \pF ->
+      useAsEncodedCString query $ \pQ ->
+      withSQLDialect dialect $ {#call GDALDatasetExecuteSQL as ^#} pDs pQ pF
+
+    freeIfNotNull pL
+      | pL /= nullLayerH = {#call unsafe GDALDatasetReleaseResultSet as ^#} pDs pL
+      | otherwise        = return ()
+
+    pDs = unDataset ds
+    checkit (Just (GDALException{gdalErrNum=AppDefined, gdalErrMsg=msg})) _ =
+      Just (GDALBindingException (SQLQueryError msg))
+    checkit Nothing p | p==nullLayerH =
+      Just (GDALBindingException NullLayer)
+    checkit e p | p==nullLayerH = e
+    checkit _ _                 = Nothing
+
+createLayer ds = createLayerWithDef ds (featureDef (Proxy :: Proxy a))
+
+createLayerWithDef ds FeatureDef{..} approxOk opts =
+  fmap Layer $
+  flip allocate (const (return ())) $
+  useAsEncodedCString fdName $ \pName ->
+  withMaybeSpatialReference (gfdSrs fdGeom) $ \pSrs ->
+  withOptionList opts $ \pOpts -> do
+    pL <- checkGDALCall checkIt $
+            {#call GDALDatasetCreateLayer as ^#} pDs pName pSrs gType pOpts
+    G.forM_ fdFields $ \(n,f) -> withFieldDefnH n f $ \pFld ->
+      checkOGRError "CreateField" $
+        {#call unsafe OGR_L_CreateField as ^#} pL pFld iApproxOk
+    when (not (G.null fdGeoms)) $
+      if supportsMultiGeomFields pL
+        then
+#if SUPPORTS_MULTI_GEOM_FIELDS
+          G.forM_ fdGeoms $ \(n,f) -> withGeomFieldDefnH n f $ \pGFld ->
+            {#call unsafe OGR_L_CreateGeomField as ^#} pL pGFld iApproxOk
+#else
+          error "should never reach here"
+#endif
+        else throwBindingException MultipleGeomFieldsNotSupported
+    return pL
+  where
+    supportsMultiGeomFields pL =
+      layerHasCapability pL CreateGeomField &&
+      dataSourceHasCapability pDs CreateGeomFieldAfterCreateLayer
+    iApproxOk = fromEnumC approxOk
+    pDs   = unDataset ds
+    gType = fromEnumC (gfdType fdGeom)
+    checkIt e p' | p'==nullLayerH = Just (fromMaybe dflt e)
+    checkIt e _                   = e
+    dflt = GDALBindingException NullLayer
+
+    dataSourceHasCapability :: DatasetH -> DataSourceCapability -> Bool
+    dataSourceHasCapability d c = unsafePerformIO $ do
+      withCString ("ODsC" ++ show c)
+        (fmap toBool . {#call unsafe GDALDatasetTestCapability as ^#} d)
+
+
+#else
+requiresGDAL2 :: String -> a
+requiresGDAL2 funName = error $
+     show funName 
+  ++ " on a Dataset requires GDAL version >= 2. Use the API from OGR instead"
+layerCount = requiresGDAL2 "layerCount"
+getLayer = requiresGDAL2 "getLayer"
+getLayerByName = requiresGDAL2 "getLayerByName"
+executeSQL = requiresGDAL2 "executeSQL"
+createLayer = requiresGDAL2 "createLayer"
+createLayerWithDef = requiresGDAL2 "createLayerWithDef"
+#endif
 
 -----------------------------------------------------------------------------
 -- Conduit utils
@@ -1444,12 +1582,12 @@ decorate (ConduitM c0) = ConduitM $ \rest -> let
   go1 HaveOutput{} = error "unexpected NeedOutput"
   go1 (NeedInput p c) = NeedInput (\i -> go2 i (p i)) (go1 . c)
   go1 (Done r) = rest r
-  go1 (PipeM mp) = PipeM (liftM (go1) mp)
+  go1 (PipeM mp) = PipeM (fmap (go1) mp)
   go1 (Leftover p i) = Leftover (go1 p) i
 
   go2 i (HaveOutput p c o) = HaveOutput (go2 i p) c (i, o)
   go2 _ (NeedInput p c)    = NeedInput (\i -> go2 i (p i)) (go1 . c)
   go2 _ (Done r)           = rest r
-  go2 i (PipeM mp)         = PipeM (liftM (go2 i) mp)
+  go2 i (PipeM mp)         = PipeM (fmap (go2 i) mp)
   go2 i (Leftover p i')    = Leftover (go2 i p) i'
   in go1 (c0 Done)

@@ -107,7 +107,7 @@ module OGR (
   , canCreateMultipleGeometryFields
 
   , dataSourceName
-  , dataSourceLayerCount
+  , layerCount
   , executeSQL
 
   , createLayer

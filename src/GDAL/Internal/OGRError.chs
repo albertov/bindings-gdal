@@ -38,7 +38,7 @@ data OGRException
   | NullDataSource
   | NullCoordinateTransformation
   | UnexpectedNullFid
-  | UnknownDriver     !ByteString
+  | UnknownOGRDriver  !ByteString
   | InvalidLayerIndex !Int
   | InvalidLayerName  !Text
   | SQLQueryError     !Text
