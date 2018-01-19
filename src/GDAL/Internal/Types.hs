@@ -2,7 +2,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -109,7 +108,7 @@ instance Functor Pair where
 #endif
 
 instance Applicative Pair where
-  pure a = (a :+: a)
+  pure a = a :+: a
   {-# INLINE pure #-}
   (a :+: b) <*> (d :+: e) = a d :+: b e
   {-# INLINE (<*>) #-}

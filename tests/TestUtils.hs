@@ -56,8 +56,9 @@ it n a = Hspec.it n (hFlush stdout >> runGDAL' a)
 
 -- For things that we want to make sure that can run outside of the GDAL monad
 itIO :: String -> IO () -> SpecWith (Arg (IO ()))
-itIO n = Hspec.it n
+itIO = Hspec.it
 
+{-# ANN withDir "HLint: ignore Avoid lambda" #-}
 withDir :: String -> (forall s. FilePath -> GDAL s ()) -> SpecWith (Arg (IO ()))
 withDir n a =
   Hspec.it n (withSystemTempDirectory "test." (\f -> runGDAL' (a f)))
