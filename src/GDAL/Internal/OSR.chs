@@ -53,7 +53,7 @@ import Control.Monad.Catch (mask_, try)
 import Control.Monad (liftM, (>=>), when, void)
 
 import Data.ByteString (ByteString)
-import Data.ByteString.Char8 (useAsCString)
+import Data.ByteString.Char8 (useAsCString, unpack)
 
 import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector.Storable as St
@@ -79,7 +79,7 @@ instance NFData SpatialReference where
   rnf SpatialReference{} = ()
 
 instance Show SpatialReference where
-   show = show . srsToWkt
+   show = unpack . srsToWkt
 
 srsToWkt :: SpatialReference -> ByteString
 srsToWkt s = exportWith fun s

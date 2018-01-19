@@ -85,6 +85,8 @@ module GDAL.Internal.GDAL (
   , datasetFileList
   , datasetProjection
   , setDatasetProjection
+  , datasetProjectionWkt
+  , setDatasetProjectionWkt
   , datasetGeotransform
   , setDatasetGeotransform
   , datasetGCPs
@@ -529,12 +531,18 @@ datasetProjection
   .  (maybeSpatialReferenceFromCString <=< {#call GetProjectionRef as ^#})
   . unDataset
 
+datasetProjectionWkt :: MonadIO m => Dataset s a t -> m (Maybe ByteString)
+datasetProjectionWkt ds = liftIO $ do
+  p <- {#call GetProjectionRef as ^#} (unDataset ds)
+  if p == nullPtr then return Nothing else Just <$> packCString p
 
 setDatasetProjection :: SpatialReference -> RWDataset s a -> GDAL s ()
-setDatasetProjection srs ds =
+setDatasetProjection srs = setDatasetProjectionWkt (srsToWkt srs)
+
+setDatasetProjectionWkt :: ByteString -> RWDataset s a -> GDAL s ()
+setDatasetProjectionWkt srs ds =
   liftIO $ checkCPLError "SetProjection" $
-    useAsCString (srsToWkt srs)
-      ({#call unsafe SetProjection as ^#} (unDataset ds))
+    useAsCString srs ({#call SetProjection as ^#} (unDataset ds))
 
 setDatasetGCPs
   :: [GroundControlPoint] -> Maybe SpatialReference -> RWDataset s a

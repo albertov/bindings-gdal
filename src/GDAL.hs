@@ -119,6 +119,8 @@ module GDAL (
   , datasetFileList
   , datasetProjection
   , setDatasetProjection
+  , datasetProjectionWkt
+  , setDatasetProjectionWkt
   , datasetGeotransform
   , setDatasetGeotransform
   , datasetGCPs
