@@ -48,6 +48,36 @@ module GDAL (
   , HasProgressFun (..)
   , HasOptions (..)
   , ContinueOrStop (..)
+  , SQLDialect (..)
+  , Layer
+  , ROLayer
+  , RWLayer
+
+  , OGR
+  , OGRConduit
+  , OGRSource
+  , OGRSink
+  , OGRError (..)
+  , OGRException (..)
+
+  , OGRFeature (..)
+  , OGRFeatureDef (..)
+  , OGRField   (..)
+  , OGRTimeZone (..)
+  , Fid (..)
+  , FieldType (..)
+  , Field (..)
+  , Feature (..)
+  , Justification (..)
+
+  , FeatureDef (..)
+  , GeomFieldDef (..)
+  , FieldDef (..)
+
+  , GeometryType (..)
+  , Geometry (..)
+  , WkbByteOrder (..)
+  , EnvelopeReal
 
   , dataType
   , runGDAL
@@ -79,13 +109,6 @@ module GDAL (
   , unsafeToReadOnly
   , createCopy
   , buildOverviews
-
-  , layerCount
-  , getLayer
-  , getLayerByName
-  , executeSQL
-  , createLayer
-  , createLayerWithDef
 
   , bandAs
 
@@ -165,9 +188,111 @@ module GDAL (
   , withConfigOption
   , setConfigOption
   , getConfigOption
-  , module Data.Conduit
   , def
   , ensureDataExists
+
+  , runOGR
+
+  , envelopeSize
+
+  , geomFromWkt
+  , geomFromWkb
+  , geomFromGml
+
+  , geomToWkt
+  , geomToWkb
+  , geomToGml
+  , geomToKml
+  , geomToJson
+
+  , geomSpatialReference
+  , geomType
+  , geomEnvelope
+
+  , geomIntersects
+  , geomEquals
+  , geomDisjoint
+  , geomTouches
+  , geomCrosses
+  , geomWithin
+  , geomContains
+  , geomOverlaps
+  , geomSimplify
+  , geomSimplifyPreserveTopology
+  , geomSegmentize
+  , geomBoundary
+  , geomConvexHull
+  , geomBuffer
+  , geomIntersection
+  , geomUnion
+  , geomUnionCascaded
+  , geomPointOnSurface
+  , geomDifference
+  , geomSymDifference
+  , geomDistance
+  , geomLength
+  , geomArea
+  , geomCentroid
+  , geomIsEmpty
+  , geomIsValid
+  , geomIsSimple
+  , geomIsRing
+  , geomPolygonize
+
+  , fieldTypedAs
+  , (.:)
+  , (.=)
+  , aGeom
+  , aNullableGeom
+  , theGeom
+  , theNullableGeom
+  , feature
+
+  , isOGRException
+
+  , closeLayer
+  , canCreateMultipleGeometryFields
+
+  , layerCount
+  , executeSQL
+
+  , createLayer
+  , createLayerWithDef
+
+  , getLayer
+  , getLayerByName
+
+  , sourceLayer
+  , sourceLayer_
+  , conduitInsertLayer
+  , conduitInsertLayer_
+  , sinkInsertLayer
+  , sinkInsertLayer_
+  , sinkUpdateLayer
+
+  , syncLayerToDisk
+
+  , layerExtent
+  , layerName
+  , layerFeatureDef
+  , layerFeatureCount
+  , layerSpatialFilter
+  , layerSpatialReference
+  , setLayerSpatialFilter
+  , setLayerSpatialFilterRect
+  , clearLayerSpatialFilter
+
+
+  , createFeature
+  , createFeatureWithFid
+  , createFeature_
+  , getFeature
+  , updateFeature
+  , deleteFeature
+
+  , unsafeToReadOnlyLayer
+
+  , module Data.Conduit
 ) where
 
 import Control.Exception (bracket_)
@@ -183,6 +308,10 @@ import GDAL.Internal.CPLProgress
 import GDAL.Internal.GCP
 import GDAL.Internal.GDAL as GDAL
 import GDAL.Internal.Types
+import GDAL.Internal.Layer
+import GDAL.Internal.OGRError
+import GDAL.Internal.OGRGeometry
+import GDAL.Internal.OGRFeature
 import GDAL.Internal.Types.Value
 import GDAL.Internal.Common
 import GDAL.Internal.HSDriver

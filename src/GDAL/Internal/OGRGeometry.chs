@@ -267,7 +267,7 @@ geomFromGmlIO bs =
     gP <- {#call unsafe OGR_G_CreateFromGML as ^#} pS
     if gP == nullPtr
       then return CorruptData
-      else poke gPtr gP >> return None
+      else poke gPtr gP >> return OGRNone
 
 
 
@@ -351,7 +351,7 @@ instance Projectable Geometry where
              withGeometry transformed $
              withCoordinateTransformation ct .
              {#call unsafe OGR_G_Transform as ^#}
-      return (if err==None then Just transformed else Nothing)
+      return (if err==OGRNone then Just transformed else Nothing)
 
 geomSimplify :: Double -> Geometry -> Maybe Geometry
 geomSimplify =
@@ -450,8 +450,8 @@ geomCentroid geom = unsafePerformIO $ do
              withGeometry centroid $
              {#call unsafe OGR_G_Centroid as ^#} pGeom
       case err of
-        None -> return (Just centroid)
-        _    -> return Nothing
+        OGRNone -> return (Just centroid)
+        _       -> return Nothing
 
 {#fun pure unsafe OGR_G_IsEmpty as geomIsEmpty {`Geometry'} -> `Bool' #}
 

@@ -59,7 +59,7 @@ isOGRException :: SomeException -> Bool
 isOGRException e = isJust (fromException e :: Maybe OGRException)
 
 {#enum define OGRError
-  { OGRERR_NONE                      as None
+  { OGRERR_NONE                      as OGRNone
   , OGRERR_NOT_ENOUGH_DATA           as NotEnoughData
   , OGRERR_NOT_ENOUGH_MEMORY         as NotEnoughMemory
   , OGRERR_UNSUPPORTED_GEOMETRY_TYPE as UnsupportedGeometryType
@@ -73,9 +73,9 @@ isOGRException e = isJust (fromException e :: Maybe OGRException)
 checkOGRError :: Text -> IO CInt -> IO ()
 checkOGRError msg = checkGDALCall_ $ \mExc r ->
   case (mExc, toEnumC r) of
-    (Nothing, None) -> Nothing
-    (Nothing, e)    -> Just (OGRException e AssertionFailed msg)
-    (Just exc, e)   -> Just (gdalToOgrException e exc)
+    (Nothing, OGRNone) -> Nothing
+    (Nothing, e)       -> Just (OGRException e AssertionFailed msg)
+    (Just exc, e)      -> Just (gdalToOgrException e exc)
 {-# INLINE checkOGRError #-}
 
 gdalToOgrException :: OGRError -> GDALException -> OGRException
