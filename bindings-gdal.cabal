@@ -153,6 +153,8 @@ test-suite spec
   main-is:          Main.hs
   other-modules:    Spec
                   , GDALSpec
+                  , GDALDriverSpec
+                  , GDALIOSpec
                   , OSRSpec
                   , OGRSpec
                   , OGRGeometrySpec

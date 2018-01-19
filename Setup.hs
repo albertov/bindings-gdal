@@ -29,16 +29,16 @@ gdalConf (pkg0, pbi) flags = do
 
 configureWithGdalConfig lbi flags = do
  gdalInclude <- getFlagValues 'I' <$> gdalConfig ["--cflags"]
- let isStatic = maybe False id $
+ let isStatic = fromMaybe False $
                 mkFlagName "static" `lookup` configConfigurationsFlags flags
      getLibArgs = gdalConfig ["--libs"]
-                : if isStatic then [gdalConfig ["--dep-libs"]] else []
- libArgs <- intercalate " "  <$> sequence  getLibArgs
+                : [gdalConfig ["--dep-libs"] | isStatic ]
+ libArgs <- unwords  <$> sequence  getLibArgs
  let gdalLibDirs = getFlagValues 'L' libArgs
      (gdalLibs, staticDirs) = unzip . parseLibraries . words $ libArgs
-     hasPg    = any (=="pq"    ) gdalLibs
-     hasCurl  = any (=="curl"  ) gdalLibs
-     hasGeos  = any (=="geos_c") gdalLibs
+     hasPg    = "pq"     `elem` gdalLibs
+     hasCurl  = "curl"   `elem` gdalLibs
+     hasGeos  = "geos_c" `elem` gdalLibs
      gdalLibsStatic = (if hasGeos then (++["geos"]) else id)
               -- assumes curl or pg are compile with ssl support
               . (if hasCurl || hasPg then (++["ssl","crypto"]) else id) 
@@ -71,7 +71,7 @@ getOutput s a = readProcess s a ""
 
 gdalConfig args = do
   mCmd <- lookupEnv "GDAL_CONFIG"
-  cmd <- maybe (liftM init (getOutput "bash" ["-c", "which gdal-config"])) return mCmd
+  cmd <- maybe (init `fmap` getOutput "bash" ["-c", "which gdal-config"]) return mCmd
   rstrip '\n' <$> getOutput "bash" (cmd:args)
 
 rstrip :: Char -> String -> String
