@@ -164,7 +164,8 @@ import Control.Arrow (second)
 import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.Exception (Exception(..))
 import Control.DeepSeq (NFData(..))
-import Control.Monad (liftM2, when, (>=>), (<=<), forever)
+import Control.Monad (liftM2, when, (>=>), forever)
+import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
@@ -525,16 +526,21 @@ datasetFileList =
   {#call unsafe GetFileList as ^#} .
   unDataset
 
-datasetProjection :: MonadIO m => Dataset s a t -> m (Maybe SpatialReference)
 datasetProjection
-  = liftIO
-  .  (maybeSpatialReferenceFromCString <=< {#call GetProjectionRef as ^#})
-  . unDataset
+  :: (MonadThrow m, MonadIO m)
+  => Dataset s a t -> m (Maybe SpatialReference)
+datasetProjection ds = do
+  mWkt <- datasetProjectionWkt ds
+  case mWkt of
+    Just wkt -> either throwM (return . Just) (srsFromWkt wkt)
+    Nothing -> return Nothing
 
 datasetProjectionWkt :: MonadIO m => Dataset s a t -> m (Maybe ByteString)
 datasetProjectionWkt ds = liftIO $ do
   p <- {#call GetProjectionRef as ^#} (unDataset ds)
-  if p == nullPtr then return Nothing else Just <$> packCString p
+  if p == nullPtr then return Nothing else do
+    c <- peek p
+    if c == 0 then return Nothing else Just <$> packCString p
 
 setDatasetProjection :: SpatialReference -> RWDataset s a -> GDAL s ()
 setDatasetProjection srs = setDatasetProjectionWkt (srsToWkt srs)
@@ -988,7 +994,7 @@ unsafeBandDataset band = Dataset (Nothing, dsH) where
 bandGeotransform :: MonadIO m => Band s a t -> m (Maybe Geotransform)
 bandGeotransform = datasetGeotransform . unsafeBandDataset
 
-bandProjection :: MonadIO m => Band s a t -> m (Maybe SpatialReference)
+bandProjection :: (MonadThrow m, MonadIO m) => Band s a t -> m (Maybe SpatialReference)
 bandProjection = datasetProjection . unsafeBandDataset
 
 
