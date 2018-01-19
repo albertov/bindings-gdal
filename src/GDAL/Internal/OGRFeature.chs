@@ -67,6 +67,7 @@ import Control.Monad (liftM, liftM2, (>=>), when, void)
 import Control.Monad ((<=<), join)
 #endif
 
+import Control.DeepSeq (NFData(..))
 import Control.Monad.Catch (bracket)
 
 import Data.ByteString (ByteString)
@@ -165,11 +166,17 @@ name `fieldTypedAs` _ = (name, fieldDef (Proxy :: Proxy a))
 
 {#enum FieldType {} omit (OFTMaxType) deriving (Eq,Show,Read,Bounded) #}
 
+instance NFData FieldType where
+  rnf a = a `seq` ()
+
 {#enum Justification  {}
     omit (JustifyUndefined)
     with prefix = "OJ"
     add  prefix = "Justify"
     deriving (Eq,Show,Read,Bounded) #}
+
+instance NFData Justification where
+  rnf a = a `seq` ()
 
 data Field
   = OGRInteger       !Int32
@@ -204,12 +211,19 @@ data FieldDef
     , fldNullable :: !Bool
     } deriving (Show, Eq)
 
+instance NFData FieldDef where
+  rnf (FieldDef a b c d e) =
+    rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
+
 data GeomFieldDef
   = GeomFieldDef {
       gfdType     :: !GeometryType
     , gfdSrs      :: !(Maybe SpatialReference)
     , gfdNullable :: !Bool
     } deriving (Show, Eq)
+
+instance NFData GeomFieldDef where
+  rnf (GeomFieldDef a b c) = rnf a `seq` rnf b `seq` rnf c
 
 type Map a = HM.HashMap Text a
 
@@ -238,6 +252,9 @@ data FeatureDef
     , fdGeom    :: !GeomFieldDef
     , fdGeoms   :: !GeomFieldDefs
     } deriving (Show, Eq)
+
+instance NFData FeatureDef where
+  rnf (FeatureDef a b c d ) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
 
 type FieldDefs = V.Vector (Text, FieldDef)
 type GeomFieldDefs = V.Vector (Text, GeomFieldDef)

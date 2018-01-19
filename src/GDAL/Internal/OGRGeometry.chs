@@ -166,6 +166,9 @@ instance Projectable EnvelopeReal where
 {#enum OGRwkbGeometryType as GeometryType {upcaseFirstLetter}
   deriving (Eq,Show)#}
 
+instance NFData GeometryType where
+  rnf a = a `seq` ()
+
 {#enum define WkbByteOrder
   { wkbXDR  as WkbXDR
   , wkbNDR  as WkbNDR
