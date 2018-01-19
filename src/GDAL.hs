@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+
 module GDAL (
     GDAL
   , GDALType
@@ -19,6 +20,9 @@ module GDAL (
   , ProgressException (..)
   , ErrorType (..)
   , ErrorNum (..)
+  , OpenFlag(..)
+  , openReadOnlyEx
+  , openReadWriteEx
   , isGDALException
   , isBindingException
   , isProgressFunException

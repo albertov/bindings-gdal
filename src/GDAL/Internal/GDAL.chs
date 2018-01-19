@@ -16,8 +16,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE LambdaCase #-}
 
-#include "bindings.h"
-
 module GDAL.Internal.GDAL (
     GDALRasterException (..)
   , Geotransform (..)
@@ -61,6 +59,9 @@ module GDAL.Internal.GDAL (
   , createDatasetH
   , openReadOnly
   , openReadWrite
+  , OpenFlag(..)
+  , openReadOnlyEx
+  , openReadWriteEx
   , unsafeToReadOnly
   , createCopy
   , buildOverviews
@@ -139,6 +140,12 @@ module GDAL.Internal.GDAL (
   , module GDAL.Internal.DataType
 ) where
 
+#include "bindings.h"
+#include "gdal.h"
+
+#include "overviews.h"
+
+
 {#context lib = "gdal" prefix = "GDAL" #}
 
 import Control.Arrow (second)
@@ -149,7 +156,7 @@ import Control.Monad (liftM, liftM2, when, (>=>), (<=<), forever)
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
-import Data.Bits ((.&.))
+import Data.Bits ((.&.), (.|.))
 import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Coerce (coerce)
@@ -195,8 +202,6 @@ import GDAL.Internal.OSR
 import GDAL.Internal.OGRGeometry (Envelope(..), envelopeSize)
 
 
-#include "gdal.h"
-#include "overviews.h"
 
 newtype DriverName = DriverName ByteString
   deriving (Eq, IsString)
@@ -383,6 +388,44 @@ openDatasetH m path =
   liftIO $
   withCString path $
   flip {#call GDALOpen as ^#} (fromEnumC m)
+
+openReadOnlyEx :: [OpenFlag] -> OptionList -> String -> DataType d -> GDAL s (RODataset s (HsType d))
+openReadWriteEx :: [OpenFlag] -> OptionList -> String -> DataType d -> GDAL s (RWDataset s (HsType d))
+#if SUPPORTS_OPENEX
+{#enum define OpenFlag {
+    GDAL_OF_READONLY             as OFReadonly
+  , GDAL_OF_UPDATE               as OFUpdate
+  , GDAL_OF_ALL                  as OFAll
+  , GDAL_OF_RASTER               as OFRaster
+  , GDAL_OF_VECTOR               as OFVector
+  , GDAL_OF_GNM                  as OFGnm
+  , GDAL_OF_SHARED               as OFShared
+  , GDAL_OF_VERBOSE_ERROR        as OFVerboseError
+  , GDAL_OF_INTERNAL             as OFInternal
+  , GDAL_OF_DEFAULT_BLOCK_ACCESS as OFDefaultBlockAccess
+  , GDAL_OF_ARRAY_BLOCK_ACCESS   as OFArrayBlockAccess
+  , GDAL_OF_HASHSET_BLOCK_ACCESS as OFHashsetBlockAccess
+  } deriving (Eq, Bounded, Show) #}
+
+openDatasetHEx :: MonadIO m => [OpenFlag] -> OptionList -> String -> m DatasetH
+openDatasetHEx flgs opts path =
+  liftIO $
+  withOptionList opts $ \ os -> 
+  withCString path $ \ p ->
+    {#call GDALOpenEx as ^#} p cflgs nullPtr os nullPtr
+  where cflgs = foldr (.|.) 0 $ map (fromIntegral.fromEnum) flgs
+
+openReadOnlyEx flgs opts p _ =
+  newDatasetHandle (openDatasetHEx (OFReadonly:flgs) opts p)
+
+openReadWriteEx flgs opts p _ =
+  newDatasetHandle (openDatasetHEx (OFUpdate:flgs) opts p)
+
+#else
+data OpenFlag
+openReadOnlyEx  _ _ = openReadOnly
+openReadWriteEx _ _ = openReadWrite
+#endif
 
 unsafeToReadOnly :: RWDataset s a -> GDAL s (RODataset s a)
 unsafeToReadOnly ds = flushCache ds >> return (coerce ds)
