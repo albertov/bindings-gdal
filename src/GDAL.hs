@@ -21,6 +21,8 @@ module GDAL (
   , ErrorType (..)
   , ErrorNum (..)
   , OpenFlag(..)
+  , identifyDriver
+  , identifyDriverEx
   , openReadOnlyEx
   , openReadWriteEx
   , isGDALException

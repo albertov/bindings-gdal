@@ -62,6 +62,8 @@ module GDAL.Internal.GDAL (
   , openReadOnly
   , openReadWrite
   , OpenFlag(..)
+  , identifyDriver
+  , identifyDriverEx
   , openReadOnlyEx
   , openReadWriteEx
   , unsafeToReadOnly
@@ -311,6 +313,11 @@ type RWBand s a = Band s a ReadWrite
 
 {#pointer DriverH newtype #}
 
+nullDriverH :: DriverH
+nullDriverH = DriverH nullPtr
+
+deriving instance Eq DriverH
+
 newtype Driver (t::AccessMode) = Driver { unDriver :: DriverH }
 
 instance MajorObject Driver t where
@@ -409,8 +416,17 @@ openDatasetH m path =
   withCString path $
   flip {#call GDALOpen as ^#} (fromEnumC m)
 
+identifyDriver
+  :: String -> GDAL s (Maybe (Driver t))
+identifyDriver path = do
+  d <- liftIO $ withCString path $
+    flip {#call GDALIdentifyDriver as ^#} nullPtr
+  return $ if d == nullDriverH then Nothing else Just (Driver d)
+
 openReadOnlyEx :: [OpenFlag] -> OptionList -> String -> DataType d -> GDAL s (RODataset s (HsType d))
 openReadWriteEx :: [OpenFlag] -> OptionList -> String -> DataType d -> GDAL s (RWDataset s (HsType d))
+identifyDriverEx :: [OpenFlag] -> String -> GDAL s (Maybe (Driver t))
+
 #if SUPPORTS_OPENEX
 {#enum define OpenFlag {
     GDAL_OF_READONLY             as OFReadonly
@@ -441,10 +457,17 @@ openReadOnlyEx flgs opts p _ =
 openReadWriteEx flgs opts p _ =
   newDatasetHandle (openDatasetHEx (OFUpdate:flgs) opts p)
 
+identifyDriverEx flgs path = do
+  d <- liftIO $ withCString path $ \ p ->
+    {#call GDALIdentifyDriverEx as ^#} p cflgs nullPtr nullPtr
+  return $ if d == nullDriverH then Nothing else Just (Driver d)
+  where cflgs = foldr (.|.) 0 $ map (fromIntegral.fromEnum) flgs
+
 #else
 data OpenFlag
 openReadOnlyEx  _ _ = openReadOnly
 openReadWriteEx _ _ = openReadWrite
+identifyDriverEx _ = identifyDriver
 #endif
 
 unsafeToReadOnly :: RWDataset s a -> GDAL s (RODataset s a)
