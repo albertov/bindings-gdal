@@ -5,7 +5,6 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE LambdaCase #-}
 
 #include "bindings.h"
 

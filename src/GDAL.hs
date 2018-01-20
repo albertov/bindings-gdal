@@ -3,6 +3,7 @@
 module GDAL (
     GDAL
   , GDALType
+  , HasLayerTransaction
   , ApproxOK (..)
   , DataType (..)
   , HsType

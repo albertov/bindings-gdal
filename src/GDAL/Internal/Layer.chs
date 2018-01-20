@@ -21,7 +21,8 @@
 #include "ogr_api.h"
 
 module GDAL.Internal.Layer (
-    SQLDialect (..)
+    HasLayerTransaction
+  , SQLDialect (..)
   , Layer (..)
   , LayerH (..)
   , ROLayer
@@ -76,20 +77,21 @@ module GDAL.Internal.Layer (
 
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Coerce (coerce)
-import Data.Conduit
+import Data.Conduit ( Conduit, Sink, Source
+                    , addCleanup, awaitForever, yield
+                    , bracketP, catchC
+                    , (=$=))
 import qualified Data.Conduit.List as CL
-import Data.Maybe (isNothing)
 import Data.Text (Text)
 
 import Control.Applicative (Applicative, (<$>), (<*>), pure)
+import Control.Exception (SomeException)
 import Control.Monad (liftM, when, void, (>=>), (<=<))
 import Control.Monad.Base (MonadBase)
 import Control.Monad.Catch (
     MonadThrow(..)
   , MonadCatch
   , MonadMask
-  , bracket
-  , finally
   )
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Control (MonadBaseControl(..))
@@ -304,7 +306,7 @@ setLayerSpatialFilterRect l (Envelope (x0 :+: y0) (x1 :+: y1)) = liftIO $
     (realToFrac y1)
 
 sourceLayer
-  :: OGRFeature a
+  :: (HasLayerTransaction t, OGRFeature a)
   => GDAL s (Layer s l t a)
   -> OGRSource s l (Maybe Fid, a)
 sourceLayer alloc = layerTransaction alloc' loop
@@ -324,7 +326,8 @@ sourceLayer alloc = layerTransaction alloc' loop
         Nothing -> return ()
 
 sourceLayer_
-  :: OGRFeature a => GDAL s (Layer s l t a) -> OGRSource s l a
+  :: (HasLayerTransaction t, OGRFeature a)
+  => GDAL s (Layer s l t a) -> OGRSource s l a
 sourceLayer_ = (=$= (CL.map snd)) . sourceLayer
 
 
@@ -362,30 +365,43 @@ sinkUpdateLayer = flip conduitFromLayer updateIt
       liftIO $ featureToHandle pFd (Just fid) feat $
         checkOGRError "SetFeature" . {#call OGR_L_SetFeature as ^#} (unLayer l)
 
+class HasLayerTransaction (t :: AccessMode) where
+  layerTransaction
+    :: GDAL s (Layer s l t a, e)
+    -> ((Layer s l t a, e) -> OGRConduit s l i o)
+    -> OGRConduit s l i o
 
-layerTransaction
-  :: GDAL s (Layer s l t a, e)
-  -> ((Layer s l t a, e) -> OGRConduit s l i o)
-  -> OGRConduit s l i o
-layerTransaction alloc inside = do
-  (rbKey, seed) <- lift $ liftOGR $ allocateGDAL alloc rollback
-  liftIO $ checkOGRError "StartTransaction" $
-    {#call OGR_L_StartTransaction as ^#} (unLayer (fst seed))
-  addCleanup (const (release rbKey))
-             (inside seed >> liftIO (commit rbKey seed))
-  where
-    free = closeLayer . fst
-    commit rbKey seed = bracket (unprotect rbKey) (const (free seed)) $ \m -> do
-      when (isNothing m) (error "layerTransaction: this should not happen")
-      checkOGRError "CommitTransaction" $
-        {#call OGR_L_CommitTransaction as ^#} (unLayer (fst seed))
-      syncLayerToDiskIO (coerce (fst seed))
+instance HasLayerTransaction ReadWrite where
+  layerTransaction alloc inside = do
+    state <- lift (liftOGR getInternalState)
+    bracketP (alloc' state) free $ \ seed@(layer,_) -> do
+      liftIO $ checkOGRError "StartTransaction" $
+        {#call OGR_L_StartTransaction as ^#} (unLayer layer)
+      addCleanup (\terminated -> when terminated (commit layer)) $
+        inside seed `catchC`
+          \(e :: SomeException) -> rollback layer >> throwM e
+    where
+      alloc' = runWithInternalState alloc
+      free = closeLayer . fst
+      commit layer = liftIO $ do
+        checkOGRError "CommitTransaction" $
+          {#call OGR_L_CommitTransaction as ^#} (unLayer layer)
+        syncLayerToDiskIO layer
 
-    rollback seed = liftIO $
-      (checkOGRError "RollbackTransaction" $
-        {#call OGR_L_RollbackTransaction as ^#} (unLayer (fst seed)))
-          `finally` free seed
+      rollback layer = liftIO $
+        checkOGRError "RollbackTransaction" $
+          {#call OGR_L_RollbackTransaction as ^#} (unLayer layer)
 
+instance HasLayerTransaction ReadOnly where
+  layerTransaction alloc inside = do
+    state <- lift (liftOGR getInternalState)
+    bracketP (alloc' state) free $ \ seed -> do
+      liftIO $ checkOGRError "StartTransaction" $
+        {#call OGR_L_StartTransaction as ^#} (unLayer (fst seed))
+      inside seed
+    where
+      free = closeLayer . fst
+      alloc' = runWithInternalState alloc
 
 
 conduitFromLayer
