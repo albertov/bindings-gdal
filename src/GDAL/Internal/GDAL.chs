@@ -198,7 +198,7 @@ import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrBytes)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (withArrayLen)
+import Foreign.Marshal.Array (withArrayLen, advancePtr)
 import Foreign.Marshal.Utils (toBool, fromBool, with)
 
 import System.IO.Unsafe (unsafePerformIO)
@@ -852,19 +852,14 @@ unsafeBandConduitM
   => Size
   -> Band s a t
   -> Conduit (Envelope Int) (GDAL s) (UM.IOVector (Value a))
-unsafeBandConduitM (bx :+: by) band = do
+unsafeBandConduitM size@(bx :+: by) band = do
   buf <- liftIO (M.new (bx*by))
   lift (bandMaskType band) >>= \case
     MaskNoData -> do
       nd <- lift (noDataOrFail band)
       let vec = mkValueUMVector nd buf
       awaitForever $ \win -> do
-        liftIO (read_ band buf win)
-        yield vec
-    MaskAllValid -> do
-      let vec = mkAllValidValueUMVector buf
-      awaitForever $ \win -> do
-        liftIO (read_ band buf win)
+        liftIO (M.set buf nd >> read_ band buf win)
         yield vec
     _ -> do
       mBuf <- liftIO $ M.replicate (bx*by) 0
@@ -877,34 +872,55 @@ unsafeBandConduitM (bx :+: by) band = do
     read_ :: forall a'. GDALType a'
           => Band s a' t -> Stm.IOVector a' -> Envelope Int -> IO ()
     read_ b vec win = do
-      let sx   :+: sy   = envelopeSize win
-          xoff :+: yoff = envelopeMin win
+      let -- Requested minEnv
+          x0  :+: y0  = envelopeMin win
+          -- Effective minEnv
+          x0' :+: y0' = max 0 <$> envelopeMin win
+          -- Effective maxEnv
+          x1' :+: y1' = min <$> bandSize b <*> envelopeMax win
+          -- Effective origin
+          e0          = x0' - x0  :+: y0' - y0
+          -- Projected origin
+          x   :+: y   = truncate <$> factor * fmap fromIntegral e0
+          -- Effective buffer size
+          sx :+: sy = (x1' - x0' :+: y1' - y0')
+          -- Projected window
+          bx' :+: by' = truncate
+                    <$> factor * fmap fromIntegral (sx :+: sy)
+
+          --buffer size / envelope size ratio
+          factor :: Pair Double
+          factor      = (fromIntegral <$> size)
+                      / (fromIntegral <$> envelopeSize win)
+
+          off = y * bx + x
+
       Stm.unsafeWith vec $ \ptr -> do
         checkCPLError "RasterAdviseRead" $
           {#call unsafe RasterAdviseRead as ^#}
             (unBand b)
-            (fromIntegral xoff)
-            (fromIntegral yoff)
+            (fromIntegral x0')
+            (fromIntegral y0')
             (fromIntegral sx)
             (fromIntegral sy)
-            (fromIntegral bx)
-            (fromIntegral by)
+            bx'
+            by'
             (fromEnumC (hsDataType (Proxy :: Proxy a')))
             nullPtr
         checkCPLError "RasterIO" $
           {#call RasterIO as ^#}
             (unBand b)
             (fromEnumC GF_Read)
-            (fromIntegral xoff)
-            (fromIntegral yoff)
+            (fromIntegral x0')
+            (fromIntegral y0')
             (fromIntegral sx)
             (fromIntegral sy)
-            (castPtr ptr)
-            (fromIntegral bx)
-            (fromIntegral by)
+            (castPtr (ptr `advancePtr` off))
+            bx'
+            by'
             (fromEnumC (hsDataType (Proxy :: Proxy a')))
             0
-            0
+            (fromIntegral bx * fromIntegral (sizeOf (undefined :: a')))
 
 geoEnvelopeTransformer
   :: Geotransform -> Maybe (Envelope Double -> Envelope Int)

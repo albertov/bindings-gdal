@@ -63,6 +63,9 @@ import Control.Monad.Catch (
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Typeable (Typeable)
+import qualified Data.Vector.Generic as G
+import qualified Data.Vector.Generic.Mutable as M
+import qualified Data.Vector.Unboxed.Base as U
 
 import Foreign.Ptr (castPtr)
 import Foreign.Storable (Storable(..))
@@ -240,3 +243,67 @@ allocateGDAL (GDAL alloc) free = do
 
 getInternalState :: GDAL s (GDALInternalState s)
 getInternalState = GDALInternalState <$> GDAL ask
+
+
+newtype instance U.Vector    (Pair a) =
+    V_Value (U.Vector a, U.Vector a)
+newtype instance U.MVector s (Pair a) =
+  MV_Value (U.MVector s a, U.MVector s a)
+
+instance U.Unbox a => U.Unbox (Pair a)
+
+instance U.Unbox a => M.MVector U.MVector (Pair a) where
+
+  basicLength (MV_Value (a,_)) = M.basicLength a
+  {-# INLINE basicLength #-}
+
+  basicUnsafeSlice m n (MV_Value (a, b)) =
+    MV_Value ( M.basicUnsafeSlice m n a
+             , M.basicUnsafeSlice m n b)
+  {-# INLINE basicUnsafeSlice #-}
+
+  basicOverlaps (MV_Value (a,b)) (MV_Value (a',b')) =
+    M.basicOverlaps a a' && M.basicOverlaps b b'
+  {-# INLINE basicOverlaps #-}
+
+  basicUnsafeNew i =
+    curry MV_Value <$> M.basicUnsafeNew i <*> M.basicUnsafeNew i
+  {-# INLINE basicUnsafeNew #-}
+
+
+  basicUnsafeRead (MV_Value (a,b)) i =
+    (:+:) <$> M.basicUnsafeRead a i <*> M.basicUnsafeRead b i
+  {-# INLINE basicUnsafeRead #-}
+
+  basicUnsafeWrite (MV_Value (a,b)) i (a':+:b') = do
+    M.basicUnsafeWrite a i a'
+    M.basicUnsafeWrite b i b'
+  {-# INLINE basicUnsafeWrite #-}
+
+#if MIN_VERSION_vector(0,11,0)
+  basicInitialize (MV_Value (a,b)) = do
+    M.basicInitialize a
+    M.basicInitialize b
+  {-# INLINE basicInitialize #-}
+#endif
+
+instance U.Unbox a => G.Vector U.Vector (Pair a) where
+
+  basicUnsafeFreeze (MV_Value (a,b)) =
+    curry V_Value <$> G.basicUnsafeFreeze a <*> G.basicUnsafeFreeze b
+  {-# INLINE basicUnsafeFreeze #-}
+
+  basicUnsafeThaw (V_Value (a,b)) =
+    curry MV_Value <$> G.basicUnsafeThaw a <*> G.basicUnsafeThaw b
+  {-# INLINE basicUnsafeThaw #-}
+
+  basicLength  (V_Value (a,_)) = G.basicLength a
+  {-# INLINE basicLength #-}
+
+  basicUnsafeSlice m n (V_Value (a,b)) =
+    V_Value (G.basicUnsafeSlice m n a, G.basicUnsafeSlice m n b)
+  {-# INLINE basicUnsafeSlice #-}
+
+  basicUnsafeIndexM (V_Value (a,b)) i =
+    (:+:) <$> G.basicUnsafeIndexM a i <*> G.basicUnsafeIndexM b i
+  {-# INLINE basicUnsafeIndexM #-}

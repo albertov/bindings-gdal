@@ -1,7 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
@@ -48,6 +47,7 @@ spec = setupAndTeardown $ describe "band and block IO" $ do
         b'  = b `bandAs` GDT_Float64
     writeBand b' (allBand b') (bandSize b') vec
     readBand b' (allBand b') (bandSize b') >>= (`shouldBe` vec)
+
 
   describe "fillBand" $ do
 
@@ -143,7 +143,7 @@ spec = setupAndTeardown $ describe "band and block IO" $ do
         readBand b3 (allBand b3) sz >>= (`shouldBe` fun v1 v2)
 
 ioSpec
-  :: GDALType (HsType d)
+  :: (U.Unbox (HsType d), GDALType (HsType d))
   => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
 ioSpec dt f = do
   it_can_write_and_read_block dt f
@@ -151,8 +151,9 @@ ioSpec dt f = do
   it_can_foldl dt f
   it_can_foldlWindow dt f
 
+
 it_can_write_and_read_band
-  :: GDALType (HsType d)
+  :: (GDALType (HsType d), U.Unbox (HsType d))
   => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
 it_can_write_and_read_band dt f = do
   let typeName = show dt
@@ -188,6 +189,52 @@ it_can_write_and_read_band dt f = do
       writeBand band (allBand band) (bandSize band) vec
       flushCache ds
       readBand band (allBand band) (bandSize band) >>= (`shouldBe` vec)
+
+    it "out of bounds" $ do
+      b <- getBand 1 =<< createMem 100 1 dt []
+      let vec = U.generate 10000 f
+      writeBand b (allBand b) (bandSize b) vec
+      let win1 = Envelope (-10) 0
+      readBand b win1 (envelopeSize win1) >>= (`shouldSatisfy` U.all isNoData)
+      let win2 = Envelope 100 110
+      readBand b win2 (envelopeSize win2) >>= (`shouldSatisfy` U.all isNoData)
+      let win3 = Envelope (0:+:100) (100:+:110)
+      readBand b win3 (envelopeSize win3) >>= (`shouldSatisfy` U.all isNoData)
+      let win4 = Envelope (100:+:0) (110:+:100)
+      readBand b win4 (envelopeSize win4) >>= (`shouldSatisfy` U.all isNoData)
+
+      let checkOverlapping win = do
+            let clamped = Envelope (max 0 <$> envelopeMin win)
+                                   (min   <$> bandSize b <*> envelopeMax win)
+            v <- readBand b win (envelopeSize win)
+            v' <- readBand b clamped (envelopeSize clamped)
+            v' `shouldSatisfy` U.all (not . isNoData)
+            U.sum (catValues v) `shouldBe` U.sum (catValues v')
+
+            checkOverlappingUpSample win
+            checkOverlappingDownSample win
+
+          checkOverlappingUpSample win = do
+            let clamped = Envelope (max 0 <$> envelopeMin win)
+                                   (min   <$> bandSize b <*> envelopeMax win)
+            v <- readBand b win (div <$> envelopeSize win <*> pure 2)
+            v' <- readBand b clamped (div <$> envelopeSize clamped <*> pure 2)
+            v' `shouldSatisfy` U.all (not . isNoData)
+            U.sum (catValues v) `shouldBe` U.sum (catValues v')
+
+          checkOverlappingDownSample win = do
+            let clamped = Envelope (max 0 <$> envelopeMin win)
+                                   (min   <$> bandSize b <*> envelopeMax win)
+            v <- readBand b win ((*) <$> envelopeSize win <*> pure 2)
+            v' <- readBand b clamped ((*) <$> envelopeSize clamped <*> pure 2)
+            v' `shouldSatisfy` U.all (not . isNoData)
+            U.sum (catValues v) `shouldBe` U.sum (catValues v')
+
+      checkOverlapping (Envelope (-10) 10)
+      checkOverlapping (Envelope 90 110)
+      checkOverlapping (Envelope (-10:+:90) (20:+:110))
+      checkOverlapping (Envelope (90:+:(-10)) (110:+:20))
+      checkOverlapping (Envelope 5 95)
 
 
 it_can_write_and_read_block
