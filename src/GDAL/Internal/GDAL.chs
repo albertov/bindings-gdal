@@ -149,6 +149,8 @@ module GDAL.Internal.GDAL (
   , unsafeBandDataset
   , openDatasetCount
 
+  , zipWithInput
+
   , module GDAL.Internal.DataType
 ) where
 
@@ -1133,7 +1135,7 @@ ifoldlWindow'
   -> b -> Band s a t -> Envelope Int -> GDAL s b
 ifoldlWindow' f z band (Envelope (x0 :+: y0) (x1 :+: y1)) = runConduit $
   allBlocks band =$= CL.filter inRange
-                 =$= decorate (unsafeBlockConduit band)
+                 =$= zipWithInput (unsafeBlockConduit band)
                  =$= CL.fold folder z
   where
     inRange bIx = bx0 < x1 && x0 < bx1 && by0 < y1 &&  y0 < by1
@@ -1166,12 +1168,12 @@ ifoldlWindow' f z band (Envelope (x0 :+: y0) (x1 :+: y1)) = runConduit $
 unsafeBlockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
-unsafeBlockSource band = allBlocks band =$= decorate (unsafeBlockConduit band)
+unsafeBlockSource band = allBlocks band =$= zipWithInput (unsafeBlockConduit band)
 
 blockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
-blockSource band = allBlocks band =$= decorate (blockConduit band)
+blockSource band = allBlocks band =$= zipWithInput (blockConduit band)
 
 writeBandBlock
   :: forall s a. GDALType a
@@ -1638,10 +1640,10 @@ zipBlocks = PZipConduit . unsafeBlockConduit
 getZipBlocks
   :: PZipConduit BlockIx (GDAL s) a
   -> Conduit BlockIx (GDAL s) (BlockIx, a)
-getZipBlocks = decorate . getPZipConduit
+getZipBlocks = zipWithInput . getPZipConduit
 
-decorate :: Monad m => Conduit a m b -> Conduit a m (a, b)
-decorate (ConduitM c0) = ConduitM $ \rest -> let
+zipWithInput :: Monad m => Conduit a m b -> Conduit a m (a, b)
+zipWithInput (ConduitM c0) = ConduitM $ \rest -> let
   go1 HaveOutput{} = error "unexpected NeedOutput"
   go1 (NeedInput p c) = NeedInput (\i -> go2 i (p i)) (go1 . c)
   go1 (Done r) = rest r
@@ -1654,3 +1656,4 @@ decorate (ConduitM c0) = ConduitM $ \rest -> let
   go2 i (PipeM mp)         = PipeM (fmap (go2 i) mp)
   go2 i (Leftover p i')    = Leftover (go2 i p) i'
   in go1 (c0 Done)
+{-# INLINE zipWithInput #-}

@@ -297,6 +297,8 @@ module GDAL (
 
   , unsafeToReadOnlyLayer
 
+  , zipWithInput
+
   , module Data.Conduit
 ) where
 
