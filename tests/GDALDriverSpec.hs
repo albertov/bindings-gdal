@@ -22,7 +22,7 @@ main = hspec spec
 
 spec :: Spec
 spec = do
-  it "can register a custom driver" $ do
+  xit "can register a custom driver" $ do
     d <- createDriver HSDriver
       { hsdName = "MyDriver"
       , hsdIdentify = return . BS.isPrefixOf "foo"
@@ -40,7 +40,7 @@ spec = do
     deleteDriver d
     driverByName "MyDriver" `shouldThrow` (==UnknownDriver "MyDriver")
 
-  it "survives an exception in the identify callback" $ do
+  xit "survives an exception in the identify callback" $ do
     let info = HSDriver
           { hsdName = "MyDriver"
           , hsdIdentify = error "sheeeeet"

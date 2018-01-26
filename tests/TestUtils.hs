@@ -12,6 +12,7 @@ module TestUtils (
   , expectationFailure
   , existsAndSizeIsGreaterThan
   , it
+  , xit
   , itIO
   , describe
   , hspec
@@ -53,6 +54,9 @@ describe name = Hspec.describe name . Hspec.parallel
 
 it :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
 it n a = Hspec.it n (hFlush stdout >> runGDAL' a)
+
+xit :: String -> (forall s. GDAL s ()) -> SpecWith (Arg (IO ()))
+xit n a = Hspec.xit n (hFlush stdout >> runGDAL' a)
 
 -- For things that we want to make sure that can run outside of the GDAL monad
 itIO :: String -> IO () -> SpecWith (Arg (IO ()))
