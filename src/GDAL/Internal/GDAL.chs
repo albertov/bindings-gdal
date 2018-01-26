@@ -953,38 +953,48 @@ writeBand
   -> U.Vector (Value a)
   -> GDAL s ()
 writeBand band win sz uvec =
-  runConduit (yield (win, sz, uvec) =$= bandSink band)
+  runConduit (yield (win, Envelope 0 sz, sz, uvec) =$= bandSink band)
 
 
 
 bandSink
   :: forall s a. GDALType a
   => RWBand s a
-  -> Sink (Envelope Int, Size, U.Vector (Value a)) (GDAL s) ()
+  -> Sink (Envelope Int, Envelope Int, Size, U.Vector (Value a)) (GDAL s) ()
 bandSink band = lift (bandMaskType band) >>= \case
   MaskNoData -> do
     nd <- lift (noDataOrFail band)
-    awaitForever $ \(win, sz, uvec) -> lift $
-      write band win sz (toGVecWithNodata nd uvec)
+    awaitForever $ \(win, bWin, sz, uvec) -> lift $
+      write band win bWin sz (toGVecWithNodata nd uvec)
   MaskAllValid ->
-    awaitForever $ \(win, sz, uvec) -> lift $
+    awaitForever $ \(win, bWin, sz, uvec) -> lift $
       maybe (throwBindingException BandDoesNotAllowNoData)
-            (write band win sz)
+            (write band win bWin sz)
             (toGVec uvec)
   _ -> do
     mBand <- lift (bandMask band)
-    awaitForever $ \(win, sz, uvec) -> lift $ do
+    awaitForever $ \(win, bWin, sz, uvec) -> lift $ do
       let (mask, vec) = toGVecWithMask uvec
-      write band win sz vec
-      write mBand win sz mask
+      write band win bWin sz vec
+      write mBand win bWin sz mask
   where
 
     write :: forall a'. GDALType a'
-          => RWBand s a' -> Envelope Int -> Size -> St.Vector a' -> GDAL s ()
-    write band' win sz@(bx :+: by) vec = do
-      let sx :+: sy     = envelopeSize win
+          => RWBand s a'
+          -> Envelope Int -> Envelope Int
+          -> Size
+          -> St.Vector a'
+          -> GDAL s ()
+    write band' win bWin sz vec = do
+      let sx   :+: sy   = envelopeSize win
           xoff :+: yoff = envelopeMin win
-      if sizeLen sz /= G.length vec
+          bx   :+: by   = envelopeSize bWin
+          vi   :+: vj   = envelopeMin bWin
+          off           = vj * pFst sz + vi
+      if   sizeLen sz /= G.length vec
+        || vi < 0
+        || vj < 0
+        || (bx*by) > G.length vec
         then throwBindingException (InvalidRasterSize sz)
         else liftIO $
              St.unsafeWith vec $ \ptr ->
@@ -996,12 +1006,12 @@ bandSink band = lift (bandMaskType band) >>= \case
                  (fromIntegral yoff)
                  (fromIntegral sx)
                  (fromIntegral sy)
-                 (castPtr ptr)
+                 (castPtr (ptr `advancePtr` off))
                  (fromIntegral bx)
                  (fromIntegral by)
                  (fromEnumC (hsDataType (Proxy :: Proxy a')))
                  0
-                 0
+                 (fromIntegral (pFst sz * sizeOf (undefined :: a')))
 
 unsafeBandDataset :: Band s a t -> Dataset s a t
 unsafeBandDataset band = Dataset (Nothing, dsH) where
@@ -1017,11 +1027,11 @@ bandProjection = datasetProjection . unsafeBandDataset
 bandSinkGeo
   :: forall s a. GDALType a
   => RWBand s a
-  -> Sink (Envelope Double, Size, U.Vector (Value a)) (GDAL s) ()
+  -> Sink (Envelope Double, Envelope Int, Size, U.Vector (Value a)) (GDAL s) ()
 bandSinkGeo band = do
   mGt <- bandGeotransform band
   case mGt >>= geoEnvelopeTransformer of
-    Just trans -> CL.map (\(e,s,v) -> (trans e,s,v)) =$= bandSink band
+    Just trans -> CL.map (\(e,be,s,v) -> (trans e,be,s,v)) =$= bandSink band
     Nothing    -> lift (throwBindingException CannotInvertGeotransform)
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
