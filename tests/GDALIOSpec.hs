@@ -190,7 +190,7 @@ it_can_write_and_read_band dt f = do
       flushCache ds
       readBand band (allBand band) (bandSize band) >>= (`shouldBe` vec)
 
-    it "out of bounds" $ do
+    it "can read out of bounds" $ do
       b <- getBand 1 =<< createMem 100 1 dt []
       let vec = U.generate 10000 f
       writeBand b (allBand b) (bandSize b) vec
@@ -236,6 +236,18 @@ it_can_write_and_read_band dt f = do
       checkOverlapping (Envelope (90:+:(-10)) (110:+:20))
       checkOverlapping (Envelope 5 95)
 
+    it "can write out of bounds" $ do
+      b <- getBand 1 =<< createMem 100 1 dt []
+      let vec = U.generate (120*120) f
+          bandWin = Envelope (-10) 110
+      writeBand b bandWin (120:+:120) vec
+      v <- readBand b (allBand b) (bandSize b)
+      U.sum v `shouldBe` U.sum
+        (U.generate (100*100) (\o ->
+          let (j,i) = o `divMod` 100
+              o' = (j+10)*120+(i+10)
+          in vec U.! o'))
+                        
 
 it_can_write_and_read_block
   :: GDALType (HsType d)
