@@ -239,8 +239,8 @@ it_can_write_and_read_band dt f = do
     it "can write out of bounds" $ do
       b <- getBand 1 =<< createMem 100 1 dt []
       let vec = U.generate (120*120) f
-          vecWin  = Envelope 10 110
-      writeBandWindow b (allBand b) vecWin (120:+:120) vec
+          bandWin = Envelope (-10) 110
+      writeBand b bandWin (120:+:120) vec
       v <- readBand b (allBand b) (bandSize b)
       U.sum v `shouldBe` U.sum
         (U.generate (100*100) (\o ->

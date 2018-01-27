@@ -146,7 +146,6 @@ module GDAL (
   , createBandMask
   , readBandBlock
   , writeBand
-  , writeBandWindow
   , writeBandBlock
   , copyBand
   , bandConduit
