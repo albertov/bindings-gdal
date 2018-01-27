@@ -115,6 +115,7 @@ module GDAL.Internal.GDAL (
   , bandMask
   , readBandBlock
   , writeBand
+  , writeBandWindow
   , writeBandBlock
   , copyBand
   , bandConduit
@@ -954,81 +955,75 @@ writeBand
   -> Size
   -> U.Vector (Value a)
   -> GDAL s ()
-writeBand band win sz uvec =
-  runConduit (yield (win, sz, uvec) =$= bandSink band)
+writeBand band win sz = writeBandWindow band win (Envelope 0 sz) sz
+
+writeBandWindow
+  :: forall s a. GDALType a
+  => RWBand s a
+  -> Envelope Int
+  -> Envelope Int
+  -> Size
+  -> U.Vector (Value a)
+  -> GDAL s ()
+writeBandWindow band win vecWin sz uvec =
+  runConduit (yield (win, vecWin, sz, uvec) =$= bandSink band)
 
 
 bandSink
   :: forall s a. GDALType a
   => RWBand s a
-  -> Sink (Envelope Int, Size, U.Vector (Value a)) (GDAL s) ()
+  -> Sink (Envelope Int, Envelope Int, Size, U.Vector (Value a)) (GDAL s) ()
 bandSink band = lift (bandMaskType band) >>= \case
   MaskNoData -> do
     nd <- lift (noDataOrFail band)
-    awaitForever $ \(win, sz, uvec) -> lift $
-      write band win sz (toGVecWithNodata nd uvec)
+    awaitForever $ \(win, bWin, sz, uvec) -> lift $
+      write band win bWin sz (toGVecWithNodata nd uvec)
   MaskAllValid ->
-    awaitForever $ \(win, sz, uvec) -> lift $
+    awaitForever $ \(win, bWin, sz, uvec) -> lift $
       maybe (throwBindingException BandDoesNotAllowNoData)
-            (write band win sz)
+            (write band win bWin sz)
             (toGVec uvec)
   _ -> do
     mBand <- lift (bandMask band)
-    awaitForever $ \(win, sz, uvec) -> lift $ do
+    awaitForever $ \(win, bWin, sz, uvec) -> lift $ do
       let (mask, vec) = toGVecWithMask uvec
-      write band win sz vec
-      write mBand win sz mask
+      write band win bWin sz vec
+      write mBand win bWin sz mask
   where
 
     write :: forall a'. GDALType a'
           => RWBand s a'
-          -> Envelope Int
+          -> Envelope Int -> Envelope Int
           -> Size
           -> St.Vector a'
           -> GDAL s ()
-    write band' win size@(bx :+: _) vec = do
-      let -- Requested minEnv
-          x0  :+: y0  = envelopeMin win
-          -- Effective minEnv
-          x0' :+: y0' = max 0 <$> envelopeMin win
-          -- Effective maxEnv
-          x1' :+: y1' = min <$> bandSize band' <*> envelopeMax win
-          -- Effective origin
-          e0          = x0' - x0  :+: y0' - y0
-          -- Projected origin
-          x   :+: y   = truncate <$> factor * fmap fromIntegral e0
-          -- Effective buffer size
-          sx :+: sy = (x1' - x0' :+: y1' - y0')
-          -- Projected window
-          bx' :+: by' = truncate
-                    <$> factor * fmap fromIntegral (sx :+: sy)
-
-          --buffer size / envelope size ratio
-          factor :: Pair Double
-          factor      = (fromIntegral <$> size)
-                      / (fromIntegral <$> envelopeSize win)
-
-          off = y * bx + x
-
-
-      if sizeLen size /= G.length vec
-        then throwBindingException (InvalidRasterSize size)
+    write band' win bWin sz vec = do
+      let sx   :+: sy   = envelopeSize win
+          xoff :+: yoff = envelopeMin win
+          bx   :+: by   = envelopeSize bWin
+          vi   :+: vj   = envelopeMin bWin
+          off           = vj * pFst sz + vi
+      if   sizeLen sz /= G.length vec
+        || vi < 0
+        || vj < 0
+        || (bx*by) > G.length vec
+        then throwBindingException (InvalidRasterSize sz)
         else liftIO $
-            St.unsafeWith vec $ \ptr ->
-            checkCPLError "RasterIO" $
-              {#call RasterIO as ^#}
-                (unBand band')
-                (fromEnumC GF_Write)
-                (fromIntegral x0')
-                (fromIntegral y0')
-                (fromIntegral sx)
-                (fromIntegral sy)
-                (castPtr (ptr `advancePtr` off))
-                bx'
-                by'
-                (fromEnumC (hsDataType (Proxy :: Proxy a')))
-                0
-                (fromIntegral bx * fromIntegral (sizeOf (undefined :: a')))
+             St.unsafeWith vec $ \ptr ->
+             checkCPLError "RasterIO" $
+               {#call RasterIO as ^#}
+                 (unBand band')
+                 (fromEnumC GF_Write)
+                 (fromIntegral xoff)
+                 (fromIntegral yoff)
+                 (fromIntegral sx)
+                 (fromIntegral sy)
+                 (castPtr (ptr `advancePtr` off))
+                 (fromIntegral bx)
+                 (fromIntegral by)
+                 (fromEnumC (hsDataType (Proxy :: Proxy a')))
+                 0
+                 (fromIntegral (pFst sz * sizeOf (undefined :: a')))
 
 unsafeBandDataset :: Band s a t -> Dataset s a t
 unsafeBandDataset band = Dataset (Nothing, dsH) where
@@ -1044,11 +1039,11 @@ bandProjection = datasetProjection . unsafeBandDataset
 bandSinkGeo
   :: forall s a. GDALType a
   => RWBand s a
-  -> Sink (Envelope Double, Size, U.Vector (Value a)) (GDAL s) ()
+  -> Sink (Envelope Double, Envelope Int, Size, U.Vector (Value a)) (GDAL s) ()
 bandSinkGeo band = do
   mGt <- bandGeotransform band
   case mGt >>= geoEnvelopeTransformer of
-    Just trans -> CL.map (\(e,s,v) -> (trans e,s,v)) =$= bandSink band
+    Just trans -> CL.map (\(e,be,s,v) -> (trans e,be,s,v)) =$= bandSink band
     Nothing    -> lift (throwBindingException CannotInvertGeotransform)
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
