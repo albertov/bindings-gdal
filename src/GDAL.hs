@@ -160,9 +160,6 @@ module GDAL (
   , allBlocks
   , blockSource
   , unsafeBlockSource
-  , zipBlocks
-  , getZipBlocks
-
 
   , metadataDomains
   , metadata
@@ -296,8 +293,6 @@ module GDAL (
   , deleteFeature
 
   , unsafeToReadOnlyLayer
-
-  , zipWithInput
 
   , module Data.Conduit
 ) where

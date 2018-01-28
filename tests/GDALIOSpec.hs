@@ -126,22 +126,6 @@ spec = setupAndTeardown $ describe "band and block IO" $ do
         readBand band1 (allBand band1) (bandSize band1)
           >>= (`shouldSatisfy` U.all (==v2))
 
-      it "can zip two bands" $ do
-        let sz = 333 :+: 444
-            v1 = U.generate (sizeLen sz) (Value . fromIntegral . (+6))
-            v2 = U.generate (sizeLen sz) (Value . fromIntegral . (*2))
-        ds <- createMem sz 3 GDT_Int32 []
-        b1 <- getBand 1 ds
-        b2 <- getBand 2 ds
-        b3 <- getBand 3 ds
-        writeBand b1 (allBand b1) sz v1
-        writeBand b2 (allBand b2) sz v2
-        flushCache ds
-        let conduit = getZipBlocks (fun <$> zipBlocks b1 <*> zipBlocks b2)
-            fun = U.zipWith (+)
-        runConduit (allBlocks b3 =$= conduit =$= blockSink b3)
-        readBand b3 (allBand b3) sz >>= (`shouldBe` fun v1 v2)
-
 ioSpec
   :: (U.Unbox (HsType d), GDALType (HsType d))
   => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))

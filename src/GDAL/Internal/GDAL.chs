@@ -139,8 +139,6 @@ module GDAL.Internal.GDAL (
   , unsafeBlockSource
   , blockSink
   , allBlocks
-  , zipBlocks
-  , getZipBlocks
 
   , unDataset
   , unBand
@@ -148,8 +146,6 @@ module GDAL.Internal.GDAL (
   , newDatasetHandle
   , unsafeBandDataset
   , openDatasetCount
-
-  , zipWithInput
 
   , module GDAL.Internal.DataType
 ) where
@@ -166,7 +162,7 @@ import Control.Arrow (second)
 import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.Exception (Exception(..))
 import Control.DeepSeq (NFData(..))
-import Control.Monad (liftM2, when, (>=>), forever)
+import Control.Monad (liftM2, when, (>=>))
 import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -178,7 +174,7 @@ import Data.Coerce (coerce)
 import qualified Data.List as L
 import qualified Data.Conduit.List as CL
 import Data.Conduit
-import Data.Conduit.Internal (Pipe(..), ConduitM(..), injectLeftovers)
+import Data.Conduit.Internal (zipSources)
 import Data.Maybe (fromMaybe, fromJust)
 import Data.String (IsString)
 import Data.Proxy
@@ -1149,10 +1145,11 @@ ifoldlWindow'
   => (b -> Pair Int -> Value a -> b)
   -> b -> Band s a t -> Envelope Int -> GDAL s b
 ifoldlWindow' f z band (Envelope (x0 :+: y0) (x1 :+: y1)) = runConduit $
-  allBlocks band =$= CL.filter inRange
-                 =$= zipWithInput (unsafeBlockConduit band)
+                 zipSources blocks
+                            (blocks =$= unsafeBlockConduit band)
                  =$= CL.fold folder z
   where
+    blocks = allBlocks band =$= CL.filter inRange
     inRange bIx = bx0 < x1 && x0 < bx1 && by0 < y1 &&  y0 < by1
       where
         !b0@(bx0 :+: by0) = bIx * bSize
@@ -1183,12 +1180,16 @@ ifoldlWindow' f z band (Envelope (x0 :+: y0) (x1 :+: y1)) = runConduit $
 unsafeBlockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
-unsafeBlockSource band = allBlocks band =$= zipWithInput (unsafeBlockConduit band)
+unsafeBlockSource band =
+  let blocks = allBlocks band
+  in zipSources blocks (blocks =$= unsafeBlockConduit band)
 
 blockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
-blockSource band = allBlocks band =$= zipWithInput (blockConduit band)
+blockSource band =
+  let blocks = allBlocks band
+  in zipSources blocks (blocks =$= blockConduit band)
 
 writeBandBlock
   :: forall s a. GDALType a
@@ -1615,60 +1616,3 @@ executeSQL = requiresGDAL2 "executeSQL"
 createLayer = requiresGDAL2 "createLayer"
 createLayerWithDef = requiresGDAL2 "createLayerWithDef"
 #endif
-
------------------------------------------------------------------------------
--- Conduit utils
------------------------------------------------------------------------------
-
--- | Parallel zip of two conduits
-pZipConduitApp
-  :: Monad m
-  => Conduit a m (b -> c)
-  -> Conduit a m b
-  -> Conduit a m c
-pZipConduitApp (ConduitM l0) (ConduitM r0) = ConduitM $ \rest -> let
-  go (HaveOutput p c o) (HaveOutput p' c' o') =
-    HaveOutput (go p p') (c>>c') (o o')
-  go (NeedInput p c) (NeedInput p' c') =
-    NeedInput (\i -> go (p i) (p' i)) (\u -> go (c u) (c' u))
-  go (Done ()) (Done ())  = rest ()
-  go (PipeM m) (PipeM m') = PipeM (liftM2 go m m')
-  go (Leftover p i) (Leftover p' _) = Leftover (go p p') i
-  go _              _               = error "pZipConduitApp: not parallel"
-  in go (injectLeftovers $ l0 Done) (injectLeftovers $ r0 Done)
-
-newtype PZipConduit i m o =
-  PZipConduit { getPZipConduit :: Conduit i m o}
-
-instance Monad m => Functor (PZipConduit i m) where
-    fmap f = PZipConduit . mapOutput f . getPZipConduit
-
-instance Monad m => Applicative (PZipConduit i m) where
-    pure = PZipConduit . forever . yield
-    PZipConduit l <*> PZipConduit r = PZipConduit (pZipConduitApp l r)
-
-zipBlocks
-  :: GDALType a
-  => Band s a t -> PZipConduit BlockIx (GDAL s) (U.Vector (Value a))
-zipBlocks = PZipConduit . unsafeBlockConduit
-
-getZipBlocks
-  :: PZipConduit BlockIx (GDAL s) a
-  -> Conduit BlockIx (GDAL s) (BlockIx, a)
-getZipBlocks = zipWithInput . getPZipConduit
-
-zipWithInput :: Monad m => Conduit a m b -> Conduit a m (a, b)
-zipWithInput (ConduitM c0) = ConduitM $ \rest -> let
-  go1 HaveOutput{} = error "unexpected NeedOutput"
-  go1 (NeedInput p c) = NeedInput (\i -> go2 i (p i)) (go1 . c)
-  go1 (Done r) = rest r
-  go1 (PipeM mp) = PipeM (fmap (go1) mp)
-  go1 (Leftover p i) = Leftover (go1 p) i
-
-  go2 i (HaveOutput p c o) = HaveOutput (go2 i p) c (i, o)
-  go2 _ (NeedInput p c)    = NeedInput (\i -> go2 i (p i)) (go1 . c)
-  go2 _ (Done r)           = rest r
-  go2 i (PipeM mp)         = PipeM (fmap (go2 i) mp)
-  go2 i (Leftover p i')    = Leftover (go2 i p) i'
-  in go1 (c0 Done)
-{-# INLINE zipWithInput #-}
