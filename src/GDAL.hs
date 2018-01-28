@@ -294,6 +294,7 @@ module GDAL (
 
   , unsafeToReadOnlyLayer
 
+  , zipSources
   , module Data.Conduit
 ) where
 
@@ -302,6 +303,8 @@ import Control.Monad.IO.Class (liftIO)
 
 import Data.Default (def)
 import Data.Conduit
+
+import Data.Conduit.Internal (zipSources)
 
 import GDAL.Internal.CPLConv
 import GDAL.Internal.CPLError
