@@ -537,15 +537,15 @@ class (Storable a, Typeable a, Default a, Show a) => GridAlgorithm a where
   setNodata     :: Ptr a -> CDouble -> IO ()
 
 createGridIO
-  :: (GDALType (HsType d), GridAlgorithm opts, IsComplex d ~ 'False)
+  :: (GDALType d, GridAlgorithm opts, IsComplex d ~ 'False)
   => DataType d
   -> opts
-  -> HsType d
+  -> d
   -> Maybe ProgressFun
-  -> St.Vector (GridPoint (HsType d))
+  -> St.Vector (GridPoint d)
   -> EnvelopeReal
   -> Size
-  -> IO (U.Vector (Value (HsType d)))
+  -> IO (U.Vector (Value d))
 createGridIO dt opts noDataVal fun points envelope size =
   --FIXME: Need to set this to 1 or else it will hang with GDAL 2.1
   withConfigOption "GDAL_NUM_THREADS" (Just "1") $
@@ -585,14 +585,14 @@ createGridIO dt opts noDataVal fun points envelope size =
 
 
 createGrid
-  :: (GDALType (HsType d), GridAlgorithm opts, IsComplex d ~ 'False)
+  :: (GDALType d, GridAlgorithm opts, IsComplex d ~ 'False)
   => DataType d
   -> opts
-  -> HsType d
-  -> St.Vector (GridPoint (HsType d))
+  -> d
+  -> St.Vector (GridPoint d)
   -> EnvelopeReal
   -> Size
-  -> Either GDALException (U.Vector (Value (HsType d)))
+  -> Either GDALException (U.Vector (Value d))
 createGrid dt opts noDataVal points envelope =
   unsafePerformIO .
   try .

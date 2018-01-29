@@ -299,7 +299,7 @@ bandDataType :: Band s a t -> DataTypeK
 bandDataType (Band (_,t)) = t
 {-# INLINE bandDataType #-}
 
-bandAs :: Band s a t -> DataType d -> Band s (HsType d) t
+bandAs :: Band s a t -> DataType d -> Band s d t
 bandAs = const . coerce
 {-# INLINE bandAs #-}
 
@@ -359,7 +359,7 @@ validateCreationOptions d o = do
 
 create
   :: DriverName -> String -> Size -> Int -> DataType d -> OptionList
-  -> GDAL s (Dataset s (HsType d) ReadWrite)
+  -> GDAL s (Dataset s d ReadWrite)
 create drv path size bands dtype optList = do
   d <- driverByName drv
   newDatasetHandle $ createDatasetH  d path size bands dtype optList
@@ -402,10 +402,10 @@ copyFiles driver newName oldName =
     withCString newName $
       withCString oldName . ({#call CopyDatasetFiles as ^#} d)
 
-openReadOnly :: String -> DataType d -> GDAL s (RODataset s (HsType d))
+openReadOnly :: String -> DataType d -> GDAL s (RODataset s d)
 openReadOnly p _ = openWithMode GA_ReadOnly p
 
-openReadWrite :: String -> DataType d -> GDAL s (RWDataset s (HsType d))
+openReadWrite :: String -> DataType d -> GDAL s (RWDataset s d)
 openReadWrite p _ = openWithMode GA_Update p
 
 openWithMode :: GDALAccess -> String -> GDAL s (Dataset s a t)
@@ -424,8 +424,8 @@ identifyDriver path = do
     flip {#call GDALIdentifyDriver as ^#} nullPtr
   return $ if d == nullDriverH then Nothing else Just (Driver d)
 
-openReadOnlyEx :: [OpenFlag] -> OptionList -> String -> DataType d -> GDAL s (RODataset s (HsType d))
-openReadWriteEx :: [OpenFlag] -> OptionList -> String -> DataType d -> GDAL s (RWDataset s (HsType d))
+openReadOnlyEx :: [OpenFlag] -> OptionList -> String -> DataType d -> GDAL s (RODataset s d)
+openReadWriteEx :: [OpenFlag] -> OptionList -> String -> DataType d -> GDAL s (RWDataset s d)
 identifyDriverEx :: [OpenFlag] -> String -> GDAL s (Maybe (Driver t))
 
 #if SUPPORTS_OPENEX
@@ -500,7 +500,7 @@ newDatasetHandle act = do
 
 createMem
   :: Size -> Int -> DataType d -> OptionList
-  -> GDAL s (Dataset s (HsType d) ReadWrite)
+  -> GDAL s (Dataset s d ReadWrite)
 createMem = create "Mem" ""
 
 flushCache :: RWDataset s a -> GDAL s ()

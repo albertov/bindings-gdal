@@ -389,7 +389,7 @@ data SomeGridAlgorithm = forall a. GridAlgorithm a => SGA a
 
 
 createGridIOSpec
-  :: (GDALType (HsType d), IsComplex d ~ 'False)
+  :: (GDALType d, IsComplex d ~ 'False)
   => DataType d -> SomeGridAlgorithm -> SpecWith (Arg (IO ()))
 createGridIOSpec dt (SGA opts) = do
 
@@ -419,7 +419,7 @@ createGridIOSpec dt (SGA opts) = do
 
 
 createGridIOMetricsSpec
-  :: (Ord (HsType d), GDALType (HsType d), IsComplex d ~ 'False)
+  :: (Ord d, GDALType d, IsComplex d ~ 'False)
   => DataType d -> SpecWith (Arg (IO ()))
 createGridIOMetricsSpec dt = do
   describe ("createGridIO " ++ show dt ++ " (GridDataMetrics)") $ do

@@ -147,8 +147,8 @@ spec = setupAndTeardown $ describe "band and block IO" $ do
         readBand b3 (allBand b3) sz >>= (`shouldBe` fun v1 v2)
 
 ioSpec
-  :: (U.Unbox (HsType d), GDALType (HsType d))
-  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+  :: (U.Unbox d, GDALType d)
+  => DataType d -> (Int -> Value d) -> SpecWith (Arg (IO ()))
 ioSpec dt f = do
   it_can_write_and_read_block dt f
   it_can_write_and_read_band dt f
@@ -157,8 +157,8 @@ ioSpec dt f = do
 
 
 it_can_write_and_read_band
-  :: (GDALType (HsType d), U.Unbox (HsType d))
-  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+  :: (GDALType d, U.Unbox d)
+  => DataType d -> (Int -> Value d) -> SpecWith (Arg (IO ()))
 it_can_write_and_read_band dt f = do
   let typeName = show dt
       name = "can write and read band " ++ typeName
@@ -254,8 +254,8 @@ it_can_write_and_read_band dt f = do
                         
 
 it_can_write_and_read_block
-  :: GDALType (HsType d)
-  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+  :: GDALType d
+  => DataType d -> (Int -> Value d) -> SpecWith (Arg (IO ()))
 it_can_write_and_read_block dt f = forM_ optionsList $ \opts -> do
   let typeName = show dt
       name = "can write and read block "++typeName++" (" ++ show opts ++")"
@@ -306,8 +306,8 @@ it_can_write_and_read_block dt f = forM_ optionsList $ \opts -> do
   where optionsList = [[], [("TILED","YES")]]
 
 it_can_foldl
-  :: forall d. GDALType (HsType d)
-  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+  :: forall d. GDALType d
+  => DataType d -> (Int -> Value d) -> SpecWith (Arg (IO ()))
 it_can_foldl dt f = forM_ [[], [("TILED","YES")]] $ \opts -> do
 
   let name = "can foldl with options " ++ show opts ++ " " ++ typeName
@@ -351,8 +351,8 @@ it_can_foldl dt f = forM_ [[], [("TILED","YES")]] $ \opts -> do
       GDAL.foldl' (+) 0 band >>= (`shouldBe` U.foldl' (+) 0 vec)
 
 it_can_foldlWindow
-  :: forall d. GDALType (HsType d)
-  => DataType d -> (Int -> Value (HsType d)) -> SpecWith (Arg (IO ()))
+  :: forall d. GDALType d
+  => DataType d -> (Int -> Value d) -> SpecWith (Arg (IO ()))
 it_can_foldlWindow dt f = forM_ [[], [("TILED","YES")]] $ \opts -> do
 
   let name = "can foldlWindow with options " ++ show opts ++ " " ++ typeName

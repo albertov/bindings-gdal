@@ -6,8 +6,6 @@ module GDAL (
   , HasLayerTransaction
   , ApproxOK (..)
   , DataType (..)
-  , HsType
-  , TypeK
   , IsComplex
   , Pair (..)
   , pFst
