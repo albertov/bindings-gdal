@@ -81,9 +81,9 @@ class ( Storable a
       , Num a
       , Typeable a
       ) => GDALType a where
-  dataType      :: DataType a
-  toCDouble     :: a -> CDouble
-  fromCDouble   :: CDouble -> a
+  dataType    :: DataType a
+  toCDouble   :: a -> CDouble
+  fromCDouble :: CDouble -> a
 
 
 type family IsComplex a where
@@ -114,90 +114,90 @@ hsDataType _ = dataTypeK (dataType :: DataType a)
 ------------------------------------------------------------------------------
 
 instance GDALType Word8 where
-  dataType         = GDT_Byte
-  toCDouble        = fromIntegral
-  fromCDouble      = truncate
+  dataType    = GDT_Byte
+  toCDouble   = fromIntegral
+  fromCDouble = truncate
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word16 where
-  dataType          = GDT_UInt16
-  toCDouble         = fromIntegral
-  fromCDouble       = truncate
+  dataType    = GDT_UInt16
+  toCDouble   = fromIntegral
+  fromCDouble = truncate
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word32 where
-  dataType          = GDT_UInt32
-  toCDouble         = fromIntegral
-  fromCDouble       = truncate
+  dataType    = GDT_UInt32
+  toCDouble   = fromIntegral
+  fromCDouble = truncate
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int16 where
-  dataType         = GDT_Int16
-  toCDouble        = fromIntegral
-  fromCDouble      = truncate
+  dataType    = GDT_Int16
+  toCDouble   = fromIntegral
+  fromCDouble = truncate
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int32 where
-  dataType         = GDT_Int32
-  toCDouble        = fromIntegral
-  fromCDouble      = truncate
+  dataType    = GDT_Int32
+  toCDouble   = fromIntegral
+  fromCDouble = truncate
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Float where
-  dataType         = GDT_Float32
-  toCDouble        = realToFrac
-  fromCDouble      = realToFrac
+  dataType    = GDT_Float32
+  toCDouble   = realToFrac
+  fromCDouble = realToFrac
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType Double where
-  dataType          = GDT_Float64
+  dataType    = GDT_Float64
   -- We use coerce to work around https://ghc.haskell.org/trac/ghc/ticket/3676
-  toCDouble         = coerce
-  fromCDouble       = coerce
+  toCDouble   = coerce
+  fromCDouble = coerce
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Pair Int16) where
-  dataType                = GDT_CInt16
-  toCDouble               = fromIntegral . pFst
-  fromCDouble             = (:+: 0) . truncate
+  dataType    = GDT_CInt16
+  toCDouble   = fromIntegral . pFst
+  fromCDouble = (:+: 0) . truncate
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Pair Int32) where
-  dataType                = GDT_CInt32
-  toCDouble               = fromIntegral . pFst
-  fromCDouble             = (:+: 0) . truncate
+  dataType    = GDT_CInt32
+  toCDouble   = fromIntegral . pFst
+  fromCDouble = (:+: 0) . truncate
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Pair Float) where
-  dataType                = GDT_CFloat32
-  toCDouble               = realToFrac . pFst
-  fromCDouble             = (:+: 0) . realToFrac
+  dataType    = GDT_CFloat32
+  toCDouble   = realToFrac . pFst
+  fromCDouble = (:+: 0) . realToFrac
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Pair Double) where
-  dataType                 = GDT_CFloat64
-  toCDouble                = coerce . pFst
-  fromCDouble              = (:+: 0) . coerce
+  dataType    = GDT_CFloat64
+  toCDouble   = coerce . pFst
+  fromCDouble = (:+: 0) . coerce
   {-# INLINE dataType #-}
   {-# INLINE toCDouble #-}
   {-# INLINE fromCDouble #-}
