@@ -19,18 +19,22 @@ import Distribution.Simple.LocalBuildInfo
 mkFlagName = FlagName
 #endif
 
+#if !MIN_VERSION_Cabal(2,2,0)
+lookupFlagAssignment = lookup
+#endif
+
 main = defaultMainWithHooks simpleUserHooks {confHook = gdalConf}
 
 gdalConf (pkg0, pbi) flags = do
  lbi <- confHook simpleUserHooks (pkg0, pbi) flags
- case mkFlagName "autoconfig" `lookup` configConfigurationsFlags flags of
+ case mkFlagName "autoconfig" `lookupFlagAssignment` configConfigurationsFlags flags of
    Just False -> putStrLn "NOT using gdal-config" >> return lbi
    _          -> putStrLn "Using gdal-config" >> configureWithGdalConfig lbi flags
 
 configureWithGdalConfig lbi flags = do
  gdalInclude <- getFlagValues 'I' <$> gdalConfig ["--cflags"]
  let isStatic = fromMaybe False $
-                mkFlagName "static" `lookup` configConfigurationsFlags flags
+                mkFlagName "static" `lookupFlagAssignment` configConfigurationsFlags flags
      getLibArgs = gdalConfig ["--libs"]
                 : [gdalConfig ["--dep-libs"] | isStatic ]
  libArgs <- unwords  <$> sequence  getLibArgs
