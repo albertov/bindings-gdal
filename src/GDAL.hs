@@ -133,7 +133,8 @@ module GDAL (
   , bandBlockCount
   , bandBlockLen
   , bandSize
-  , bandHasOverviews
+  , bandHasArbitraryOverviews
+  , bandOverviewCount
   , allBand
   , sizeLen
   , bandNodataValue

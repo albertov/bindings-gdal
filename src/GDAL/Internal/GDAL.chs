@@ -100,7 +100,8 @@ module GDAL.Internal.GDAL (
   , bandBlockCount
   , bandBlockLen
   , bandSize
-  , bandHasOverviews
+  , bandHasArbitraryOverviews
+  , bandOverviewCount
   , bandBestOverviewLevel
   , allBand
   , bandNodataValue
@@ -795,9 +796,13 @@ bandBlockCount b = fmap ceiling $ liftA2 ((/) :: Double -> Double -> Double)
                      (fmap fromIntegral (bandSize b))
                      (fmap fromIntegral (bandBlockSize b))
 
-bandHasOverviews :: Band s a t -> GDAL s Bool
-bandHasOverviews =
+bandHasArbitraryOverviews :: Band s a t -> GDAL s Bool
+bandHasArbitraryOverviews =
   liftIO . fmap toBool . {#call unsafe HasArbitraryOverviews as ^#} . unBand
+
+bandOverviewCount :: Band s a t -> GDAL s Int
+bandOverviewCount =
+  liftIO . fmap fromIntegral . {#call unsafe GetOverviewCount as ^#} . unBand
 
 bandNodataValue :: GDALType a => Band s a t -> GDAL s (Maybe a)
 bandNodataValue b =
