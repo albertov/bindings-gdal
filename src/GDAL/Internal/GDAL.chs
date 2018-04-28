@@ -95,6 +95,7 @@ module GDAL.Internal.GDAL (
 
   , bandDataType
   , bandProjection
+  , bandColorInterpretaion
   , bandGeotransform
   , bandBlockSize
   , bandBlockCount
@@ -122,6 +123,7 @@ module GDAL.Internal.GDAL (
   , unsafeBandConduit
   , bandSink
   , bandSinkGeo
+  , readDatasetRGBA
 
   , metadataDomains
   , metadata
@@ -163,7 +165,7 @@ import Control.Arrow (second)
 import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.Exception (Exception(..))
 import Control.DeepSeq (NFData(..))
-import Control.Monad (liftM2, when, (>=>))
+import Control.Monad (liftM2, when, (>=>), (<=<))
 import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -176,7 +178,7 @@ import qualified Data.List as L
 import qualified Data.Conduit.List as CL
 import Data.Conduit
 import Data.Conduit.Internal (zipSources)
-import Data.Maybe (fromMaybe, fromJust)
+import Data.Maybe (fromMaybe, fromJust, catMaybes)
 import Data.String (IsString)
 import Data.Proxy
 import Data.Text (Text)
@@ -189,7 +191,7 @@ import qualified Data.Vector.Storable.Mutable as Stm
 import qualified Data.Vector.Generic.Mutable  as M
 import qualified Data.Vector.Unboxed.Mutable  as UM
 import qualified Data.Vector.Unboxed          as U
-import Data.Word (Word8)
+import Data.Word (Word8, Word32)
 
 import Foreign.C.String (withCString, CString)
 import Foreign.C.Types
@@ -197,7 +199,7 @@ import Foreign.ForeignPtr (withForeignPtr, mallocForeignPtrBytes)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (withArrayLen, advancePtr)
+import Foreign.Marshal.Array (withArrayLen, withArray, advancePtr)
 import Foreign.Marshal.Utils (toBool, fromBool, with)
 
 import System.IO.Unsafe (unsafePerformIO)
@@ -247,6 +249,7 @@ instance Exception GDALRasterException where
   fromException = bindingExceptionFromException
 
 
+{#enum GDALColorInterp as ColorInterp { } deriving (Eq, Show) #}
 {#enum GDALAccess {} deriving (Eq, Show) #}
 
 {#enum RWFlag {} deriving (Eq, Show) #}
@@ -1427,6 +1430,55 @@ unsafeBlockConduitM band = do
         win = liftA2 min bs (rs  - off)
     bs  = fmap fromIntegral (bandBlockSize band)
     rs  = fmap fromIntegral (bandSize band)
+
+bandColorInterpretaion
+  :: MonadIO m
+  => Band s a t
+  -> m ColorInterp
+bandColorInterpretaion
+  = fmap toEnumC
+  . liftIO 
+  . {#call unsafe GetRasterColorInterpretation as ^#}
+  . unBand
+
+readDatasetRGBA
+  :: Dataset s Word8 t
+  -> Envelope Int
+  -> Size
+  -> GDAL s (St.Vector Word32)
+readDatasetRGBA ds (Envelope (x0:+:y0) (x1:+:y1)) (bufx:+:bufy) = do
+  nBands <- datasetBandCount ds
+  colorInterps <- mapM (bandColorInterpretaion <=< (`getBand` ds)) [1..nBands] 
+  let red   = (+1) <$> GCI_RedBand    `L.elemIndex` colorInterps
+      green = (+1) <$> GCI_GreenBand  `L.elemIndex` colorInterps
+      blue  = (+1) <$> GCI_BlueBand   `L.elemIndex` colorInterps
+      alpha = (+1) <$> GCI_AlphaBand  `L.elemIndex` colorInterps
+      bandMap   = catMaybes [red, green, blue, alpha]
+  liftIO $ do
+    buf <- Stm.new (bufx*bufy)
+    when (length bandMap < 4) (Stm.set buf 0xFF000000)
+    withArray (map fromIntegral bandMap) $ \pBandMap ->
+      Stm.unsafeWith buf $ \ bufPtr ->
+      checkCPLError "DatasetRasterIO" $
+      {#call DatasetRasterIO as ^#}
+        (unDataset ds)
+        (fromEnumC GA_ReadOnly)
+        (fromIntegral x0)
+        (fromIntegral y0)
+        (fromIntegral (x1-x0))
+        (fromIntegral (y1-y0))
+        (castPtr bufPtr)
+        (fromIntegral bufx)
+        (fromIntegral bufy)
+        (fromEnumC GByte)
+        (fromIntegral (length bandMap))
+        pBandMap
+        4
+        (fromIntegral (4 * bufx))
+        1
+    St.unsafeFreeze buf
+
+    
 
 openDatasetCount :: IO Int
 openDatasetCount =

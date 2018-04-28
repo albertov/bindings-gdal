@@ -126,6 +126,7 @@ module GDAL (
   , setDatasetGCPs
   , datasetBandCount
 
+  , bandColorInterpretaion
   , bandDataType
   , bandProjection
   , bandGeotransform
@@ -141,6 +142,7 @@ module GDAL (
   , setBandNodataValue
   , addBand
   , getBand
+  , readDatasetRGBA
   , readBand
   , createBandMask
   , readBandBlock
