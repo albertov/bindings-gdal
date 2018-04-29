@@ -92,6 +92,8 @@ module GDAL.Internal.GDAL (
   , datasetGCPs
   , setDatasetGCPs
   , datasetBandCount
+  , unsafeFromHandle
+  , adoptHandle
 
   , bandDataType
   , bandProjection
@@ -168,6 +170,7 @@ import Control.DeepSeq (NFData(..))
 import Control.Monad (liftM2, when, (>=>), (<=<))
 import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Resource (unprotect)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Bits ((.&.), (.|.))
@@ -501,6 +504,15 @@ newDatasetHandle act = do
                                 (GDALBindingException NullDataset) exc)
       | otherwise       = Nothing
     free = {#call GDALClose as ^#}
+
+unsafeFromHandle :: DatasetH -> Dataset s a t
+unsafeFromHandle h = Dataset (Nothing,h)
+
+adoptHandle :: Dataset s a t -> GDAL s (DatasetH, IO ())
+adoptHandle (Dataset (Nothing,h)) = pure (h, pure ())
+adoptHandle (Dataset (Just rk,h)) = do
+  closeDs <- fromMaybe (pure ()) <$> liftIO (unprotect rk)
+  pure (h, closeDs)
 
 createMem
   :: Size -> Int -> DataType d -> OptionList
