@@ -24,6 +24,7 @@ module GDAL.Internal.Types (
   , ReadWrite
   , ReadOnly
   , runGDAL
+  , unsafeRunGDAL
   , runGDAL_
   , allocate
   , allocateGDAL
@@ -216,6 +217,12 @@ runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
 runGDAL a = runBounded $
   bracket createGDALInternalState closeGDALInternalState
   (try . (evaluate . force <=< runWithInternalState a))
+
+unsafeRunGDAL :: GDAL s a -> IO a
+unsafeRunGDAL
+  = runBounded
+  . bracket createGDALInternalState closeGDALInternalState
+  . runWithInternalState
 
 createGDALInternalState :: IO (GDALInternalState s)
 createGDALInternalState = GDALInternalState <$> createInternalState
