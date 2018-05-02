@@ -21,6 +21,8 @@ module GDAL.Internal.Warper (
   , HasCutlineBlendDist (..)
   , HasSrcSrs (..)
   , HasDstSrs (..)
+  , HasDstAlphaBand (..)
+  , HasSrcAlphaBand (..)
   , HasMaxError (..)
   , reprojectImage
   , createWarpedVRT
@@ -91,6 +93,11 @@ class HasCutline o a | o -> a where
 class HasCutlineBlendDist o a | o -> a where
   cutlineBlendList :: Lens' o a
 
+class HasDstAlphaBand o a | o -> a where
+  dstAlphaBand :: Lens' o a
+
+class HasSrcAlphaBand o a | o -> a where
+  srcAlphaBand :: Lens' o a
 
 data WarpOptions a =
   WarpOptions {
@@ -105,6 +112,8 @@ data WarpOptions a =
     , woSrcSrs           :: Maybe SpatialReference
     , woDstSrs           :: Maybe SpatialReference
     , woMaxError         :: Double
+    , woSrcAlphaBand     :: Int
+    , woDstAlphaBand     :: Int
     , woProgressFun      :: Maybe ProgressFun
     }
 
@@ -145,6 +154,13 @@ instance HasMaxError (WarpOptions a) Double where
 instance HasProgressFun (WarpOptions a) (Maybe ProgressFun) where
   progressFun = lens woProgressFun (\o a -> o {woProgressFun = a})
 
+instance HasDstAlphaBand (WarpOptions a) Int where
+  dstAlphaBand = lens woDstAlphaBand (\o a -> o {woDstAlphaBand = a})
+
+instance HasSrcAlphaBand (WarpOptions a) Int where
+  srcAlphaBand = lens woSrcAlphaBand (\o a -> o {woSrcAlphaBand = a})
+
+
 {#pointer *GDALWarpOptions as WarpOptionsH newtype #}
 
 instance Default (WarpOptions a) where
@@ -160,6 +176,8 @@ instance Default (WarpOptions a) where
         , woSrcSrs           = Nothing
         , woDstSrs           = Nothing
         , woMaxError         = 0
+        , woSrcAlphaBand     = 0
+        , woDstAlphaBand     = 0
         , woProgressFun      = Nothing
         }
 
@@ -217,6 +235,8 @@ withWarpOptionsH ds mGt wo@WarpOptions{..} act =
       {#set GDALWarpOptions->dfWarpMemoryLimit #} p (realToFrac woMemoryLimit)
       {#set GDALWarpOptions->eWorkingDataType #} p (fromEnumC woWorkingDataType)
       {#set GDALWarpOptions->nBandCount #} p (fromIntegral (length woBands))
+      {#set GDALWarpOptions->nDstAlphaBand #} p (fromIntegral woDstAlphaBand)
+      {#set GDALWarpOptions->nSrcAlphaBand #} p (fromIntegral woSrcAlphaBand)
       {#set GDALWarpOptions->panSrcBands #} p =<<
         cplNewArray (map (fromIntegral . biSrc) woBands)
       {#set GDALWarpOptions->panDstBands #} p =<<

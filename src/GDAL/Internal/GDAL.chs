@@ -20,6 +20,7 @@ module GDAL.Internal.GDAL (
     GDALRasterException (..)
   , Geotransform (..)
   , OverviewResampling (..)
+  , ColorInterp(..)
   , DriverName (..)
   , Driver (..)
   , DriverH (..)
@@ -98,6 +99,7 @@ module GDAL.Internal.GDAL (
   , bandDataType
   , bandProjection
   , bandColorInterpretaion
+  , setBandColorInterpretaion
   , bandGeotransform
   , bandBlockSize
   , bandBlockCount
@@ -1452,6 +1454,16 @@ bandColorInterpretaion
   . liftIO 
   . {#call unsafe GetRasterColorInterpretation as ^#}
   . unBand
+
+setBandColorInterpretaion
+  :: Band s a t
+  -> ColorInterp
+  -> GDAL s ()
+setBandColorInterpretaion b
+  = liftIO
+  . checkCPLError "setBandColorInterpretaion"
+  . {#call unsafe SetRasterColorInterpretation as ^#} (unBand b)
+  .  fromEnumC
 
 readDatasetRGBA
   :: Dataset s Word8 t

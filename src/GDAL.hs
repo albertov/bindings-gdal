@@ -29,6 +29,7 @@ module GDAL (
   , isProgressFunException
   , isInterruptedException
 
+  , ColorInterp(..)
   , Geotransform (..)
   , GroundControlPoint (..)
   , OverviewResampling (..)
@@ -127,6 +128,7 @@ module GDAL (
   , datasetBandCount
 
   , bandColorInterpretaion
+  , setBandColorInterpretaion
   , bandDataType
   , bandProjection
   , bandGeotransform

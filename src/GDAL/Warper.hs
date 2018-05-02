@@ -10,6 +10,8 @@ module GDAL.Warper (
   , HasCutlineBlendDist (..)
   , HasSrcSrs (..)
   , HasDstSrs (..)
+  , HasDstAlphaBand (..)
+  , HasSrcAlphaBand (..)
   , HasMaxError (..)
   , reprojectImage
   , createWarpedVRT
