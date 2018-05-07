@@ -112,7 +112,7 @@ library
   install-includes: bindings.h
   default-language: Haskell2010
   include-dirs:    include cbits
-  cc-options:      -Wall -O3 -g
+  cc-options:      -Wall -O3 -g -D_BITS_FLOATN_H
   c-sources:       cbits/errorhandler.c
                  , cbits/contourwriter.c
                  , cbits/driver.cpp
