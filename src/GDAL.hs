@@ -32,7 +32,7 @@ module GDAL (
   , ColorInterp(..)
   , Geotransform (..)
   , GroundControlPoint (..)
-  , OverviewResampling (..)
+  , Resampling (..)
   , Driver
   , DriverName
   , Dataset

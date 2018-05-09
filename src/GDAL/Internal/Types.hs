@@ -117,6 +117,14 @@ instance Applicative Pair where
   (a :+: b) <*> (d :+: e) = a d :+: b e
   {-# INLINE (<*>) #-}
 
+instance Foldable Pair where
+  foldMap f (a :+: b) = f a `mappend` f b
+  {-# INLINE foldMap #-}
+
+instance Traversable Pair where
+  traverse f (a :+: b) = (:+:) <$> f a <*> f b
+  {-# INLINE traverse #-}
+
 instance Num a => Num (Pair a) where
   (+) = liftA2 (+)
   {-# INLINE (+) #-}
