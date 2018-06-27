@@ -39,7 +39,6 @@ import Control.DeepSeq (NFData (..) , force)
 import Control.Monad
 import Control.Monad.Catch ( SomeException, catch, mask_, bracket
                            , bracketOnError, onException )
-import Control.Monad.IO.Class ( liftIO )
 import Data.Maybe (fromMaybe)
 import Data.Proxy ( Proxy(Proxy) )
 import qualified Data.Vector.Storable as St
@@ -201,10 +200,10 @@ toGDALDatasetIO mkDataset =
           . closeInternalState)
       {#set HSDatasetImpl->destroyState#} impl destroyState
 
-toGDALDataset :: HSDataset s -> GDAL s DatasetH
+toGDALDataset :: HSDataset s -> GDAL s (Dataset s a t)
 toGDALDataset ds = do
   state <- getInternalState
-  liftIO $ hsDatasetToDatasetH ds $ \impl -> mask_ $ do
+  newDatasetHandle $ hsDatasetToDatasetH ds $ \impl -> mask_ $ do
     statePtr <- castStablePtrToPtr <$> newStablePtr state
     {#set HSDatasetImpl->state #}       impl statePtr
     {#set HSDatasetImpl->destroyState#} impl nullFunPtr
