@@ -72,11 +72,12 @@ data HSRasterBand s = forall a. (NFData a, GDALType a) =>
   HSRasterBand
     { blockSize :: !Size
     , nodata    :: !(Maybe a)
+    , colorInterp ::  !ColorInterp
     , readBlock :: !(ReadBlock s a)
     }
 
 instance NFData (HSRasterBand s) where
-  rnf (HSRasterBand a b c) = rnf a `seq` rnf b  `seq` rnf c
+  rnf (HSRasterBand a b c d) = rnf a `seq` rnf b  `seq` rnf c `seq` rnf d
 
 hsBandBlockLen :: HSRasterBand s -> Int
 hsBandBlockLen = (\(x :+: y) -> x*y) . blockSize
@@ -156,6 +157,7 @@ pokeHSRasterBand p b@HSRasterBand{readBlock=(_ :: ReadBlock s a),..} = do
   {#set HSRasterBandImpl->eDataType#}   p (fromEnumC dtype)
   {#set HSRasterBandImpl->nodata#}      p (toCDouble (fromMaybe 0 nodata))
   {#set HSRasterBandImpl->hasNodata#}   p (maybe 0 (const 1) nodata)
+  {#set HSRasterBandImpl->colorInterp#} p (fromEnumC colorInterp)
   fPtr <- wrapReadBlock b
   {#set HSRasterBandImpl->readBlock#} p fPtr
   where

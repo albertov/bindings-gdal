@@ -12,6 +12,7 @@ typedef struct hsRasterBandImpl {
   GDALDataType eDataType;
   double nodata;
   int hasNodata;
+  GDALColorInterp colorInterp;
   int (*readBlock)( HsStablePtr, int, int, void* );
 }* HSRasterBandImpl;
 

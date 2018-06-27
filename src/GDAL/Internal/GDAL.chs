@@ -99,8 +99,8 @@ module GDAL.Internal.GDAL (
 
   , bandDataType
   , bandProjection
-  , bandColorInterpretaion
-  , setBandColorInterpretaion
+  , bandColorInterpretation
+  , setBandColorInterpretation
   , bandGeotransform
   , bandBlockSize
   , bandBlockCount
@@ -259,6 +259,10 @@ instance Exception GDALRasterException where
 
 
 {#enum GDALColorInterp as ColorInterp { } deriving (Eq, Show) #}
+
+instance NFData ColorInterp where
+  rnf !_ = ()
+
 {#enum GDALAccess {} deriving (Eq, Show) #}
 
 {#enum RWFlag {} deriving (Eq, Show) #}
@@ -1457,23 +1461,23 @@ unsafeBlockConduitM band = do
     bs  = fmap fromIntegral (bandBlockSize band)
     rs  = fmap fromIntegral (bandSize band)
 
-bandColorInterpretaion
+bandColorInterpretation
   :: MonadIO m
   => Band s a t
   -> m ColorInterp
-bandColorInterpretaion
+bandColorInterpretation
   = fmap toEnumC
   . liftIO 
   . {#call unsafe GetRasterColorInterpretation as ^#}
   . unBand
 
-setBandColorInterpretaion
+setBandColorInterpretation
   :: Band s a t
   -> ColorInterp
   -> GDAL s ()
-setBandColorInterpretaion b
+setBandColorInterpretation b
   = liftIO
-  . checkCPLError "setBandColorInterpretaion"
+  . checkCPLError "setBandColorInterpretation"
   . {#call unsafe SetRasterColorInterpretation as ^#} (unBand b)
   .  fromEnumC
 
@@ -1484,7 +1488,7 @@ readDatasetRGBA
   -> GDAL s (St.Vector Word32)
 readDatasetRGBA ds (Envelope (x0:+:y0) (x1:+:y1)) (bufx:+:bufy) = do
   nBands <- datasetBandCount ds
-  colorInterps <- mapM (bandColorInterpretaion <=< (`getBand` ds)) [1..nBands] 
+  colorInterps <- mapM (bandColorInterpretation <=< (`getBand` ds)) [1..nBands] 
   let red   = (+1) <$> GCI_RedBand    `L.elemIndex` colorInterps
       green = (+1) <$> GCI_GreenBand  `L.elemIndex` colorInterps
       blue  = (+1) <$> GCI_BlueBand   `L.elemIndex` colorInterps

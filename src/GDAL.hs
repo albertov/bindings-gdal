@@ -128,8 +128,8 @@ module GDAL (
   , setDatasetGCPs
   , datasetBandCount
 
-  , bandColorInterpretaion
-  , setBandColorInterpretaion
+  , bandColorInterpretation
+  , setBandColorInterpretation
   , bandDataType
   , bandProjection
   , bandGeotransform
