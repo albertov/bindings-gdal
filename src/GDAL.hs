@@ -30,6 +30,7 @@ module GDAL (
   , isInterruptedException
 
   , ColorInterp(..)
+  , Georeference (..)
   , Geotransform (..)
   , GroundControlPoint (..)
   , Resampling (..)

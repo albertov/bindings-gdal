@@ -19,6 +19,7 @@
 module GDAL.Internal.GDAL (
     GDALRasterException (..)
   , Geotransform (..)
+  , Georeference (..)
   , Resampling (..)
   , ColorInterp(..)
   , DriverName (..)
@@ -633,15 +634,15 @@ withResampling ResMode            = unsafeUseAsCString "MODE\0"
 withResampling ResAverageMagphase = unsafeUseAsCString "AVERAGE_MAGPHASE\0"
 withResampling ResNone            = unsafeUseAsCString "NONE\0"
 
-data Geotransform
-  = Geotransform {
-      gtXOff   :: {-# UNPACK #-} !Double
-    , gtXDelta :: {-# UNPACK #-} !Double
-    , gtXRot   :: {-# UNPACK #-} !Double
-    , gtYOff   :: {-# UNPACK #-} !Double
-    , gtYRot   :: {-# UNPACK #-} !Double
-    , gtYDelta :: {-# UNPACK #-} !Double
+data Geotransform = Geotransform
+  { gtXOff   :: {-# UNPACK #-} !Double
+  , gtXDelta :: {-# UNPACK #-} !Double
+  , gtXRot   :: {-# UNPACK #-} !Double
+  , gtYOff   :: {-# UNPACK #-} !Double
+  , gtYRot   :: {-# UNPACK #-} !Double
+  , gtYDelta :: {-# UNPACK #-} !Double
   } deriving (Eq, Show)
+
 
 instance NFData Geotransform where
   rnf Geotransform{} = ()
@@ -735,6 +736,13 @@ instance Storable Geotransform where
                  <*> fmap realToFrac (peekElemOff p 4)
                  <*> fmap realToFrac (peekElemOff p 5)
 
+data Georeference = Georeference
+  { grTransform :: !Geotransform
+  , grSize      :: !Size
+  } deriving (Eq, Show)
+
+instance NFData Georeference where
+  rnf Georeference {} = ()
 
 datasetGeotransform:: MonadIO m => Dataset s a t -> m (Maybe Geotransform)
 datasetGeotransform ds = liftIO $ alloca $ \p -> do
