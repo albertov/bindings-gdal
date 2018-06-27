@@ -143,6 +143,12 @@ module GDAL (
   , sizeLen
   , bandNodataValue
   , setBandNodataValue
+  , bandOffset
+  , setBandOffset
+  , bandScale
+  , setBandScale
+  , bandUnitType
+  , setBandUnitType
   , addBand
   , getBand
   , readDatasetRGBA

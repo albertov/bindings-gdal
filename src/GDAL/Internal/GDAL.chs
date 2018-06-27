@@ -112,6 +112,12 @@ module GDAL.Internal.GDAL (
   , allBand
   , bandNodataValue
   , setBandNodataValue
+  , bandOffset
+  , setBandOffset
+  , bandScale
+  , setBandScale
+  , bandUnitType
+  , setBandUnitType
   , getBand
   , addBand
   , fillBand
@@ -845,12 +851,51 @@ bandNodataValue b =
     hasNodata <- fmap toBool $ peek p
     return (if hasNodata then Just (fromCDouble value) else Nothing)
 
-
-setBandNodataValue :: GDALType a => a -> RWBand s a -> GDAL s ()
+setBandNodataValue :: (MonadIO m, GDALType a) => a -> RWBand s a -> m ()
 setBandNodataValue v b =
   liftIO $
   checkCPLError "SetRasterNoDataValue" $
   {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
+
+bandOffset :: MonadIO m => Band s a t -> m (Maybe Double)
+bandOffset b =
+  liftIO $
+  alloca $ \p -> do
+    value <- {#call unsafe GetRasterOffset as ^#} (unBand b) p
+    hasValue <- fmap toBool $ peek p
+    return (if hasValue then Just (realToFrac value) else Nothing)
+
+setBandOffset :: Double -> RWBand s a -> GDAL s ()
+setBandOffset v b =
+  liftIO $
+  checkCPLError "SetRasterOffset" $
+  {#call unsafe SetRasterOffset as ^#} (unBand b) (realToFrac v)
+
+bandScale :: MonadIO m => Band s a t -> m (Maybe Double)
+bandScale b =
+  liftIO $
+  alloca $ \p -> do
+    value <- {#call unsafe GetRasterScale as ^#} (unBand b) p
+    hasValue <- fmap toBool $ peek p
+    return (if hasValue then Just (realToFrac value) else Nothing)
+
+setBandScale :: Double -> RWBand s a -> GDAL s ()
+setBandScale v b =
+  liftIO $
+  checkCPLError "SetRasterScale" $
+  {#call unsafe SetRasterScale as ^#} (unBand b) (realToFrac v)
+
+bandUnitType :: MonadIO m => Band s a t -> m (Maybe ByteString)
+bandUnitType b = liftIO $ do
+  p <- {#call GetRasterUnitType as ^#} (unBand b)
+  if p == nullPtr then return Nothing else do
+    c <- peek p
+    if c == 0 then return Nothing else Just <$> packCString p
+
+setBandUnitType :: ByteString -> RWBand s a -> GDAL s ()
+setBandUnitType unit b =
+  liftIO $ checkCPLError "SetRasterUnitType" $
+    useAsCString unit ({#call SetRasterUnitType as ^#} (unBand b))
 
 createBandMask :: MaskType -> RWBand s a -> GDAL s ()
 createBandMask maskType band = liftIO $
