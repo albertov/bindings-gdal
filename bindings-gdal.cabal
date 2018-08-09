@@ -50,6 +50,7 @@ library
                    , GDAL
                    , GDAL.Algorithms
                    , GDAL.Warper
+                   , GDAL.VRT
 
                    , GDAL.Internal.Types
                    , GDAL.Internal.Types.Value
@@ -74,6 +75,7 @@ library
                    , GDAL.Internal.Warper
                    , GDAL.Internal.HSDataset
                    , GDAL.Internal.HSDriver
+                   , GDAL.Internal.VRT
   build-depends:     base                              >= 4.5     && < 5
                    , ghc-prim                          >= 0.3.1   && < 0.6
                    , bytestring                        >= 0.10.4  && < 0.11
@@ -112,7 +114,7 @@ library
   install-includes: bindings.h
   default-language: Haskell2010
   include-dirs:    include cbits
-  cc-options:      -Wall -O3 -g
+  cc-options:      -Wall -g
   c-sources:       cbits/errorhandler.c
                  , cbits/contourwriter.c
                  , cbits/driver.cpp
@@ -160,11 +162,12 @@ test-suite spec
                   , OGRGeometrySpec
                   , GDAL.AlgorithmsSpec
                   , GDAL.WarperSpec
+                  , GDAL.VRTSpec
                   , Paths_bindings_gdal
                   , TestUtils
                   , Arbitrary
   default-language: Haskell2010
-  ghc-options:     -Wall -rtsopts -threaded -with-rtsopts=-N -O
+  ghc-options:     -Wall -rtsopts -threaded -with-rtsopts=-N
   if flag(static)
     ghc-options: -optl-static -optl-static-libstdc++ -optl-static-libgcc -pgml=g++
   include-dirs:    src/GDAL/Internal/
