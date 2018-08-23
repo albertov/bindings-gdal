@@ -52,9 +52,12 @@ public:
 
   virtual CPLErr IReadBlock( int, int, void * );
   virtual double GetNoDataValue( int *pbSuccess = NULL );
+  virtual CPLErr SetColorInterpretation(GDALColorInterp);
+  virtual GDALColorInterp GetColorInterpretation();
 
 private:
   const HsStablePtr state;
+  GDALColorInterp colorInterp;
   const double noDataValue;
   const bool hasNodata;
   int (*const pfnReadBlock)(const HsStablePtr, const int, const int, void*);
@@ -157,6 +160,7 @@ HSRasterBand::HSRasterBand( HSDataset *poDS, int nBand,
   this->nBlockXSize  = impl.nBlockXSize;
   this->nBlockYSize  = impl.nBlockYSize;
   this->eDataType    = impl.eDataType;
+  this->colorInterp  = impl.colorInterp;
 }
 
 /************************************************************************/
@@ -189,7 +193,19 @@ double HSRasterBand::GetNoDataValue( int *pbSuccess )
     return this->noDataValue;
 }
 
+/************************************************************************/
+/*                     HSRasterBand::GetColorInterpretation()           */
+/************************************************************************/
+GDALColorInterp HSRasterBand::GetColorInterpretation()
+{
+  return this->colorInterp;
+}
 
+CPLErr HSRasterBand::SetColorInterpretation(GDALColorInterp colorInterp)
+{
+  this->colorInterp = colorInterp;
+  return CE_None;
+}
 
 /************************************************************************/
 /*                         hs_gdal_create_dataset                       */

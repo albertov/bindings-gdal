@@ -39,7 +39,6 @@ import Control.DeepSeq (NFData (..) , force)
 import Control.Monad
 import Control.Monad.Catch ( SomeException, catch, mask_, bracket
                            , bracketOnError, onException )
-import Control.Monad.IO.Class ( liftIO )
 import Data.Maybe (fromMaybe)
 import Data.Proxy ( Proxy(Proxy) )
 import qualified Data.Vector.Storable as St
@@ -72,11 +71,12 @@ data HSRasterBand s = forall a. (NFData a, GDALType a) =>
   HSRasterBand
     { blockSize :: !Size
     , nodata    :: !(Maybe a)
+    , colorInterp ::  !ColorInterp
     , readBlock :: !(ReadBlock s a)
     }
 
 instance NFData (HSRasterBand s) where
-  rnf (HSRasterBand a b c) = rnf a `seq` rnf b  `seq` rnf c
+  rnf (HSRasterBand a b c d) = rnf a `seq` rnf b  `seq` rnf c `seq` rnf d
 
 hsBandBlockLen :: HSRasterBand s -> Int
 hsBandBlockLen = (\(x :+: y) -> x*y) . blockSize
@@ -156,6 +156,7 @@ pokeHSRasterBand p b@HSRasterBand{readBlock=(_ :: ReadBlock s a),..} = do
   {#set HSRasterBandImpl->eDataType#}   p (fromEnumC dtype)
   {#set HSRasterBandImpl->nodata#}      p (toCDouble (fromMaybe 0 nodata))
   {#set HSRasterBandImpl->hasNodata#}   p (maybe 0 (const 1) nodata)
+  {#set HSRasterBandImpl->colorInterp#} p (fromEnumC colorInterp)
   fPtr <- wrapReadBlock b
   {#set HSRasterBandImpl->readBlock#} p fPtr
   where
@@ -199,10 +200,10 @@ toGDALDatasetIO mkDataset =
           . closeInternalState)
       {#set HSDatasetImpl->destroyState#} impl destroyState
 
-toGDALDataset :: HSDataset s -> GDAL s DatasetH
+toGDALDataset :: HSDataset s -> GDAL s (Dataset s a t)
 toGDALDataset ds = do
   state <- getInternalState
-  liftIO $ hsDatasetToDatasetH ds $ \impl -> mask_ $ do
+  newDatasetHandle $ hsDatasetToDatasetH ds $ \impl -> mask_ $ do
     statePtr <- castStablePtrToPtr <$> newStablePtr state
     {#set HSDatasetImpl->state #}       impl statePtr
     {#set HSDatasetImpl->destroyState#} impl nullFunPtr

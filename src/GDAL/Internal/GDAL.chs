@@ -19,18 +19,19 @@
 module GDAL.Internal.GDAL (
     GDALRasterException (..)
   , Geotransform (..)
-  , OverviewResampling (..)
+  , Georeference (..)
+  , Resampling (..)
   , ColorInterp(..)
   , DriverName (..)
   , Driver (..)
   , DriverH (..)
-  , Dataset
+  , Dataset (..)
   , DatasetH (..)
   , RWDataset
   , RODataset
   , RWBand
   , ROBand
-  , Band
+  , Band (..)
   , RasterBandH (..)
   , MaskType (..)
 
@@ -98,8 +99,8 @@ module GDAL.Internal.GDAL (
 
   , bandDataType
   , bandProjection
-  , bandColorInterpretaion
-  , setBandColorInterpretaion
+  , bandColorInterpretation
+  , setBandColorInterpretation
   , bandGeotransform
   , bandBlockSize
   , bandBlockCount
@@ -111,6 +112,12 @@ module GDAL.Internal.GDAL (
   , allBand
   , bandNodataValue
   , setBandNodataValue
+  , bandOffset
+  , setBandOffset
+  , bandScale
+  , setBandScale
+  , bandUnitType
+  , setBandUnitType
   , getBand
   , addBand
   , fillBand
@@ -153,6 +160,9 @@ module GDAL.Internal.GDAL (
   , newDatasetHandle
   , unsafeBandDataset
   , openDatasetCount
+  , withResampling
+  , MajorObject (..)
+  , MajorObjectH (..)
 
   , module GDAL.Internal.DataType
 ) where
@@ -255,6 +265,10 @@ instance Exception GDALRasterException where
 
 
 {#enum GDALColorInterp as ColorInterp { } deriving (Eq, Show) #}
+
+instance NFData ColorInterp where
+  rnf !_ = ()
+
 {#enum GDALAccess {} deriving (Eq, Show) #}
 
 {#enum RWFlag {} deriving (Eq, Show) #}
@@ -592,17 +606,17 @@ datasetGCPs ds =
     return (gcps, srs)
 
 
-data OverviewResampling
-  = OvNearest
-  | OvGauss
-  | OvCubic
-  | OvAverage
-  | OvMode
-  | OvAverageMagphase
-  | OvNone
+data Resampling
+  = ResNearest
+  | ResGauss
+  | ResCubic
+  | ResAverage
+  | ResMode
+  | ResAverageMagphase
+  | ResNone
 
 buildOverviews
-  :: RWDataset s a -> OverviewResampling -> [Int] -> [Int] -> Maybe ProgressFun
+  :: RWDataset s a -> Resampling -> [Int] -> [Int] -> Maybe ProgressFun
   -> GDAL s ()
 buildOverviews ds resampling overviews bands progress =
   liftIO $
@@ -620,24 +634,25 @@ buildOverviews ds resampling overviews bands progress =
       pBands
       pFunc
       nullPtr
-  where
-    withResampling OvNearest         = unsafeUseAsCString "NEAREST\0"
-    withResampling OvGauss           = unsafeUseAsCString "GAUSS\0"
-    withResampling OvCubic           = unsafeUseAsCString "CUBIC\0"
-    withResampling OvAverage         = unsafeUseAsCString "AVERAGE\0"
-    withResampling OvMode            = unsafeUseAsCString "MODE\0"
-    withResampling OvAverageMagphase = unsafeUseAsCString "AVERAGE_MAGPHASE\0"
-    withResampling OvNone            = unsafeUseAsCString "NONE\0"
 
-data Geotransform
-  = Geotransform {
-      gtXOff   :: {-# UNPACK #-} !Double
-    , gtXDelta :: {-# UNPACK #-} !Double
-    , gtXRot   :: {-# UNPACK #-} !Double
-    , gtYOff   :: {-# UNPACK #-} !Double
-    , gtYRot   :: {-# UNPACK #-} !Double
-    , gtYDelta :: {-# UNPACK #-} !Double
+withResampling :: Resampling -> (CString -> IO a) -> IO a
+withResampling ResNearest         = unsafeUseAsCString "NEAREST\0"
+withResampling ResGauss           = unsafeUseAsCString "GAUSS\0"
+withResampling ResCubic           = unsafeUseAsCString "CUBIC\0"
+withResampling ResAverage         = unsafeUseAsCString "AVERAGE\0"
+withResampling ResMode            = unsafeUseAsCString "MODE\0"
+withResampling ResAverageMagphase = unsafeUseAsCString "AVERAGE_MAGPHASE\0"
+withResampling ResNone            = unsafeUseAsCString "NONE\0"
+
+data Geotransform = Geotransform
+  { gtXOff   :: {-# UNPACK #-} !Double
+  , gtXDelta :: {-# UNPACK #-} !Double
+  , gtXRot   :: {-# UNPACK #-} !Double
+  , gtYOff   :: {-# UNPACK #-} !Double
+  , gtYRot   :: {-# UNPACK #-} !Double
+  , gtYDelta :: {-# UNPACK #-} !Double
   } deriving (Eq, Show)
+
 
 instance NFData Geotransform where
   rnf Geotransform{} = ()
@@ -731,6 +746,13 @@ instance Storable Geotransform where
                  <*> fmap realToFrac (peekElemOff p 4)
                  <*> fmap realToFrac (peekElemOff p 5)
 
+data Georeference = Georeference
+  { grTransform :: !Geotransform
+  , grSize      :: !Size
+  } deriving (Eq, Show)
+
+instance NFData Georeference where
+  rnf Georeference {} = ()
 
 datasetGeotransform:: MonadIO m => Dataset s a t -> m (Maybe Geotransform)
 datasetGeotransform ds = liftIO $ alloca $ \p -> do
@@ -829,12 +851,51 @@ bandNodataValue b =
     hasNodata <- fmap toBool $ peek p
     return (if hasNodata then Just (fromCDouble value) else Nothing)
 
-
-setBandNodataValue :: GDALType a => a -> RWBand s a -> GDAL s ()
+setBandNodataValue :: (MonadIO m, GDALType a) => a -> RWBand s a -> m ()
 setBandNodataValue v b =
   liftIO $
   checkCPLError "SetRasterNoDataValue" $
   {#call unsafe SetRasterNoDataValue as ^#} (unBand b) (toCDouble v)
+
+bandOffset :: MonadIO m => Band s a t -> m (Maybe Double)
+bandOffset b =
+  liftIO $
+  alloca $ \p -> do
+    value <- {#call unsafe GetRasterOffset as ^#} (unBand b) p
+    hasValue <- fmap toBool $ peek p
+    return (if hasValue then Just (realToFrac value) else Nothing)
+
+setBandOffset :: Double -> RWBand s a -> GDAL s ()
+setBandOffset v b =
+  liftIO $
+  checkCPLError "SetRasterOffset" $
+  {#call unsafe SetRasterOffset as ^#} (unBand b) (realToFrac v)
+
+bandScale :: MonadIO m => Band s a t -> m (Maybe Double)
+bandScale b =
+  liftIO $
+  alloca $ \p -> do
+    value <- {#call unsafe GetRasterScale as ^#} (unBand b) p
+    hasValue <- fmap toBool $ peek p
+    return (if hasValue then Just (realToFrac value) else Nothing)
+
+setBandScale :: Double -> RWBand s a -> GDAL s ()
+setBandScale v b =
+  liftIO $
+  checkCPLError "SetRasterScale" $
+  {#call unsafe SetRasterScale as ^#} (unBand b) (realToFrac v)
+
+bandUnitType :: MonadIO m => Band s a t -> m (Maybe ByteString)
+bandUnitType b = liftIO $ do
+  p <- {#call GetRasterUnitType as ^#} (unBand b)
+  if p == nullPtr then return Nothing else do
+    c <- peek p
+    if c == 0 then return Nothing else Just <$> packCString p
+
+setBandUnitType :: ByteString -> RWBand s a -> GDAL s ()
+setBandUnitType unit b =
+  liftIO $ checkCPLError "SetRasterUnitType" $
+    useAsCString unit ({#call SetRasterUnitType as ^#} (unBand b))
 
 createBandMask :: MaskType -> RWBand s a -> GDAL s ()
 createBandMask maskType band = liftIO $
@@ -1445,23 +1506,23 @@ unsafeBlockConduitM band = do
     bs  = fmap fromIntegral (bandBlockSize band)
     rs  = fmap fromIntegral (bandSize band)
 
-bandColorInterpretaion
+bandColorInterpretation
   :: MonadIO m
   => Band s a t
   -> m ColorInterp
-bandColorInterpretaion
+bandColorInterpretation
   = fmap toEnumC
   . liftIO 
   . {#call unsafe GetRasterColorInterpretation as ^#}
   . unBand
 
-setBandColorInterpretaion
+setBandColorInterpretation
   :: Band s a t
   -> ColorInterp
   -> GDAL s ()
-setBandColorInterpretaion b
+setBandColorInterpretation b
   = liftIO
-  . checkCPLError "setBandColorInterpretaion"
+  . checkCPLError "setBandColorInterpretation"
   . {#call unsafe SetRasterColorInterpretation as ^#} (unBand b)
   .  fromEnumC
 
@@ -1472,7 +1533,7 @@ readDatasetRGBA
   -> GDAL s (St.Vector Word32)
 readDatasetRGBA ds (Envelope (x0:+:y0) (x1:+:y1)) (bufx:+:bufy) = do
   nBands <- datasetBandCount ds
-  colorInterps <- mapM (bandColorInterpretaion <=< (`getBand` ds)) [1..nBands] 
+  colorInterps <- mapM (bandColorInterpretation <=< (`getBand` ds)) [1..nBands] 
   let red   = (+1) <$> GCI_RedBand    `L.elemIndex` colorInterps
       green = (+1) <$> GCI_GreenBand  `L.elemIndex` colorInterps
       blue  = (+1) <$> GCI_BlueBand   `L.elemIndex` colorInterps

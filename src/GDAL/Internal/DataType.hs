@@ -27,6 +27,7 @@ module GDAL.Internal.DataType (
 
   , sizeOfDataType
   , hsDataType
+  , dataTypeK
 ) where
 
 import GDAL.Internal.Types (Pair(..), pFst)
@@ -39,6 +40,7 @@ import Data.Coerce (coerce)
 
 import Foreign.Storable (Storable(sizeOf))
 import Foreign.C.Types (CDouble(..))
+import GHC.TypeLits
 
 
 data DataType :: * -> * where
@@ -80,7 +82,9 @@ class ( Storable a
       , Show a
       , Num a
       , Typeable a
+      , KnownNat (SizeOf a)
       ) => GDALType a where
+  type SizeOf a :: Nat
   dataType    :: DataType a
   toCDouble   :: a -> CDouble
   fromCDouble :: CDouble -> a
@@ -114,6 +118,7 @@ hsDataType _ = dataTypeK (dataType :: DataType a)
 ------------------------------------------------------------------------------
 
 instance GDALType Word8 where
+  type SizeOf Word8 = 1
   dataType    = GDT_Byte
   toCDouble   = fromIntegral
   fromCDouble = truncate
@@ -122,6 +127,7 @@ instance GDALType Word8 where
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word16 where
+  type SizeOf Word16 = 2
   dataType    = GDT_UInt16
   toCDouble   = fromIntegral
   fromCDouble = truncate
@@ -130,6 +136,7 @@ instance GDALType Word16 where
   {-# INLINE fromCDouble #-}
 
 instance GDALType Word32 where
+  type SizeOf Word32 = 4
   dataType    = GDT_UInt32
   toCDouble   = fromIntegral
   fromCDouble = truncate
@@ -138,6 +145,7 @@ instance GDALType Word32 where
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int16 where
+  type SizeOf Int16 = 2
   dataType    = GDT_Int16
   toCDouble   = fromIntegral
   fromCDouble = truncate
@@ -146,6 +154,7 @@ instance GDALType Int16 where
   {-# INLINE fromCDouble #-}
 
 instance GDALType Int32 where
+  type SizeOf Int32 = 4
   dataType    = GDT_Int32
   toCDouble   = fromIntegral
   fromCDouble = truncate
@@ -154,6 +163,7 @@ instance GDALType Int32 where
   {-# INLINE fromCDouble #-}
 
 instance GDALType Float where
+  type SizeOf Float = 4
   dataType    = GDT_Float32
   toCDouble   = realToFrac
   fromCDouble = realToFrac
@@ -162,6 +172,7 @@ instance GDALType Float where
   {-# INLINE fromCDouble #-}
 
 instance GDALType Double where
+  type SizeOf Double = 8
   dataType    = GDT_Float64
   -- We use coerce to work around https://ghc.haskell.org/trac/ghc/ticket/3676
   toCDouble   = coerce
@@ -171,6 +182,7 @@ instance GDALType Double where
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Pair Int16) where
+  type SizeOf (Pair Int16) = 4
   dataType    = GDT_CInt16
   toCDouble   = fromIntegral . pFst
   fromCDouble = (:+: 0) . truncate
@@ -179,6 +191,7 @@ instance GDALType (Pair Int16) where
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Pair Int32) where
+  type SizeOf (Pair Int32) = 8
   dataType    = GDT_CInt32
   toCDouble   = fromIntegral . pFst
   fromCDouble = (:+: 0) . truncate
@@ -187,6 +200,7 @@ instance GDALType (Pair Int32) where
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Pair Float) where
+  type SizeOf (Pair Float) = 8
   dataType    = GDT_CFloat32
   toCDouble   = realToFrac . pFst
   fromCDouble = (:+: 0) . realToFrac
@@ -195,6 +209,7 @@ instance GDALType (Pair Float) where
   {-# INLINE fromCDouble #-}
 
 instance GDALType (Pair Double) where
+  type SizeOf (Pair Double) = 16
   dataType    = GDT_CFloat64
   toCDouble   = coerce . pFst
   fromCDouble = (:+: 0) . coerce

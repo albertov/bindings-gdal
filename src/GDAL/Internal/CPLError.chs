@@ -14,6 +14,7 @@ module GDAL.Internal.CPLError (
   , throwBindingException
   , bindingExceptionToException
   , bindingExceptionFromException
+  , cplError
   , checkCPLError
   , checkGDALCall
   , checkGDALCall_
@@ -40,8 +41,8 @@ import Foreign.Ptr (Ptr, FunPtr, nullPtr)
 import Foreign.Storable (peek)
 import Foreign.Marshal.Utils (with)
 
-import GDAL.Internal.Util (toEnumC, runBounded)
-import GDAL.Internal.CPLString (peekEncodedCString)
+import GDAL.Internal.Util (fromEnumC, toEnumC, runBounded)
+import GDAL.Internal.CPLString (peekEncodedCString, useAsEncodedCString)
 
 #include "cpl_error.h"
 #include "errorhandler.h"
@@ -150,6 +151,10 @@ withQuietErrorHandler a = runBounded ((pushIt >> a) `finally` popIt)
     pushIt = {#call unsafe CPLPushErrorHandler as ^#} c_quietErrorHandler
     popIt  = {#call unsafe CPLPopErrorHandler as ^#}
 
+
+cplError :: ErrorType -> ErrorNum -> Text -> IO ()
+cplError err errNum msg = useAsEncodedCString msg $
+  {#call unsafe CPLError as ^#} (fromEnumC err) (fromEnumC errNum)
 
 foreign import ccall "cpl_error.h &CPLQuietErrorHandler"
   c_quietErrorHandler :: FunPtr (CInt -> CInt -> Ptr CChar -> IO ())

@@ -30,9 +30,10 @@ module GDAL (
   , isInterruptedException
 
   , ColorInterp(..)
+  , Georeference (..)
   , Geotransform (..)
   , GroundControlPoint (..)
-  , OverviewResampling (..)
+  , Resampling (..)
   , Driver
   , DriverName
   , Dataset
@@ -127,8 +128,8 @@ module GDAL (
   , setDatasetGCPs
   , datasetBandCount
 
-  , bandColorInterpretaion
-  , setBandColorInterpretaion
+  , bandColorInterpretation
+  , setBandColorInterpretation
   , bandDataType
   , bandProjection
   , bandGeotransform
@@ -142,6 +143,12 @@ module GDAL (
   , sizeLen
   , bandNodataValue
   , setBandNodataValue
+  , bandOffset
+  , setBandOffset
+  , bandScale
+  , setBandScale
+  , bandUnitType
+  , setBandUnitType
   , addBand
   , getBand
   , readDatasetRGBA
