@@ -78,7 +78,7 @@ module GDAL.Internal.Layer (
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.Coerce (coerce)
 import Data.Conduit ( Conduit, Sink, Source
-                    , addCleanup, awaitForever, yield
+                    , awaitForever, yield
                     , bracketP, catchC
                     , (=$=))
 import qualified Data.Conduit.List as CL
@@ -377,9 +377,12 @@ instance HasLayerTransaction ReadWrite where
     bracketP (alloc' state) free $ \ seed@(layer,_) -> do
       liftIO $ checkOGRError "StartTransaction" $
         {#call OGR_L_StartTransaction as ^#} (unLayer layer)
-      addCleanup (\terminated -> when terminated (commit layer)) $
+
+      res <-
         inside seed `catchC`
           \(e :: SomeException) -> rollback layer >> throwM e
+      commit layer
+      pure res
     where
       alloc' = runWithInternalState alloc
       free = closeLayer . fst
