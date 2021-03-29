@@ -5,9 +5,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module GDAL.Internal.Types.Value (
@@ -78,8 +75,6 @@ instance Monad Value where
 
   return              = Value
   {-# INLINE return #-}
-  fail _              = NoData
-  {-# INLINE fail #-}
 
 instance Num a => Num (Value a) where
   (+) = liftA2 (+)

@@ -76,7 +76,7 @@ spec = do
     itIO "is projectable" $ do
       let Right g         = geomFromWkt Nothing "POINT (439466 4482586)"
           Right expected  = geomFromWkt (Just srs4326)
-                              "POINT (-3.715491503365956 40.489899869998304)"
+                              "POINT (40.4898915293584 -3.71557783855072)"
           Right coordTrans = coordinateTransformation srs23030 srs4326
       case g `transformWith` coordTrans of
         Nothing -> expectationFailure "Should have transformed the geom"

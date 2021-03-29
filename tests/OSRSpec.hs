@@ -35,8 +35,9 @@ spec = do
       isRight ct `shouldBe` True
 
     itIO "can transform points" $ do
+      Right dst <- srsFromEPSGIO 4326
+      setAxisMappingStrategy dst OAMS_TRADITIONAL_GIS_ORDER
       let Right ct = do src <- srsFromEPSG 23030
-                        dst <- srsFromEPSG 4326
                         coordinateTransformation src dst
           points :: St.Vector (Pair Double)
           points   = [ 10000 :+: 10000 , 20000 :+: 20000]

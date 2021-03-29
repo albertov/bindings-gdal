@@ -8,12 +8,13 @@
 {-# LANGUAGE DataKinds #-}
 module GDAL.AlgorithmsSpec (main, spec) where
 
+import Control.Exception (throwIO)
 import Data.Monoid (mempty)
 import Data.Proxy (Proxy(Proxy))
 import Data.Either (isRight)
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Storable as St
-
+import System.IO.Unsafe (unsafePerformIO)
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (liftM)
 import Lens.Micro
@@ -353,9 +354,9 @@ spec = setupAndTeardown $ do
           distance (x :+: y) (x' :+: y') = sqrt (sq (x-x') + sq (y-y'))
           sq     = (^ (2::Int))
       contours <- contourGenerateVectorIO 10 0 (Just noData) sz vec
-      length contours `shouldBe` 13
-      sum (map cLevel contours) `shouldBe` 650
-      sum (map (St.length . cPoints) contours) `shouldBe` 1300
+      length contours `shouldBe` 8
+      sum (map cLevel contours) `shouldBe` 360
+      sum (map (St.length . cPoints) contours) `shouldBe` 868
       minimum (map (St.minimum . St.map pFst . cPoints) contours)
         `shouldSatisfy` (>=0)
       minimum (map (St.minimum . St.map pSnd . cPoints) contours)
@@ -509,8 +510,12 @@ srs23030 = either exc id (srsFromEPSG 23030)
   where exc = error . ("Unexpected srsFromEPSG error: " ++) . show
 
 srs4326 :: SpatialReference
-srs4326 = either exc id (srsFromEPSG 4326)
-  where exc = error . ("Unexpected srsFromEPSG error: " ++) . show
+srs4326 = unsafePerformIO $ do
+  eSrs <- srsFromEPSGIO 4326
+  srs <- either (\e -> throwIO (userError ("Unexpected srsFromEPSG error: " ++ show e))) pure eSrs
+  setAxisMappingStrategy srs OAMS_TRADITIONAL_GIS_ORDER
+  pure srs
+{-# NOINLINE srs4326 #-}
 
 data TestFeature a b
   = TestFeature  {

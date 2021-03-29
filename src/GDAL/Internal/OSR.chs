@@ -8,6 +8,7 @@ module GDAL.Internal.OSR (
     SpatialReference
   , CoordinateTransformation
   , Projectable (..)
+  , AxisMappingStrategy (..)
 
   , srsFromWkt
   , srsFromProj4
@@ -30,6 +31,8 @@ module GDAL.Internal.OSR (
 
   , coordinateTransformation
   , coordinateTransformationIO
+
+  , setAxisMappingStrategy
 
   , cleanup
   , initialize
@@ -69,9 +72,13 @@ import Foreign.Marshal.Utils (toBool, with)
 import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
+import GDAL.Internal.Util (fromEnumC)
 import GDAL.Internal.OGRError
 import GDAL.Internal.CPLError hiding (None)
 import GDAL.Internal.CPLString (peekCPLString)
+
+{#enum OSRAxisMappingStrategy as AxisMappingStrategy { } deriving (Eq, Show) #}
+
 
 {#pointer OGRSpatialReferenceH as SpatialReference foreign newtype#}
 
@@ -222,6 +229,12 @@ getUnitsWith fun s = alloca $ \p -> do
   ptr <- peek p
   units <- peekCString ptr
   return (realToFrac value, units)
+
+
+setAxisMappingStrategy :: SpatialReference -> AxisMappingStrategy -> IO ()
+setAxisMappingStrategy srs x =
+  withSpatialReference srs $ \pSrs ->
+    {#call unsafe OSRSetAxisMappingStrategy as ^#} pSrs (fromEnumC x)
 
 withMaybeSRAsCString :: Maybe SpatialReference -> (CString -> IO a) -> IO a
 withMaybeSRAsCString = useAsCString . maybe "" srsToWkt
