@@ -41,10 +41,9 @@ import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.DeepSeq (NFData(rnf), force)
 import Control.Exception (evaluate, bracket, try, throw)
 import Control.Monad ((<=<))
-import Control.Monad.Base (MonadBase)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (ReaderT(runReaderT), ask)
-import Control.Monad.Trans.Control (MonadBaseControl(..))
+import Control.Monad.IO.Unlift (MonadUnliftIO(withRunInIO))
 import Control.Monad.Trans.Resource (
     MonadResource(liftResourceT)
   , ReleaseKey
@@ -62,7 +61,6 @@ import Control.Monad.Catch (
   , MonadMask
   )
 import Control.Monad.IO.Class (MonadIO(liftIO))
-
 import Data.Typeable (Typeable)
 import qualified Data.Vector.Generic as G
 import qualified Data.Vector.Generic.Mutable as M
@@ -208,18 +206,14 @@ deriving instance MonadIO (GDAL s)
 deriving instance MonadThrow (GDAL s)
 deriving instance MonadCatch (GDAL s)
 deriving instance MonadMask (GDAL s)
-deriving instance MonadBase IO (GDAL s)
 deriving instance MonadFix (GDAL s)
 
 instance MonadResource (GDAL s) where
   liftResourceT act = liftIO . runInternalState act . unState =<< getInternalState
 
-instance MonadBaseControl IO (GDAL s) where
-  type StM (GDAL s) a = a
-  liftBaseWith runInBase = do
-    state <- getInternalState
-    liftIO $ runInBase (`runWithInternalState` state)
-  restoreM = return
+instance MonadUnliftIO (GDAL s) where
+  withRunInIO inner = liftIO (inner unsafeRunGDAL)
+  {-# INLINE withRunInIO #-}
 
 runGDAL :: NFData a => (forall s. GDAL s a) -> IO (Either GDALException a)
 runGDAL a = runBounded $

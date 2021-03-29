@@ -87,16 +87,15 @@ import Data.Text (Text)
 import Control.Applicative (Applicative, (<$>), (<*>), pure)
 import Control.Exception (SomeException)
 import Control.Monad (liftM, when, void, (>=>), (<=<))
-import Control.Monad.Base (MonadBase)
 import Control.Monad.Catch (
     MonadThrow(..)
   , MonadCatch
   , MonadMask
   )
 import Control.Monad.Trans (lift)
-import Control.Monad.Trans.Control (MonadBaseControl(..))
 import Control.Monad.Trans.Resource (MonadResource)
 import Control.Monad.IO.Class (MonadIO(liftIO))
+import Control.Monad.IO.Unlift (MonadUnliftIO(withRunInIO), UnliftIO(..), askUnliftIO)
 
 import Foreign.C.String (CString, withCString)
 import Foreign.C.Types (CInt(..), CDouble(..))
@@ -130,15 +129,13 @@ deriving instance MonadIO (OGR s l)
 deriving instance MonadThrow (OGR s l)
 deriving instance MonadCatch (OGR s l)
 deriving instance MonadMask (OGR s l)
-deriving instance MonadBase IO (OGR s l)
 deriving instance MonadResource (OGR s l)
 
-instance MonadBaseControl IO (OGR s l) where
-  type StM (OGR s l) a = a
-  liftBaseWith runInBase = OGR $ do
-    state <- getInternalState
-    liftIO $ runInBase ((`runWithInternalState` state) . unOGR)
-  restoreM = return
+instance MonadUnliftIO (OGR s l) where
+  withRunInIO inner = OGR $ do
+    UnliftIO run <- askUnliftIO
+    liftIO (inner (run . unOGR))
+  {-# INLINE withRunInIO #-}
 
 runOGR :: (forall l. OGR s l a ) -> GDAL s a
 runOGR (OGR a) = a

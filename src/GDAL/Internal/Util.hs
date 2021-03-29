@@ -1,14 +1,14 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE BangPatterns #-}
 module GDAL.Internal.Util (
     fromEnumC
   , toEnumC
   , runBounded
 ) where
 
-import Control.Concurrent (runInBoundThread, rtsSupportsBoundThreads)
-import Control.Monad.Trans.Control (MonadBaseControl, liftBaseOp_)
+import Control.Concurrent (rtsSupportsBoundThreads)
 import Foreign.C.Types (CInt)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
+import UnliftIO.Concurrent (runInBoundThread)
 
 fromEnumC :: Enum a => a -> CInt
 fromEnumC = fromIntegral . fromEnum
@@ -16,7 +16,7 @@ fromEnumC = fromIntegral . fromEnum
 toEnumC :: Enum a => CInt -> a
 toEnumC = toEnum . fromIntegral
 
-runBounded :: MonadBaseControl IO m => m a -> m a
+runBounded :: MonadUnliftIO m => m a -> m a
 runBounded
-  | rtsSupportsBoundThreads = liftBaseOp_ runInBoundThread
+  | rtsSupportsBoundThreads = runInBoundThread
   | otherwise               = id

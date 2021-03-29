@@ -16,8 +16,8 @@ import GDAL.Internal.Util (runBounded)
 import Control.Exception (bracketOnError)
 import Control.Monad (liftM)
 import Control.Monad.IO.Class (MonadIO(liftIO))
-import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Catch (MonadMask, bracket)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 
 import Data.ByteString.Char8 (ByteString, packCString, useAsCString)
 
@@ -87,7 +87,7 @@ setThreadLocalConfigOption =
 
 
 withConfigOption
-  :: (MonadMask m, MonadBaseControl IO m, MonadIO m)
+  :: (MonadMask m, MonadUnliftIO m)
   => ByteString -> Maybe ByteString -> m a -> m a
 withConfigOption key val = runBounded . bracket enter exit . const
   where
