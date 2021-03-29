@@ -176,13 +176,12 @@ module GDAL.Internal.GDAL (
 {#context lib = "gdal" prefix = "GDAL" #}
 
 import Control.Arrow (second)
-import Control.Applicative (Applicative(..), (<$>), liftA2)
+import Control.Applicative (Applicative(..), liftA2)
 import Control.Exception (Exception(..))
 import Control.DeepSeq (NFData(..))
 import Control.Monad (liftM2, when, (>=>), (<=<))
 import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.Trans (lift)
-import Control.Monad.Trans.Resource (unprotect)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import Data.Bits ((.&.), (.|.))
@@ -233,7 +232,6 @@ import GDAL.Internal.Util
 {#import GDAL.Internal.CPLString#}
 {#import GDAL.Internal.CPLProgress#}
 import GDAL.Internal.OSR
-import GDAL.Internal.OGRGeometry (Envelope(..), envelopeSize)
 
 
 
@@ -909,7 +907,7 @@ readBand :: forall s t a. GDALType a
   -> Size
   -> GDAL s (U.Vector (Value a))
 readBand band win sz = fmap fromJust $ runConduit $
-  yield win =$= unsafeBandConduit sz band =$= CL.head
+  yield win .| unsafeBandConduit sz band .| CL.head
 
 bandConduit
   :: forall s a t. GDALType a
@@ -917,7 +915,7 @@ bandConduit
   -> Band s a t
   -> Conduit (Envelope Int) (GDAL s) (U.Vector (Value a))
 bandConduit sz band =
-  unsafeBandConduitM sz band =$= CL.mapM (liftIO . U.freeze)
+  unsafeBandConduitM sz band .| CL.mapM (liftIO . U.freeze)
 
 unsafeBandConduit
   :: forall s a t. GDALType a
@@ -925,7 +923,7 @@ unsafeBandConduit
   -> Band s a t
   -> Conduit (Envelope Int) (GDAL s) (U.Vector (Value a))
 unsafeBandConduit sz band =
-  unsafeBandConduitM sz band =$= CL.mapM (liftIO . U.unsafeFreeze)
+  unsafeBandConduitM sz band .| CL.mapM (liftIO . U.unsafeFreeze)
 
 
 unsafeBandConduitM
@@ -1034,7 +1032,7 @@ writeBand
   -> U.Vector (Value a)
   -> GDAL s ()
 writeBand band win sz uvec =
-  runConduit (yield (win, sz, uvec) =$= bandSink band)
+  runConduit (yield (win, sz, uvec) .| bandSink band)
 
 
 bandSink
@@ -1127,7 +1125,7 @@ bandSinkGeo
 bandSinkGeo band = do
   mGt <- bandGeotransform band
   case mGt >>= geoEnvelopeTransformer of
-    Just trans -> CL.map (\(e,s,v) -> (trans e,s,v)) =$= bandSink band
+    Just trans -> CL.map (\(e,s,v) -> (trans e,s,v)) .| bandSink band
     Nothing    -> lift (throwBindingException CannotInvertGeotransform)
 
 noDataOrFail :: GDALType a => Band s a t -> GDAL s a
@@ -1182,7 +1180,7 @@ copyBand src dst opts progress =
 
 fillBand :: GDALType a => Value a -> RWBand s a -> GDAL s ()
 fillBand val b =
-  runConduit (allBlocks b =$= CL.map (\i -> (i,v)) =$= blockSink b)
+  runConduit (allBlocks b .| CL.map (\i -> (i,v)) .| blockSink b)
   where v = G.replicate (bandBlockLen b) val
 
 
@@ -1196,7 +1194,7 @@ ifoldl'
   :: forall s t a b. GDALType a
   => (b -> Pair Int -> Value a -> b) -> b -> Band s a t -> GDAL s b
 ifoldl' f z band =
-  runConduit (unsafeBlockSource band =$= CL.fold folder z)
+  runConduit (unsafeBlockSource band .| CL.fold folder z)
   where
     !(mx :+: my) = liftA2 mod (bandSize band) (bandBlockSize band)
     !(nx :+: ny) = bandBlockCount band
@@ -1229,10 +1227,10 @@ ifoldlWindow'
   -> b -> Band s a t -> Envelope Int -> GDAL s b
 ifoldlWindow' f z band (Envelope (x0 :+: y0) (x1 :+: y1)) = runConduit $
                  zipSources blocks
-                            (blocks =$= unsafeBlockConduit band)
-                 =$= CL.fold folder z
+                            (blocks .| unsafeBlockConduit band)
+                 .| CL.fold folder z
   where
-    blocks = allBlocks band =$= CL.filter inRange
+    blocks = allBlocks band .| CL.filter inRange
     inRange bIx = bx0 < x1 && x0 < bx1 && by0 < y1 &&  y0 < by1
       where
         !b0@(bx0 :+: by0) = bIx * bSize
@@ -1265,20 +1263,20 @@ unsafeBlockSource
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
 unsafeBlockSource band =
   let blocks = allBlocks band
-  in zipSources blocks (blocks =$= unsafeBlockConduit band)
+  in zipSources blocks (blocks .| unsafeBlockConduit band)
 
 blockSource
   :: GDALType a
   => Band s a t -> Source (GDAL s) (BlockIx, U.Vector (Value a))
 blockSource band =
   let blocks = allBlocks band
-  in zipSources blocks (blocks =$= blockConduit band)
+  in zipSources blocks (blocks .| blockConduit band)
 
 writeBandBlock
   :: forall s a. GDALType a
   => RWBand s a -> BlockIx  -> U.Vector (Value a) -> GDAL s ()
 writeBandBlock band blockIx uvec =
-  runConduit (yield (blockIx, uvec) =$= blockSink band)
+  runConduit (yield (blockIx, uvec) .| blockSink band)
 
 fmapBand
   :: forall s a b t. (GDALType a, GDALType b)
@@ -1292,7 +1290,7 @@ fmapBand f src dst
   | bandBlockSize src /= bandBlockSize dst
   = throwBindingException notImplementedErr
   | otherwise = runConduit
-      (unsafeBlockSource src =$= CL.map (second (U.map f)) =$= blockSink dst)
+      (unsafeBlockSource src .| CL.map (second (U.map f)) .| blockSink dst)
   where
     notImplementedErr = NotImplemented
       "fmapBand: Not implemented for bands of different block size"
@@ -1304,7 +1302,7 @@ foldBands
   -> [Band s a t]
   -> GDAL s ()
 foldBands fun zb bs =
-  runConduit (unsafeBlockSource zb =$= awaitForever foldThem =$= blockSink zb)
+  runConduit (unsafeBlockSource zb .| awaitForever foldThem .| blockSink zb)
   where
     foldThem (bix, acc) = do
       r <- fmap (L.foldl' (G.zipWith fun) acc)
@@ -1402,7 +1400,7 @@ readBandBlock
   :: forall s t a. GDALType a
   => Band s a t -> BlockIx -> GDAL s (U.Vector (Value a))
 readBandBlock band blockIx = fmap fromJust $ runConduit $
-  yield blockIx =$= unsafeBlockConduit band =$= CL.head
+  yield blockIx .| unsafeBlockConduit band .| CL.head
 
 
 allBlocks :: Monad m => Band s a t -> Producer m BlockIx
@@ -1415,14 +1413,14 @@ blockConduit
   => Band s a t
   -> Conduit BlockIx (GDAL s) (U.Vector (Value a))
 blockConduit band =
-  unsafeBlockConduitM band =$= CL.mapM (liftIO . U.freeze)
+  unsafeBlockConduitM band .| CL.mapM (liftIO . U.freeze)
 
 unsafeBlockConduit
   :: forall s a t. GDALType a
   => Band s a t
   -> Conduit BlockIx (GDAL s) (U.Vector (Value a))
 unsafeBlockConduit band =
-  unsafeBlockConduitM band =$= CL.mapM (liftIO . U.unsafeFreeze)
+  unsafeBlockConduitM band .| CL.mapM (liftIO . U.unsafeFreeze)
 
 
 unsafeBlockConduitM
