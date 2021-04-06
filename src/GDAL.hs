@@ -305,6 +305,9 @@ module GDAL (
   , unsafeToReadOnlyLayer
 
   , zipSources
+
+  , getMemFileBuffer
+
   , module Data.Conduit
 ) where
 
@@ -330,6 +333,7 @@ import GDAL.Internal.OGRFeature
 import GDAL.Internal.Types.Value
 import GDAL.Internal.Common
 import GDAL.Internal.HSDriver
+import GDAL.Internal.VSI
 import OGR (Envelope(..))
 
 import qualified GDAL.Internal.OGR as OGR

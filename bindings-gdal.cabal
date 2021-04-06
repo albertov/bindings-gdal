@@ -76,6 +76,7 @@ library
                    , GDAL.Internal.HSDataset
                    , GDAL.Internal.HSDriver
                    , GDAL.Internal.VRT
+                   , GDAL.Internal.VSI
   build-depends:     base                              >= 4.5      && < 5
                    , ghc-prim                          >= 0.3.1    && < 0.6
                    , bytestring                        >= 0.10.4   && < 0.11
