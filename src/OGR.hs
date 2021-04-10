@@ -103,6 +103,7 @@ module OGR (
   , openReadWrite
   , closeLayer
   , create
+  , closeDataSource
   , createMem
   , canCreateMultipleGeometryFields
 

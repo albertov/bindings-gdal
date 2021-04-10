@@ -44,6 +44,7 @@ module GDAL.Internal.OGR (
   , canCreateMultipleGeometryFields
 
   , dataSourceName
+  , closeDataSource
 
   , createLayer
   , createLayerWithDef
@@ -139,7 +140,10 @@ import GDAL.Internal.Types
 
 {#pointer DataSourceH newtype#}
 newtype DataSource s (t::AccessMode) =
-  DataSource { unDataSource :: DataSourceH }
+  DataSource (ReleaseKey, DataSourceH)
+
+unDataSource :: DataSource s t -> DataSourceH
+unDataSource (DataSource (_,s)) = s
 
 deriving instance Eq DataSourceH
 
@@ -175,13 +179,13 @@ openWithMode m p =
 
 newDataSourceHandle
   :: IO DataSourceH -> GDAL s (DataSource s t)
-newDataSourceHandle act = liftM snd $ allocate alloc free
+newDataSourceHandle alloc = do
+  (rk,ds) <- allocate alloc free
+  return (DataSource (rk, ds))
   where
-    alloc = liftM DataSource act
-    free ds
+    free dsPtr
       | dsPtr /= nullDataSourceH = {#call OGR_DS_Destroy as ^#} dsPtr
       | otherwise                = return ()
-      where dsPtr = unDataSource ds
 
 newtype Driver =
   Driver ByteString deriving (Eq, IsString, Typeable)
@@ -199,6 +203,10 @@ create driverName name opts = newDataSourceHandle $ do
     checkIt e p' | p'==nullDataSourceH = Just (fromMaybe dflt e)
     checkIt e _                        = e
     dflt = GDALException CE_Failure OpenFailed "OGR_Dr_CreateDataSource"
+
+closeDataSource :: MonadIO m => DataSource s t -> m ()
+closeDataSource (DataSource (rk,_)) = release rk
+
 
 createMem :: OptionList -> GDAL s (RWDataSource s)
 createMem = create "Memory" ""
