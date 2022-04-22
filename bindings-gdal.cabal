@@ -10,6 +10,7 @@ maintainer:          alberto@toscat.net
 copyright:           2013-2021
 category:            Bindings
 build-type:          Custom
+extra-source-files:  cbits/*.h
 Data-Files:
   tests/fixtures/fondo.shp
   tests/fixtures/fondo.shx
@@ -115,7 +116,7 @@ library
   ghc-options:       -funbox-strict-fields -Wall
   install-includes: bindings.h
   default-language: Haskell2010
-  include-dirs:    . include cbits
+  include-dirs:    include cbits
   cc-options:      -Wall -g
   c-sources:       cbits/errorhandler.c
                  , cbits/contourwriter.c
