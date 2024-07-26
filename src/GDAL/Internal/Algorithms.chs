@@ -675,6 +675,8 @@ instance Storable GridInverseDistanceToAPower where
       (fromIntegral idpMinPoints)
     {#set GridInverseDistanceToAPowerOptions->nMaxPoints#} p
       (fromIntegral idpMaxPoints)
+    {#set GridInverseDistanceToAPowerOptions->nSizeOfStructure#} p
+      {#sizeof GridInverseDistanceToAPowerOptions#}
 
 -- ############################################################################
 -- GridMovingAverage
@@ -686,6 +688,7 @@ data GridMovingAverage =
   , maRadius2   :: !Double
   , maAngle     :: !Double
   , maMinPoints :: !Int
+  , maNoData    :: !Double
   } deriving (Eq, Show, Typeable)
 
 instance GridAlgorithm GridMovingAverage where
@@ -698,6 +701,7 @@ instance Default GridMovingAverage where
         , maRadius2   = 0
         , maAngle     = 0
         , maMinPoints = 0
+        , maNoData    = 0
         }
 
 instance Storable GridMovingAverage where
@@ -713,6 +717,10 @@ instance Storable GridMovingAverage where
       (realToFrac maAngle)
     {#set GridMovingAverageOptions->nMinPoints#} p
       (fromIntegral maMinPoints)
+    {#set GridMovingAverageOptions->dfNoDataValue#} p
+      (realToFrac maNoData)
+    {#set GridMovingAverageOptions->nSizeOfStructure #} p
+      {#sizeof GridMovingAverageOptions#}
 
 -- ############################################################################
 -- GridNearestNeighbor
@@ -747,6 +755,8 @@ instance Storable GridNearestNeighbor where
       (realToFrac nnRadius2)
     {#set GridNearestNeighborOptions->dfAngle#} p
       (realToFrac nnAngle)
+    {#set GridNearestNeighborOptions->nSizeOfStructure #} p
+      {#sizeof GridNearestNeighborOptions#}
 
 -- ############################################################################
 -- GridDataMetrics
@@ -773,6 +783,7 @@ data GridDataMetrics =
   , dmAngle     :: !Double
   , dmMinPoints :: !Int
   , dmType      :: !MetricType
+  , dmNoData    :: !Double
   } deriving (Eq, Show, Typeable)
 
 instance GridAlgorithm GridDataMetrics where
@@ -793,6 +804,7 @@ instance Default GridDataMetrics where
         , dmAngle     = 0
         , dmMinPoints = 0
         , dmType      = def
+        , dmNoData    = 0
         }
 
 instance Storable GridDataMetrics where
@@ -808,6 +820,10 @@ instance Storable GridDataMetrics where
       (realToFrac dmAngle)
     {#set GridDataMetricsOptions->nMinPoints#} p
       (fromIntegral dmMinPoints)
+    {#set GridDataMetricsOptions->dfNoDataValue#} p
+      (realToFrac dmNoData)
+    {#set GridDataMetricsOptions->nSizeOfStructure #} p
+      {#sizeof GridDataMetricsOptions#}
 
 -- ############################################################################
 -- ComputeProximity
