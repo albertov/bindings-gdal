@@ -12,6 +12,7 @@ import Distribution.Simple
 import Distribution.Simple.Setup (configConfigurationsFlags)
 import Distribution.PackageDescription
 import Distribution.Simple.LocalBuildInfo
+import Distribution.Utils.Path (makeSymbolicPath)
 
 
 
@@ -48,11 +49,11 @@ configureWithGdalConfig lbi flags = do
               . (if hasCurl || hasPg then (++["ssl","crypto"]) else id) 
               $ gdalLibs
      updBinfo bi = bi { extraLibDirs = extraLibDirs bi
-                                    ++ gdalLibDirs
-                                    ++ catMaybes staticDirs
+                                    ++ map makeSymbolicPath gdalLibDirs
+                                    ++ map makeSymbolicPath (catMaybes staticDirs)
                       , extraLibs    = extraLibs bi
                                     ++ (if isStatic then gdalLibsStatic else gdalLibs)
-                      , includeDirs  = includeDirs  bi ++ gdalInclude
+                      , includeDirs  = includeDirs  bi ++ map makeSymbolicPath gdalInclude
                       }
      -- | appendGeos: makes sure 'geos_c' is included before 'geos' so symbols
      --   can be resolved when linking statically

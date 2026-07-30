@@ -26,7 +26,7 @@ import GDAL.Internal.Util
 {#import GDAL.Internal.GDAL#}
 import OGR (Envelope(..))
 
-import Control.Monad (unless)
+import Control.Monad (unless, void)
 import Control.Exception (SomeException, catch)
 import Control.Monad.Catch (throwM)
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -62,7 +62,7 @@ createVRT (nx:+:ny) f = do
   liftIO ({#call VRTFlushCache as ^#} vDs)
   return (Dataset (Just rk, coerce vDs))
   where
-    close_  = {#call GDALClose as ^#} . coerce
+    close_  = void . {#call GDALClose as ^#} . coerce
     create_ = {#call unsafe VRTCreate as ^#} (fromIntegral nx) (fromIntegral ny)
 
 
