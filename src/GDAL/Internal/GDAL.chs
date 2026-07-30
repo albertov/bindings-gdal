@@ -179,7 +179,7 @@ import Control.Arrow (second)
 import Control.Applicative (Applicative(..), liftA2)
 import Control.Exception (Exception(..))
 import Control.DeepSeq (NFData(..))
-import Control.Monad (liftM2, when, (>=>), (<=<))
+import Control.Monad (liftM2, void, when, (>=>), (<=<))
 import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -517,7 +517,7 @@ newDatasetHandle act = do
       | p==nullDatasetH = Just (fromMaybe
                                 (GDALBindingException NullDataset) exc)
       | otherwise       = Nothing
-    free = {#call GDALClose as ^#}
+    free = void . {#call GDALClose as ^#}
 
 unsafeFromHandle :: DatasetH -> Dataset s a t
 unsafeFromHandle h = Dataset (Nothing,h)
@@ -534,7 +534,7 @@ createMem
 createMem = create "Mem" ""
 
 flushCache :: RWDataset s a -> GDAL s ()
-flushCache = liftIO . {#call GDALFlushCache as ^#} . unDataset
+flushCache = liftIO . void . {#call GDALFlushCache as ^#} . unDataset
 
 datasetDriver :: Dataset s a t -> Driver t'
 datasetDriver ds =
